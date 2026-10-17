@@ -1,7 +1,7 @@
 # Récap REA : WikiMasters (www.wiki-masters.com)
 
 > Rétro-ingénierie de l'application existante, préalable à sa reconstruction (Next.js + Supabase + Vercel) et à une migration sans perte.
-> Date de consolidation : 2026-10-16. Données brutes fusionnées (8 rapports, non modifiés) : `docs/recon/recon-raw.json`.
+> Date de consolidation : 2026-10-16. Données brutes fusionnées (7 rapports, non modifiés) : `docs/recon/recon-raw.json`.
 > **Limite majeure** : wiki-masters.com est injoignable depuis le bac à sable (WebFetch `ENOTFOUND`). Rien n'a été observé en direct sur le site. Tout provient de code tiers qui consomme la vraie API (userscripts, extensions), de fixtures HTML réelles, de pages officielles indexées par les moteurs de recherche et de la presse.
 
 ---
@@ -19,7 +19,6 @@
 | **R** | `web-rules` | Environ 45 recherches web, les pages officielles indexées (/terms, /rules, /privacy, /login, /signup) et la lecture de 10 dépôts sous `ext/` : ludomrn69, AndyB31/Wiki-Traders, MaKSiiMe, Astata, Lypningeuh/WikiRemastered, Sephiroth, maximus49000, qkerman, FCYPBA, maxime-lalo. | → 2026-10 |
 | **F** | `web-features` | Web + 14 dépôts sous `ext2/` : AndyB31, qkerman, EnzoBncll, ThePommespanzer, Lypningeuh, LeKenT1, TendersTroll, MaistoGame, FCYPBA, maxime-lalo, Kitsoune, MaKSiiMe, AKemlin, Lucas-Mathieu, Lekarov. | → 2026-10-07 |
 | **O** | `web-tech-ops` | Presse, pages légales et userscript Quatilyus/Wiki-Masters-Bot (`open_cards.js.txt`, même lignée que S). | → 2026-10-16 |
-| **C** | `xbz-conventions` | Index Graphify de XBZ-E-Sport/xbz-web @794dab5 (le dépôt maison dont on reprend les conventions). | 2026-10-14 |
 
 **Indépendance des sources.** S et O sont la même lignée de bot (Sephiroth-ctrl → Quatilyus) et ne comptent donc que pour une source. R et F recoupent plusieurs dépôts (AndyB31, Lypningeuh, maxime-lalo, FCYPBA, MaKSiiMe). Pour juger d'une confirmation, on compte les sources réellement indépendantes.
 
@@ -454,7 +453,7 @@ Une mise en vente puis une annulation ou une invendue **recrée une nouvelle lig
 `auction_id`, `bidder_id`, `amount` int, `placed_at` timestamptz (+ `id` probable). Sources : R/F (AndyB31 `api.ts:155-159,221`), E (`bids[]` du détail). conf.
 
 #### Portefeuille et grand livre (wikibidous)
-Solde exposé par `GET /api/wikibidous` et par `profiles.wikibidous_balance` (E). Les mouvements connus sont : défausse +1, succès +N, mise réservée (débit) puis remboursement en cas de surenchère, produit d'une vente, WB inclus dans un échange (des deux côtés), achat Stripe (2 500 WB), récompenses de bataille (+50/+10, inc.), donations ? **Aucun grand livre n'a été observé** (inc.). La reconstruction doit en créer un (voir §9).
+Solde exposé par `GET /api/wikibidous` et par `profiles.wikibidous_balance` (E). Les mouvements connus sont : défausse +1, succès +N, mise réservée (débit) puis remboursement en cas de surenchère, produit d'une vente, WB inclus dans un échange (des deux côtés), achat Stripe (2 500 WB), récompenses de bataille (+50/+10, inc.), donations ? **Aucun grand livre n'a été observé** (inc.). La reconstruction doit en créer un (voir §8).
 
 #### `trades` et `trade_items`
 | Table | Champs | Sources | Conf. |
@@ -785,77 +784,13 @@ Ton familier (« tu ») dans les règles et l'aide, « vous » dans les pages l�
 | Licences | Texte en CC BY-SA 4.0 (« Texte de l'article : CC BY-SA 4.0 — crédits sur la page Wikipédia. »). **Images affichées sans auteur ni licence** (critique de Next) : il faut récupérer auteur et licence Commons. Projet indépendant de Wikimedia. La promesse de 10 % des revenus reversés à Wikimedia vient peut-être seulement du clone (inc.). | conf. / inc. | X, O, F |
 | Biens virtuels | Aucune valeur monétaire, achats définitifs et non remboursables, sauf loi impérative | conf. | /terms |
 | Points juridiques à revoir | Droit de rétractation UE pour le contenu numérique (renonciation expresse nécessaire). Statut des loot boxes en France (PEGI 16 à partir d'octobre 2026, ANJ). | inc. | O |
-| Propriété intellectuelle | Le nom « WikiMasters », le logo, les visuels (fonds de rareté, pack) et les textes appartiennent à l'exploitant (Naïm Ouellet). Une reproduction « à l'identique » et une migration de ses clients supposent **son accord** (voir §9.0). | — | — |
+| Propriété intellectuelle | Le nom « WikiMasters », le logo, les visuels (fonds de rareté, pack) et les textes appartiennent à l'exploitant (Naïm Ouellet). Une reproduction « à l'identique » et une migration de ses clients supposent **son accord** (voir §8.0). | — | — |
 
 ---
 
-## 8. Conventions du dépôt xbz-web (style maison à suivre)
+## 8. Risques de régression et points de vigilance pour la migration
 
-Source : C (index Graphify de XBZ-E-Sport/xbz-web @794dab5, v1.5.0, privé). Le MCP GitHub a refusé l'accès (session limitée à `ilan9903/wikimaster`) : tout vient de l'index.
-
-### 8.1 Pile et versions
-- **next 16.3.6** et `eslint-config-next 16.3.6` **épinglés exactement** ; **react / react-dom 19.3.0** épinglés ; TypeScript ^5 (strict), `@types/node ^20`, `@types/react ^19`.
-- Dépendances : `@supabase/ssr ^0.12.7`, `@supabase/supabase-js ^2.110.2`, `@vercel/analytics ^2.0.1`, `next-intl ^4.14.7`, `server-only`, `sharp ^0.35.5`, `sonner ^2.0.8`, `stripe ^22.6.2`, `country-flag-icons`.
-- Dev : `tailwindcss ^4` + `@tailwindcss/postcss ^4`, `vitest ^4.1.10`, `@vitejs/plugin-react`, `jsdom`, `@testing-library/react` et `/dom`, `@playwright/test ^1.63.0`, `eslint ^9` (flat config `core-web-vitals` + `typescript`).
-- **Non utilisés** : shadcn/Radix, **zod** (validation écrite à la main), Prisma/Drizzle (query builder supabase-js seulement), Prettier, NextAuth, CSS-in-JS.
-- `overrides` : postcss ^8.5.10 et sharp ; un bloc `allowScripts` coupe les scripts d'installation de @parcel/watcher, @swc/core et unrs-resolver.
-- Scripts : `dev`, `build`, `start`, `lint`, `typecheck` = `next typegen && tsc --noEmit` (imposé par un test), `test` = `vitest run`, `test:e2e` = `playwright test`.
-- tsconfig : ES2017, strict, `moduleResolution bundler`, `jsx react-jsx`, alias `@/*` → `./src/*`.
-
-### 8.2 Arborescence
-- `src/app/[locale]/` contient toutes les pages, **le layout racine** (pas d'`app/layout.tsx`), `globals.css`, `error.tsx`, `not-found.tsx`, un catch-all `[...rest]` et un `opengraph-image.tsx` par page.
-- `src/app/global-error.tsx`. Les route handlers vivent dans `src/app/api/**` et `src/app/auth/callback`, **sans locale**.
-- `src/proxy.ts` (convention « proxy » de Next 16, ex-middleware) chaîne next-intl (les 307 deviennent des 308) puis le rafraîchissement de session Supabase `updateSession`. Le matcher exclut api, auth, `_next` et les fichiers statiques.
-- `src/components/` : composants PascalCase à plat, avec leur `*.test.tsx` à côté.
-- `src/lib/` : modules de domaine en kebab ou minuscules (`cache.ts`, `ratelimit.ts`, `apierror.ts`, `adminguard.ts`, `admin-action.ts`, `admin-result.ts`, `cron-auth.ts`, `mailer.ts`, `stripe.ts`, `og.tsx`, `limits.ts`…). `src/lib/supabase/{server,client,middleware,public,admin}.ts`.
-- `src/i18n/{routing,navigation,client-messages}.ts`, `messages/{fr,en}.json`.
-- `supabase/*.sql` : migrations SQL à plat (par ex. `migration_retractation_05102026.sql`), **sans dossier CLI `supabase/migrations`**.
-- `e2e/*.spec.ts` (Playwright), `test/` (helpers : `css.ts`, `intl.tsx`).
-- Chaque section d'admin est colocalisée : `page.tsx` + `actions.ts` (`'use server'`) + `<Thing>Form.tsx` côté client.
-
-### 8.3 Supabase
-- 5 fabriques : `server.ts` (`createServerClient` + `cookies()` getAll/setAll, avec un `setAll` en try/catch) ; `client.ts` (navigateur) ; `middleware.ts` (`updateSession` → `auth.getUser()` sans rien entre les deux) ; `public.ts` (`persistSession:false`, pour `unstable_cache`) ; `admin.ts` (`SUPABASE_SECRET_KEY`, sans session ni auto-refresh, pour toutes les écritures et lectures d'admin).
-- **Nouveaux noms de clés** : `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` et `SUPABASE_SECRET_KEY` (pas « anon » ni « service_role »).
-- **RLS sur toutes les tables**, vérifiée par `src/app/rls.test.ts`, qui grep les `.from("table")` et exige un `alter table X enable row level security`. Les tables sensibles (PII, staff) n'ont **aucune policy** : accès par clé secrète uniquement.
-- `auth.getUser()` toujours, **jamais `getSession()`**.
-- Pas de types générés : types TS locaux, casts et listes de colonnes explicites dans les `select`.
-
-### 8.4 Actions serveur, cache, route handlers
-- Forme : `export async function createX(fd: FormData): Promise<AdminResult> { return adminAction(async () => { await assertStaff(); …; if (error) throw dbError(error,'msg'); revalidateX(); }) }`. `adminAction` appelle `unstable_rethrow`, convertit une `AdminError` en `{error}` et tout le reste en `ADMIN_GENERIC_ERROR` + `console.error`. Helpers `field()` et `intField()` dupliqués dans chaque fichier ; checkbox lue avec `=== 'on'`. Côté client, `AdminForm` : `useTransition` + `toast.promise` (sonner), garde anti double soumission et contrôle de `UPLOAD_MAX_BYTES`. `serverActions.bodySizeLimit = '4.5mb'`.
-- Cache : `CACHE_TAGS` dans `src/lib/cache.ts`. Chargeurs publics de la forme `cache(unstable_cache(async () => createPublicClient().from(t).select(COLS)…, keys, {tags}))`, qui **loggent et renvoient `[]` ou `null`** au lieu de lever une exception. Écritures : `revalidateTag(tag,'max')` + `revalidateLocalizedPath`. Pages en ISR ou `force-static`, avec `setRequestLocale` et `getTranslations({locale, namespace})`.
-- Route handlers, dans cet ordre : parse JSON en try/catch → `checkFormRateLimit(getClientIp(req), route)` (table `rate_limit_hits`, conscient d'IPv6 /64 et /48, **fail-closed** par défaut) → honeypot + délai minimal (bot = `ok:true` silencieux) → consentement RGPD (`consent_at`) → validation manuelle (`textField`, `findTooLong`, `FIELD_MAX`) → insert via le client admin → notification dans `after()` avec `AbortSignal.timeout`.
-- Erreurs : `apiError(status, code, messageFR, {params, headers})`, codes dans la liste fermée `API_ERROR_CODES`, traduits côté client par `translateApiError`.
-- Cron : `isCronAuthorized` (`Bearer CRON_SECRET`, sha256 + `timingSafeEqual`). `vercel.json` déclare `crons: [{path:'/api/cron/purge', schedule:'0 3 * * *'}]`. Les tâches fréquentes passent par **GitHub Actions** (`match-notifs.yml` lance curl sur `/api/cron/matchs?job=…`).
-- Webhook Stripe : corps brut + `constructEventAsync`, idempotent, renvoie 500 pour que Stripe réessaie.
-
-### 8.5 i18n, SEO, config
-- next-intl v4 : `locales ['fr','en']`, `defaultLocale 'fr'`, **`localePrefix 'always'`**, `localeDetection false`, cookie `XBZ_LOCALE`. Plugin en messages précompilés. `pickMessages` côté client. Colonnes bilingues suffixées `_en`.
-- SEO : `pageMetadata()` (canonical, hreflang, OG, Twitter), JSON-LD inline, `opengraph-image.tsx` par route.
-- `next.config` : `poweredByHeader:false`, **CSP stricte** et en-têtes de sécurité, `images.minimumCacheTTL` d'1 an, `remotePatterns` limités à l'hôte Supabase, `outputFileTracingIncludes` (libvips), `OG_BUILD_VERSION` = `VERCEL_GIT_COMMIT_SHA`, redirections permanentes.
-- Variables d'environnement toutes documentées dans `.env.example` ; `src/lib/env.test.ts` échoue si un `process.env.X` y manque.
-- CI `.github/workflows/xbz-web-ci.yml` (Node 22) : `npm ci` → lint → typecheck → build → test, puis un job e2e (Playwright chromium). Actions `checkout@v7` et `setup-node@v7`.
-
-### 8.6 Style de code
-Commentaires **en français** qui expliquent le **pourquoi** (incidents, CVE cités). Server Components asynchrones qui `await params`. Erreurs attendues → message FR utilisateur ; inattendues → log `[scope]` + message générique. Unions dérivées de tableaux `as const`. Exports nommés, sauf `default` pour les pages et composants. Accessibilité poussée : skip-link, `aria-labelledby`, `sr-only`, `motion-safe:`, **tests de contraste**. **Aucune PII dans les logs** (ids seulement, jamais d'e-mail).
-
-Branding xbz (non transposable, à titre de modèle) : thème sombre seul, jetons Tailwind v4 `--color-*` dans `globals.css`, `next/font/google` exposé en variables CSS, test de palette et de contraste.
-
-### 8.7 Adaptations nécessaires pour WikiMaster (points de friction)
-
-| Convention xbz | Contrainte WikiMasters | Décision proposée |
-|---|---|---|
-| `localePrefix 'always'` (`/fr/...`) | Les URL d'origine n'ont **pas** de préfixe (`/collection`, `/marketplace/{uuid}`, `/profile/{pseudo}`). Les liens profonds, le SEO et les extensions en dépendent. Le site est en français seulement. | Pas de préfixe : `localePrefix:'never'` ou next-intl sans routage. Garder les catalogues `messages/fr.json` pour préparer l'anglais. |
-| Auth Discord OAuth réservée au staff | Joueurs en e-mail + mot de passe + OTP, Turnstile | Supabase Auth par e-mail et mot de passe. Discord OAuth au mieux pour l'admin. |
-| `/api` hors locale, `apiError` en liste fermée | Il faut préserver les **chemins, les formes JSON et les messages FR** de l'ancienne API (outils tiers, §9) | Garder `apiError`, mais avec des codes et messages alignés sur l'existant (`human_verification_required`, `bid_too_low`, `pro_required`…). |
-| Crons via `vercel.json` (quotidien) et GitHub Actions (horaire) | Le règlement des enchères doit tourner à la minute ; la régénération des paquets est paresseuse | **pg_cron** dans Supabase (ou cron Vercel par minute en offre Pro) + règlement à la demande idempotent. |
-| Pas de types générés, pas de zod | Contrat volumineux (~70 routes) | Respecter la maison (validation manuelle aux frontières), avec des helpers de validation partagés pour l'API publique. |
-| `next 16.3.6` épinglé | La demande est « la version la plus récente sécurisée et stable » | Épingler exactement le dernier patch 16.x stable au moment du build, après vérification des avis de sécurité. |
-| Images : `remotePatterns` limités à Supabase | 2,77 M d'images hébergées sur upload.wikimedia.org | Ajouter `upload.wikimedia.org`. Éviter l'optimiseur Vercel sur des millions d'images (coût) : `unoptimized` ou miniatures Wikimedia directes. |
-
----
-## 9. Risques de régression et points de vigilance pour la migration
-
-### 9.0 Prérequis bloquant : la coopération de l'exploitant
+### 8.0 Prérequis bloquant : la coopération de l'exploitant
 
 Une migration « sans perte de données ni de clients » n'est **techniquement et légalement possible qu'avec l'accord et les accès de l'exploitant actuel** (Naïm Ouellet). Il faut :
 1. un export complet du projet Supabase `cyrxjeppjqsxxjayfrur` (`pg_dump` des schémas `public` **et** `auth`, empreintes bcrypt comprises), ou mieux, le **transfert du projet** vers notre organisation ;
@@ -866,7 +801,7 @@ Une migration « sans perte de données ni de clients » n'est **techniquement e
 
 Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa collection via `/api/my-collection` avec sa propre session). Cette voie **ne peut transporter ni les mots de passe, ni les soldes, ni l'historique de façon fiable**. Un scraping massif par les sessions des joueurs serait incomplet, contraire aux /rules §3 et /terms §6, au RGPD, et **non légitime**. De même, reprendre à l'identique le nom, le logo et les visuels suppose l'autorisation du titulaire. Sources : S, T, X, R, F, O (questions ouvertes).
 
-### 9.1 Stratégie recommandée (par ordre de préférence)
+### 8.1 Stratégie recommandée (par ordre de préférence)
 
 | Option | Effet sur la non-régression | Commentaire |
 |---|---|---|
@@ -874,7 +809,7 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 | **B. Nouveau projet Supabase + restauration `pg_dump`** (public + auth) en conservant tous les UUID | Données intactes, mais le **nom du cookie change** (il contient la ref) et le **secret JWT change** : toutes les sessions sont invalidées et chacun doit se reconnecter (le mot de passe reste valable grâce au bcrypt importé). Les refresh tokens sont perdus. La clé anon change, ce qui casse les outils tiers qui l'avaient en dur. | Prévoir une page « reconnectez-vous » et une communication. Vérifier si l'on peut reprendre le secret JWT d'origine (point ouvert). |
 | C. Import par joueur (opt-in) | Pertes certaines : mots de passe, WB, enchères, échanges, succès, historique. | À éviter, sauf en dernier recours. |
 
-### 9.2 Risques par domaine de données
+### 8.2 Risques par domaine de données
 
 | Domaine | Risque de perte ou de régression | Mesures |
 |---|---|---|
@@ -895,12 +830,12 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 | **Contrat d'API** (~70 routes) | Les outils tiers et les importeurs (Lexicodex, wikilord) cassent : formes JSON, base de pagination (0 ou 1), noms de champs, messages FR matchés par regex, en-têtes | Implémenter les **mêmes chemins et formes** (§3). Garder les deux bases de pagination. Renvoyer les unions de champs (`hasMore` + `total`, `sellingCount` + `maxConcurrentAuctions` + `auctions`). Garder les messages d'erreur FR existants. Décider **délibérément** quels comportements de bot casser (sniping, rejet « hors UI »). Tests de contrat générés à partir de ce document. |
 | **URL et DOM** | Liens profonds cassés (`/marketplace/{uuid}`, `/profile/{pseudo}`, `/trades`, `/pulls`) ; SEO ; extensions qui s'appuient sur les sélecteurs du §6.8 | Garder **toutes les routes sans préfixe de locale**, et les ids et aria-labels clés. Redirections 308 pour tout changement. |
 | **Performance** | Reproduire les incidents (statement timeouts, 504, saturation des connexions, ~20 s pour la collection) | Index : `user_cards(user_id, obtained_at desc)`, `(user_id, card_id)`, `(user_id, snapshot_rarity)` ; `auctions(status, end_at)`, `(seller_id, status)` ; `auction_bids(bidder_id, placed_at desc)` ; trigram ou plein texte sur `cards.wikipedia_title` et `auctions.snapshot_search_document`. Pagination par curseur. Agrégats précalculés (stats, compteurs par rareté). Pooling Supavisor en mode transaction. Cache du catalogue. **Supabase Realtime** au lieu du polling. Rate limits par route. |
-| **Sécurité** | Faille « paquets d'autrui » ; confiance accordée au `card_id` du client ; écritures PostgREST directes trop larges | Vérifier la propriété côté serveur dans chaque handler ; RLS minimale (lecture et écriture de ses propres lignes, pas d'UPDATE sur `wikibidous_balance` ni sur `count` côté client) ; `rls.test.ts` ; Turnstile vérifié côté serveur ; anti-abus du marché (verrou commun mises/annonces/paquets). |
+| **Sécurité** | Faille « paquets d'autrui » ; confiance accordée au `card_id` du client ; écritures PostgREST directes trop larges | Vérifier la propriété côté serveur dans chaque handler ; RLS minimale (lecture et écriture de ses propres lignes, pas d'UPDATE sur `wikibidous_balance` ni sur `count` côté client) ; Turnstile vérifié côté serveur ; anti-abus du marché (verrou commun mises/annonces/paquets). |
 | **Temps et fuseaux** | Bornes quotidiennes décalées | Respecter `x-wiki-calendar-tz` (paquet Pro, échanges, quotas) et l'heure serveur pour les comptes à rebours. |
 | **Images et licences** | Coût de l'optimiseur Vercel sur des millions d'images ; licences d'images absentes | Miniatures Wikimedia directes ; métadonnées auteur et licence Commons stockées et affichées. |
 | **Juridique** | Reprise de la marque et du contenu sans droit ; RGPD (transfert de responsable de traitement) ; CGU et confidentialité à jour (nouveaux sous-traitants) ; mineurs | Accord écrit avec l'exploitant ; information des utilisateurs avant le transfert de données ; mise à jour de /terms, /privacy et /rules ; garder la case 18+. |
 
-### 9.3 Procédure de bascule (squelette)
+### 8.3 Procédure de bascule (squelette)
 
 1. Annonce J-7 (Discord, bannière) ; choisir une fenêtre **lundi juste après 00:00 UTC**.
 2. Mode maintenance : gel des écritures (paquets, marché, échanges, batailles, défausse), job de rareté arrêté, Stripe en file d'attente.
@@ -909,7 +844,7 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 5. Bascule DNS et webhook Stripe ; smoke tests (connexion, ouverture de paquet, mise, échange, défausse, paiement en mode test).
 6. Levée du gel ; surveillance renforcée (erreurs, latence, soldes) ; **plan de retour arrière** : DNS vers l'ancien stack, ancien projet intact jusqu'à J+14.
 
-### 9.4 Récapitulatif des conflits (et résolution retenue)
+### 8.4 Récapitulatif des conflits (et résolution retenue)
 
 | # | Sujet | Positions | Résolution proposée |
 |---|---|---|---|
@@ -936,16 +871,16 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 
 ---
 
-## 10. Questions ouvertes et points non vérifiés
+## 9. Questions ouvertes et points non vérifiés
 
-> Cause principale : **wiki-masters.com est bloqué par le réseau du bac à sable** (WebFetch `ENOTFOUND` sur wiki-masters.com, wikicollector.com, jvflux.fr, next.ink et wikimasters.fr). Le budget WebSearch était épuisé pour une partie des requêtes (O : pesesurstart, RTBF, texte intégral de Next, HuffPost, Numerama « 5 astuces »). Le MCP GitHub refusait xbz-web.
+> Cause principale : **wiki-masters.com est bloqué par le réseau du bac à sable** (WebFetch `ENOTFOUND` sur wiki-masters.com, wikicollector.com, jvflux.fr, next.ink et wikimasters.fr). Le budget WebSearch était épuisé pour une partie des requêtes (O : pesesurstart, RTBF, texte intégral de Next, HuffPost, Numerama « 5 astuces »).
 
-### 10.1 Bloquant (exige l'exploitant)
-1. **Accès et accord de l'exploitant** : dump ou transfert du projet Supabase `cyrxjeppjqsxxjayfrur` (avec `auth.users` et les bcrypt), domaine, Stripe, Vercel, VAPID, Turnstile. Sans eux, aucune migration sans perte n'est possible (§9.0).
+### 9.1 Bloquant (exige l'exploitant)
+1. **Accès et accord de l'exploitant** : dump ou transfert du projet Supabase `cyrxjeppjqsxxjayfrur` (avec `auth.users` et les bcrypt), domaine, Stripe, Vercel, VAPID, Turnstile. Sans eux, aucune migration sans perte n'est possible (§8.0).
 2. **Peut-on garder le même projet Supabase** (option A) ou, à défaut, reprendre le secret JWT pour ne pas déconnecter les joueurs ?
 3. **Schéma réel complet** : stockage du portefeuille (colonne ou grand livre, mécanisme de réservation), table des sanctions, abonnements Stripe (où sont stockés les ids ?), `is_pro` contre `is_vip`, tables des guildes, des batailles, des notifications et du push.
 
-### 10.2 Règles du jeu non confirmées
+### 9.2 Règles du jeu non confirmées
 4. Cotes de tirage par rareté (gratuit et Pro), minimum garanti éventuel, **taux de brillantes** (1/100 cartes ou 1 % des L ?), stats des brillantes.
 5. Formules ATK/DEF (longueur, `q_score`), origine et sens du Q-Score, fenêtre de vues (30 j glissants ou mois précédent) et fréquence de recalcul de la rareté.
 6. Formule exacte de la mise minimale (cas 100 → 110 ou 111 ?), présence de **frais ou commission**, mécanisme du règlement (job, `/settle` ou les deux).
@@ -957,7 +892,7 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 12. Sens de `/api/packs/special` et `/api/packs/grace` ; dotation de départ d'un nouveau compte.
 13. Classement général : endpoint et métrique ; système de concours ; parrainage.
 
-### 10.3 Technique et UI non capturés
+### 9.3 Technique et UI non capturés
 14. **CSS réelle** : valeurs hexadécimales exactes de `--color-accent` et `--color-*`, police `--font-heading`, `box-shadow` de `glow-*`, keyframes (`legendary-shimmer-sheen`, `animate-card-flip`), nom du fond R (`rare.png` ?), rendu des brillantes.
 15. Pages **jamais capturées** : `/profile`, `/guild`, `/friends`, `/dms`, `/battle`, `/achievements`, `/leaderboard`, `/settings`, `/marketplace/{uuid}`, détail d'un échange, panneau de notifications, boutique et paiement Pro (Stripe), achat de WB, contenu de la modale « Comment ça marche ? ».
 16. Liste complète des types de notification et de leurs clés `data` ; canaux Realtime éventuels.
@@ -966,21 +901,21 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 19. Existence éventuelle d'OAuth (Google, Discord, Twitch) derrière `/callback` ; fournisseur des e-mails d'auth.
 20. Version anglaise et multi-langue (colonne `lang`) ; app native (Capacitor) ; contenu sponsorisé (sets Transavia) et son modèle de données.
 
-### 10.4 Juridique
+### 9.4 Juridique
 21. Statut des loot boxes payantes en France (ANJ, PEGI 16) et droit de rétractation UE pour le contenu numérique.
 22. Licences des images Commons (auteur et licence à afficher) ; la promesse de 10 % à Wikimedia appartient-elle à l'original ?
 23. Cadre du transfert RGPD (changement de responsable de traitement) et propriété de la marque WikiMasters.
 
-### 10.5 Pistes pour la suite de la rétro-ingénierie
+### 9.5 Pistes pour la suite de la rétro-ingénierie
 - Lancer REA sur les clones `ext/` et `ext2/` non encore analysés : ludomrn69, AndyB31/Wiki-Traders, Lypningeuh/WikiRemastered, LeKenT1, TendersTroll, qkerman/WikiMastersTools-kzfamily (« Mes ventes » : nombre de mises et prix de départ par annonce), maxime-lalo/better-wiki-master, FCYPBA.
 - Obtenir une capture HAR et le bundle CSS depuis un réseau non bloqué, ou mieux, l'accès au dépôt d'origine.
 
 ---
 
-## 11. Critique de complétude
+## 10. Critique de complétude
 
 > Relecture critique du présent document et de `recon-raw.json` (2026-10-16), avec un seul critère : **zéro régression fonctionnelle et migration sans perte**. Chaque point dit ce qui manque et quelle preuve le tranche.
-> **Couverture** : tous les endpoints de `recon-raw.json` figurent dans ce récap, sauf l'appel SPARQL Wikidata de X (outil de l'extension) et deux routes xbz hors périmètre. En revanche, les §3.7 à §3.10 et §5.7 à §5.8 (social, progression, batailles, guildes) reposent sur **une seule source, E**. E est un client tiers dont l'auteur a eu son propre serveur (`account.ts`). Ses valeurs restent des **hypothèses** tant qu'une seconde source ne les confirme pas.
+> **Couverture** : tous les endpoints de `recon-raw.json` figurent dans ce récap, sauf l'appel SPARQL Wikidata de X (outil de l'extension). En revanche, les §3.7 à §3.10 et §5.7 à §5.8 (social, progression, batailles, guildes) reposent sur **une seule source, E**. E est un client tiers dont l'auteur a eu son propre serveur (`account.ts`). Ses valeurs restent des **hypothèses** tant qu'une seconde source ne les confirme pas.
 
 **Codes de preuve**
 - **DUMP-S** : `pg_dump --schema-only` du projet `cyrxjeppjqsxxjayfrur`, schémas `public`, `auth`, `storage` et `cron`, avec fonctions, triggers, policies RLS, enums et contraintes CHECK. C'est la preuve la plus rentable : elle tranche à elle seule environ la moitié des points ci-dessous.
@@ -990,11 +925,11 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 - **CAP(page)** : capture REA (HAR, DOM, bundle CSS et chunks JS) d'une page de wiki-masters.com depuis un réseau non bloqué, avec un compte gratuit **et** un compte Pro. L'accord de l'exploitant est souhaitable (/rules §3).
 - **Q** : question à l'exploitant (choix produit, valeur non observable).
 
-### 11.1 Contradictions non résolues, y compris dans ce document
+### 10.1 Contradictions non résolues, y compris dans ce document
 
 | # | Contradiction | Pourquoi ça compte | Preuve |
 |---|---|---|---|
-| 1 | **Invariant WB du §9.2** : il ajoute « Σ WB des échanges en attente », alors que les §3.6 et §5.6 disent que **rien n'est séquestré** dans un échange. Si les WB proposés ne sont pas débités, l'invariant les compte deux fois. | Le rapprochement de bascule donnerait un faux écart, ou en masquerait un vrai. | DUMP-S (fonction de création d'échange) ; à défaut, retirer ce terme. |
+| 1 | **Invariant WB du §8.2** : il ajoute « Σ WB des échanges en attente », alors que les §3.6 et §5.6 disent que **rien n'est séquestré** dans un échange. Si les WB proposés ne sont pas débités, l'invariant les compte deux fois. | Le rapprochement de bascule donnerait un faux écart, ou en masquerait un vrai. | DUMP-S (fonction de création d'échange) ; à défaut, retirer ce terme. |
 | 2 | **`count` empilé ou lignes séparées** (§4.2, conflit n° 11), en contradiction avec « une annulation recrée une **nouvelle ligne** » (§4.2). Dans un modèle empilé, le retour incrémenterait `count`. Plusieurs sémantiques restent inconnues : défausser une ligne `count = 3` (décrément ou suppression ? +1 WB par ligne ou par exemplaire ?), mettre en vente ou échanger un exemplaire d'une pile. | Bloquant pour défausse, séquestre, échanges et rapprochement Σ `count`. | DUMP-D : `select count, count(*) from user_cards group by 1` ; SRC handlers `discard` et `marketplace` ; CAP(/collection) sur une carte « xN ». |
 | 3 | **Rareté affichée en collection** : `card.rarity` (courante) ou `snapshot_rarity` ? On ne sait pas non plus quelle rareté entre dans la clé de variante (`card_id`, rareté, `is_shiny`), dans le badge « Nouvelle » et dans les filtres de rareté de `/collection`. | Régression visible (halo, filtres, compteurs) dès qu'une carte change de palier. | CAP(/collection) avec une carte dont la rareté a changé ; SRC. |
 | 4 | **Granularité du verrou d'échange** : `card_id` (T) ou `user_card_id` dans les éléments (E) ? `pendingTradeCardIds` contient-il des id catalogue ou des id de copies ? | Verrou trop large (gêne) ou trop étroit (vente d'une carte promise). | CAP(`GET /api/my-collection?pending=1`) ; DUMP-S. |
@@ -1010,7 +945,7 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 | 14 | Route `/pull` contre `/pulls` | Liens profonds et garde Turnstile. | SRC (arbre `app/`) ; CAP. |
 | 15 | Formes **courantes** de `/api/marketplace/mine`, `?mine=1` et `/api/my-collection/stats` : l'union résout le cas des clients, mais la forme réelle d'aujourd'hui est inconnue | Tests de contrat. | CAP HAR. |
 
-### 11.2 Entités : champs manquants pour une migration sans perte
+### 10.2 Entités : champs manquants pour une migration sans perte
 
 | Entité | Manquant ou non vérifié | Risque | Preuve |
 |---|---|---|---|
@@ -1033,7 +968,7 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 | Tables techniques | Rate limits, état de vérification humaine, jobs `pg_cron`, buckets `storage`, edge functions, webhooks de base | Jobs oubliés (règlement des enchères, recalcul de rareté, expirations). | DUMP-S (`cron.job`, `storage.buckets`, `supabase_functions`). |
 | Sécurité RLS | Policies réelles : T voit des écritures directes POST/PATCH/DELETE sur `user_cards` et `trades` ; `owned_by=<userId>` respecte-t-il `is_public` ? | Reproduire une faille, ou casser un outil tiers légitime. | DUMP-S (`pg_policies`). |
 
-### 11.3 Endpoints dont la réponse est inconnue ou partielle
+### 10.3 Endpoints dont la réponse est inconnue ou partielle
 
 - **Aucune route connue** pour des fonctions pourtant visibles : classement des joueurs (`/leaderboard` est dans la nav) ; boutique et checkout Stripe, webhook, portail d'abonnement ; achat de WB et de recharges ; inscription et désinscription Web Push ; préférences de notification ; **Paramètres** (changer de pseudo, d'e-mail ou de mot de passe, supprimer le compte, export RGPD, contact) ; « Signaler l'image » ; concours ; parrainage ; back-office de modération. → SRC, sinon CAP de chaque écran.
 - **Requête ou réponse inconnue** : `POST /api/packs/grace` (corps et sémantique) ; `POST /api/packs/special` (corps inconnu selon F) ; `POST …/settle` ; `POST …/reprice` ; `GET /api/trades/{id}` (forme exacte) ; `POST /api/trades` (`{id}` ou l'échange complet ?) ; écritures `rest/v1/trades` ; `POST /api/achievements/check` ; toutes les écritures de guilde (`/api/guilds`, `join`, `invite`, `kick`, `transfer-leadership`, `leave`, `wishlist`, `wishlist/donate`) ; `POST /api/friends/accept-all` ; `PATCH`/`DELETE /api/friends/{id}` ; `PUT`/`DELETE /api/showcase` ; `PATCH /api/notifications` ; `GET`/`POST /api/reports` ; réponses de `PATCH /api/battles/{id}` hors `submit_single_answer` ; erreur « quota atteint » de `POST /api/battles` ; existence de `/api/profile/{x}/stats` ; colonnes complètes de `rpc/get_my_profile`.
@@ -1041,14 +976,14 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 - **Pagination et limites** non vues : `/api/trades` (sans pagination, quid des gros comptes ?), `/api/chat/{peer}`, `/api/notifications`, `/api/friends`, `/api/guilds/chat`.
 - Preuve : SRC ; à défaut, CAP HAR de `/friends`, `/dms`, `/guild`, `/battle`, `/achievements`, `/leaderboard`, `/settings`, `/profile/{pseudo}`, `/trades/{id}`, de la boutique et du panneau de notifications.
 
-### 11.4 Fonctionnalités citées mais non spécifiées
+### 10.4 Fonctionnalités citées mais non spécifiées
 
 | Fonctionnalité | Ce qui manque | Preuve |
 |---|---|---|
 | Classement général | Métrique, périodes, endpoint, UI | CAP(/leaderboard) ; Q |
 | Boutique et Pro | Écrans ; produits (Pro mensuel, 2 500 WB, recharges : quantité, prix, effet sur `pack_cap`) ; résiliation ; avantages exacts ; offres pour les non-Pro (paquet du jour verrouillé ?) | CFG Stripe (products, prices) ; CAP(boutique) |
 | Paramètres | Écran entier (onglets, champs, actions) | CAP(/settings) |
-| Pages jamais capturées (§10.3 n° 15) | DOM et textes : régression d'UI certaine sans capture | CAP de chaque page |
+| Pages jamais capturées (§9.3 n° 15) | DOM et textes : régression d'UI certaine sans capture | CAP de chaque page |
 | Création d'échange | Point d'entrée (« Échanger » depuis Amis ou Profil), choix des cartes adverses (via `owned_by` ?), vue détail, UI de contre-offre | CAP(/trades/{id}, /friends) |
 | Alerte de liste de souhaits | Déclencheur quand une carte souhaitée est mise en vente, diffusion à N abonnés, préférence associée | SRC ; DUMP-D (notifications) |
 | Concours, parrainage | Existent-ils dans l'app ou seulement sur Discord ? | Q |
@@ -1061,7 +996,7 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 | Préférences d'UI | Réglage des sons (muet ?), thème clair, manifest PWA et icônes | CAP |
 | RGPD | Suppression de compte, export des données, durées de conservation (/privacy renvoie aux Paramètres) | Q ; texte intégral de /privacy |
 
-### 11.5 Constantes de jeu non fixées
+### 10.5 Constantes de jeu non fixées
 
 | Constante | État | Preuve |
 |---|---|---|
@@ -1080,10 +1015,10 @@ Sans cela, la seule voie serait un import manuel par chaque joueur (export de sa
 | Pseudo : caractères autorisés, noms réservés, délai de renommage | inconnu | DUMP-S (CHECK, trigger) ; CAP(/signup, /settings) |
 | Les 51 succès | 12 connus | DUMP-D (`achievements`) |
 
-### 11.6 Plan de preuve, par ordre de rentabilité
+### 10.6 Plan de preuve, par ordre de rentabilité
 
-1. **Q, en premier** : accord de l'exploitant, accès au dépôt source (SRC) et `pg_dump --schema-only` (DUMP-S). Ces deux preuves tranchent les points n° 1, 2, 4, 6 et 12 du §11.1, l'essentiel du §11.2 et la majorité des constantes du §11.5.
-2. **Agrégats DUMP-D sans PII** : distribution de `count`, brillantes par rareté, raretés tirées en paquet, types de notifications, nombre de lignes par table (la base du rapprochement du §9.3).
+1. **Q, en premier** : accord de l'exploitant, accès au dépôt source (SRC) et `pg_dump --schema-only` (DUMP-S). Ces deux preuves tranchent les points n° 1, 2, 4, 6 et 12 du §10.1, l'essentiel du §10.2 et la majorité des constantes du §10.5.
+2. **Agrégats DUMP-D sans PII** : distribution de `count`, brillantes par rareté, raretés tirées en paquet, types de notifications, nombre de lignes par table (la base du rapprochement du §8.3).
 3. **CFG** : Supabase Auth et SMTP, Stripe (produits, prix, endpoints de webhook, événements écoutés), Vercel (variables, crons), Cloudflare (Turnstile, WAF).
-4. **À défaut de SRC** : campagne CAP depuis un réseau non bloqué, avec un compte gratuit et un compte Pro, sur toutes les pages du §10.3 n° 15. Elle inclut les chunks `/_next/static/chunks/*.js`, qui contiennent les appels du client et souvent les constantes de l'UI (durées, limites, libellés). Le catalogue `cards` est lisible avec la clé anon, mais l'aspirer (environ 2 800 requêtes de 1 000 lignes) suppose l'accord de l'exploitant : ce n'est pas une preuve légitime sans lui.
+4. **À défaut de SRC** : campagne CAP depuis un réseau non bloqué, avec un compte gratuit et un compte Pro, sur toutes les pages du §9.3 n° 15. Elle inclut les chunks `/_next/static/chunks/*.js`, qui contiennent les appels du client et souvent les constantes de l'UI (durées, limites, libellés). Le catalogue `cards` est lisible avec la clé anon, mais l'aspirer (environ 2 800 requêtes de 1 000 lignes) suppose l'accord de l'exploitant : ce n'est pas une preuve légitime sans lui.
 5. **Questions produit (Q)** : cotes, brillantes, concours et parrainage, sets sponsorisés, politique de modération, outils tiers dont il faut garder la compatibilité.
