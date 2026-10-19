@@ -83,9 +83,9 @@ S'il n'achète pas, le même dépôt sort sous **notre marque** (une valeur de c
 ### 3.2 Plans et comptes
 > **Décidé avec l'utilisateur (2026-10-19)** : plans **gratuits** (Supabase Free, Vercel Hobby) pendant toute la construction (M0 à M7). **Supabase Pro pendant environ un mois autour du pitch (M8)** pour charger le catalogue complet et faire le vrai test de charge (≈ 25 à 35 $), puis retour au Free. Vercel ne passe en Pro qu'en cas de vente ou de plan B commercial.
 > **Règle Supabase à respecter** : les projets créés après le 30 mai 2026 (le nôtre date du 16 octobre) n'exposent plus les tables à PostgREST par défaut. Chaque migration qui crée une table ou une fonction exposée doit contenir ses `GRANT` explicites (à vérifier au M0).
-- **Supabase** : projet `vlazmfshvuborizccqza` (eu-west-3 Paris, PG 17.11, vide). Plan Free supposé : 500 Mo de base, pause après 7 jours sans activité, 2 projets actifs. Le plan Pro coûte 25 $/mois, inclut 8 Go de disque et facture le compute à l'heure. Extensions disponibles : pg_cron 1.6.4, pg_net, pg_trgm, unaccent, pgtap, plpgsql_check, pg_partman 5.3.1. Côté e-mails : l'expéditeur intégré n'envoie que quelques e-mails par heure, et un SMTP personnalisé est limité par défaut à 30 inscriptions par heure (réglable).
-- **Vercel** : équipe XBZ, plan Hobby (usage non commercial, crons au plus quotidiens, quota d'invocations limité). Fonctions en région `cdg1`. La disponibilité de la règle WAF `rate_limit`, de `@vercel/firewall` et du runtime cache sur Hobby est **à vérifier au M0** ; aucune fonction critique n'en dépend (§7.0).
-- **GitHub** : dépôt `ilan9903/wikimaster`. Actions : 2 000 min/mois si le dépôt est privé, 6 h maximum par job.
+- **Supabase** : projet « WMR » `iggurckxmoagsajzrnwd` (organisation « WM Prod » `xyyxepqjbgmhyocqqcbx`, eu-west-1 Irlande, PG 17.11, vide ; exposition automatique des nouvelles tables désactivée, RLS automatique activée). Plan Free supposé : 500 Mo de base, pause après 7 jours sans activité, 2 projets actifs. Le plan Pro coûte 25 $/mois, inclut 8 Go de disque et facture le compute à l'heure. Extensions disponibles : pg_cron 1.6.4, pg_net, pg_trgm, unaccent, pgtap, plpgsql_check, pg_partman 5.3.1. Côté e-mails : l'expéditeur intégré n'envoie que quelques e-mails par heure, et un SMTP personnalisé est limité par défaut à 30 inscriptions par heure (réglable).
+- **Vercel** : équipe IVM `team_nXdYy8ZVSzoNaYlzG7a1whey`, projet `wmr` `prj_bNmEEgvcwM6Mhb8jC8QWNUbLukiz` (Node 24, Vercel Authentication sur tout sauf les domaines personnalisés, démo sur https://wmr-ivm.vercel.app), plan Hobby (usage non commercial, crons au plus quotidiens, quota d'invocations limité). Fonctions en région `dub1` (Dublin, à côté de la base en eu-west-1). La disponibilité de la règle WAF `rate_limit`, de `@vercel/firewall` et du runtime cache sur Hobby est **à vérifier au M0** ; aucune fonction critique n'en dépend (§7.0).
+- **GitHub** : dépôt `IVM-Projects/wm-remake`, flux Git : `develop` (intégration), `master` (production), `hotfix` ; les branches de travail partent de `develop` et y reviennent par PR. Actions : 2 000 min/mois si le dépôt est privé, 6 h maximum par job.
 - **Services** : Stripe en mode test (CAD), Cloudflare Turnstile, Brevo SMTP, clés de fournisseurs pour OmniRoute.
 
 ### 3.3 Réseau du bac à sable
@@ -114,7 +114,7 @@ S'il n'achète pas, le même dépôt sort sous **notre marque** (une valeur de c
 4. **Marque en configuration et démo privée** (porte par mot de passe et noindex). Aucune copie des assets d'origine.
 5. **Éthique de capture** : ni jeu scripté ni aspiration sur le site live sans consentement. Les données des joueurs ne viennent que de l'exploitant.
 6. **Outils** : OmniRoute génère les quiz de bataille ; REA sert à la rétro-ingénierie et à la preuve de parité ; Graphify fournit le graphe de code ; Impeccable porte le design system. Le catalogue est construit dans GitHub Actions, parce que le bac à sable n'atteint pas Wikimedia.
-7. **Comptes cibles** : projet Supabase `vlazmfshvuborizccqza`, équipe Vercel XBZ, dépôt `ilan9903/wikimaster`.
+7. **Comptes cibles** : projet Supabase `iggurckxmoagsajzrnwd`, équipe Vercel IVM, dépôt `IVM-Projects/wm-remake` (anciennement `ilan9903/wikimaster`.
 8. **Maintenance** par une équipe de 3 étudiants.
 9. Le recap REA est **juste** et sert de référence. Le pitch a lieu **dès que l'app est opérationnelle et finie**, et **tout doit marcher** (dernier message de l'utilisateur).
 
@@ -167,14 +167,14 @@ Chaque ligne ci-dessous est une **décision de Claude**. Elle s'applique tant qu
 ```
 Navigateur (UI Next, polling visible seulement)
  │ HTTPS
- ├──────────► Vercel cdg1 · Next 16.4.2
+ ├──────────► Vercel dub1 · Next 16.4.2
  │             proxy.ts      : refresh de session @supabase/ssr, redirection /login, porte démo, X-Robots-Tag
  │             app/(game)/*  : Server Components ──┐
  │             app/api/*     : route() = getClaims → zod → 1 RPC wm.* → JSON | erreur FR
  │             after()       : push immédiat
  │                                                 │ HTTPS keep-alive (PostgREST, pool fixe ; aucune connexion pg)
  │                                                 ▼
- └─ PostgREST direct ──────► Supabase eu-west-3 · PG 17 · Auth (GoTrue) · PostgREST · pg_cron · pg_net
+ └─ PostgREST direct ──────► Supabase eu-west-1 · PG 17 · Auth (GoTrue) · PostgREST · pg_cron · pg_net
    (seulement ce que         public : tables miroir du §4 + RLS + RPC sync_profile_packs / get_my_profile
     fait l'original :        wm     : toute la logique (PL/pgSQL), config, grand livre, compteurs, séquestre, quiz…
     tags, user_card_tags,    pg_cron: règlement 10 s, expirations, rétention ; pg_net → /api/cron/push si outbox ≠ ∅
@@ -187,7 +187,7 @@ Externes       : Stripe (Checkout, Portal, webhook) · Turnstile (captcha GoTrue
                  Brevo SMTP (e-mails d'auth FR) · upload.wikimedia.org (miniatures en lien direct)
 ```
 
-### 5.2 Arborescence du dépôt (`ilan9903/wikimaster`)
+### 5.2 Arborescence du dépôt (`IVM-Projects/wm-remake`)
 
 ```
 package.json · next.config.ts (cacheComponents, headers noindex) · proxy.ts
@@ -774,7 +774,7 @@ Les messages du domaine social, des guildes et des batailles ne sont pas connus 
 
 ### 9.2 Cibles chiffrées (contre l'original, §1.4)
 
-| Flux | Cible (p95, côté serveur depuis cdg1) | Original |
+| Flux | Cible (p95, côté serveur depuis dub1) | Original |
 |---|---|---|
 | Ouverture de paquet | < 300 ms de bout en bout ; < 15 ms en base | paquets affichés à 0 |
 | Mise | < 150 ms ; < 20 ms en base | — |
@@ -794,7 +794,7 @@ Les messages du domaine social, des guildes et des batailles ne sont pas connus 
 5. **Échanges, défausses en masse et étiquettes ensemblistes** : quelques instructions, quelle que soit la taille.
 6. **Cache des lectures partagées** (C16) avec overlay par utilisateur : un bot qui interroge une enchère toutes les 150 ms coûte au plus environ 1 requête base par seconde **pour cette enchère**.
 7. **Polling uniquement sur onglet visible** ; la cloche lit PostgREST en direct.
-8. **Co-localisation** : Vercel en `cdg1` et Supabase en eu-west-3, Paris, moins de 2 ms entre les deux.
+8. **Co-localisation** : Vercel en `dub1` et Supabase en eu-west-1, Dublin, moins de 2 ms entre les deux.
 9. **Catalogue compatible HOT** : `fillfactor 90`, et `pageviews` n'est dans aucun index, donc le rafraîchissement mensuel ne réécrit pas les index.
 10. **Grand livre sobre** : les défausses unitaires sont comptées, pas journalisées.
 
@@ -849,7 +849,7 @@ Ce sont des chiffres **optimistes** : les tables `profiles`, `user_cards` et le 
 ### 9.7 Plan de test de charge (`load.yml`, k6 dans Actions)
 - **Cible** : un projet Supabase Pro temporaire `wm-load`, passé en compute 4 cœurs le temps des tirs (environ 2 h), puis supprimé.
 - **Jeu de données** (`load/seed.sql`), dimensionné pour **tenir dans 8 Go** (sinon, pré-provisionner le disque avant le seed) : le catalogue complet (réel s'il est chargé, sinon synthétique de 2,77 M), 200 k profils, 6 M `user_cards` dont 10 baleines de 100 k copies, 45 k enchères actives, 300 k mises, 20 k échanges en attente.
-- **Méthode** : k6 vise `next start` sur des runners GitHub, pour ne pas consommer le quota Hobby, et mesure le temps base par `Server-Timing` et `pg_stat_statements`. Une passe de fumée de 10 min sur la vraie preview Vercel (environ 100 à 200 req/s) mesure la latence de bout en bout depuis cdg1.
+- **Méthode** : k6 vise `next start` sur des runners GitHub, pour ne pas consommer le quota Hobby, et mesure le temps base par `Server-Timing` et `pg_stat_statements`. Une passe de fumée de 10 min sur la vraie preview Vercel (environ 100 à 200 req/s) mesure la latence de bout en bout depuis dub1.
 
 | # | Scénario | Critère de réussite |
 |---|---|---|
@@ -866,7 +866,7 @@ Ce sont des chiffres **optimistes** : les tables `profiles`, `user_cards` et le 
 Après chaque tir, on archive en artefacts `select wm.check_invariants()` et le top 20 de `pg_stat_statements`.
 
 ### 9.8 Recommandation de capacité pour la production (pour Naïm)
-Supabase Pro en compute XL (4 cœurs dédiés), passé en 2XL les soirs d'événement : la montée prend moins de 2 min d'interruption et se fait **avant** l'événement. Vercel Pro (usage commercial) en `cdg1`. Le grand livre passe en partitions au-delà de 20 M de lignes (C5).
+Supabase Pro en compute XL (4 cœurs dédiés), passé en 2XL les soirs d'événement : la montée prend moins de 2 min d'interruption et se fait **avant** l'événement. Vercel Pro (usage commercial) en `dub1`. Le grand livre passe en partitions au-delà de 20 M de lignes (C5).
 
 ---
 
@@ -1046,8 +1046,8 @@ Règles : toute fonction `wm.*` est écrite en TDD (Superpowers), et toute fonct
 
 ### 12.2 CI/CD et Vercel
 - **`ci.yml`** (sur chaque PR) : `npm ci` (Node 24), `tsc --noEmit`, eslint, vitest, tests SQL, contrat HTTP, rapport de couverture du recap. Puis un job d'intégration : `supabase start` → `db reset` → `next build && next start` → contrat HTTP → Playwright + axe.
-- **`db.yml`** (sur `main`) : `supabase db push` vers `vlazmfshvuborizccqza` **avant** la promotion Vercel (sans approbation pendant la construction, C24 ; approbation manuelle activée pour la bascule de production). Les migrations sont expand-only, donc l'ancien build continue de marcher pendant ce temps.
-- **Vercel** (équipe XBZ, intégration Git) : une preview par PR et la production (démo privée), toutes **derrière la porte**. Région `cdg1`, Fluid compute.
+- **`db.yml`** (sur `main`) : `supabase db push` vers `iggurckxmoagsajzrnwd` **avant** la promotion Vercel (sans approbation pendant la construction, C24 ; approbation manuelle activée pour la bascule de production). Les migrations sont expand-only, donc l'ancien build continue de marcher pendant ce temps.
+- **Vercel** (équipe IVM, projet `wmr`, intégration Git) : une preview par PR et la production (démo privée), toutes **derrière la porte**. Région `dub1`, Fluid compute.
 - **Variables d'environnement** :
   - Supabase : `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` (service role), `AUTH_COOKIE_NAME` (option B) ;
   - services : `TURNSTILE_SITEKEY` et `TURNSTILE_SECRET`, `STRIPE_SECRET_KEY` et `STRIPE_WEBHOOK_SECRET` (test), `VAPID_PUBLIC` et `VAPID_PRIVATE`, `CRON_SECRET` (aussi dans Supabase Vault) ;
@@ -1062,7 +1062,7 @@ Règles : toute fonction `wm.*` est écrite en TDD (Superpowers), et toute fonct
 
 ### 12.4 Graphify et plugins
 - **Graphify** :
-  - enregistrer `ilan9903/wikimaster` dans l'espace de travail et réindexer à chaque merge sur `main` ;
+  - enregistrer `IVM-Projects/wm-remake` dans l'espace de travail et réindexer à chaque merge sur `main` ;
   - **nommage 1:1** entre route et fonction SQL (par exemple `/api/marketplace/[auctionId]/bid` ↔ `wm.place_bid`), tenu dans le registre de `lib/contract.ts` ;
   - types Supabase générés (`Database['wm']['Functions']`) : chaque `rpc('…')` est typé et visible dans le graphe ;
   - avant de modifier `route.ts`, `Card`, le catalogue d'erreurs ou un helper SQL partagé : `graphify_impact` et `graphify_callers` ; `graphify_tests_for` pour vérifier que chaque route a sa spec ;
@@ -1076,7 +1076,7 @@ Après chaque jalon, l'app tourne de bout en bout sur la preview protégée, et 
 
 | # | Nom | Périmètre | Terminé quand |
 |---|---|---|---|
-| M0 | Fondations | Dépôt et épingles ; `ci.yml` ; migrations MIRROR et `wm_core` ; `bootstrap_local.sql` ; `route()` et catalogue d'erreurs ; marque, porte fail-closed et `proxy.ts` ; shell navigable (13 entrées) ; `docs/DESIGN.md` (Impeccable) ; rapport de couverture du recap ; Graphify. **Vérifications** : APIs Next 16.4.2 (`proxy.ts`, `cacheComponents`, `'use cache: remote'` en route handler, signature de `revalidateTag`), runtime cache, WAF et `checkRateLimit` sur Hobby, tag Docker OmniRoute, binaire PostgREST dans le bac à sable, clés JWT asymétriques sur notre projet. | CI verte ; migrations appliquées sur PG16 et sur le projet Supabase (MCP) ; preview protégée et noindex déployée en `cdg1`, `/api/health` OK ; test fail-closed vert ; rapport de couverture listant toutes les routes du §3 ; résultats des vérifications consignés dans Graphify. |
+| M0 | Fondations | Dépôt et épingles ; `ci.yml` ; migrations MIRROR et `wm_core` ; `bootstrap_local.sql` ; `route()` et catalogue d'erreurs ; marque, porte fail-closed et `proxy.ts` ; shell navigable (13 entrées) ; `docs/DESIGN.md` (Impeccable) ; rapport de couverture du recap ; Graphify. **Vérifications** : APIs Next 16.4.2 (`proxy.ts`, `cacheComponents`, `'use cache: remote'` en route handler, signature de `revalidateTag`), runtime cache, WAF et `checkRateLimit` sur Hobby, tag Docker OmniRoute, binaire PostgREST dans le bac à sable, clés JWT asymétriques sur notre projet. | CI verte ; migrations appliquées sur PG16 et sur le projet Supabase (MCP) ; preview protégée et noindex déployée en `dub1`, `/api/health` OK ; test fail-closed vert ; rapport de couverture listant toutes les routes du §3 ; résultats des vérifications consignés dans Graphify. |
 | M1 | Comptes, paquets, collection (seed de 2 000 cartes) | Inscription, OTP, 18+, trigger de pseudo, connexion, réinitialisation, vérification ; Card et CardModal ; `/pulls` et human-check ; régénération, tirage, ouverture, Pro du jour, spéciaux, grâce ; `sync_profile_packs` et `get_my_profile` ; `/collection` (étiquettes, liste de souhaits, favoris en accès direct, défausse unitaire et en masse) ; `/global-collection` ; Paramètres de base | E2E inscription → OTP → `/pulls` → paquet → collection → étiquette → défausse vert en CI ; contrat §3.1 à §3.4 vert en HTTP (bac à sable et CI) ; tests SQL d'invariants et de concurrence verts ; axe à 0 violation sérieuse ; animation réduite testée activée et désactivée. |
 | M2 | Catalogue réel | Parseurs et calculs sur fixtures ; `catalog.yml` en modes `full` et `sample` ; `catalog_merge` ; pool par *swap-with-last* ; `card_media` ; page `/credits` | Échantillon (Free) ou catalogue complet (Pro) chargé depuis Actions ; second passage idempotent, ids inchangés ; parts de rareté de l'échantillon à ± 1 % des vraies ; test χ² sur 100 k tirages OK ; licence affichée dans la modale. |
 | M3 | Marché | Tout le §3.5 : séquestre, mises avec débit et remboursement, anti-snipe, règlement (cron, `/settle`, paresseux), baisse de prix, `mine`, ventes (résumé et détail Pro), alertes de liste de souhaits, cache ; benchs refaits en tables journalisées | Contrat §3.5 vert ; test SQL de guerre d'enchères qui conserve M ; règlement en moins de 15 s ; retrait et invendu rendent une nouvelle ligne sans étiquettes ; E2E mise en vente → mise → remboursement → règlement vert. |

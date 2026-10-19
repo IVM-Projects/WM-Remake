@@ -6,13 +6,15 @@
 
 **Architecture:** Next 16 (App Router, `proxy.ts`) à la racine du dépôt ; toute la logique métier en PL/pgSQL `security definer` dans le schéma `wm`, appelée par des route handlers d'une à trois lignes via `route()` → PostgREST (clé secrète). Les tests tournent dans le bac à sable sur PG16 local + binaire PostgREST + stub JWKS, et en CI sur `postgres:17`.
 
-**Tech Stack:** next 16.4.2, react 19.3.1, typescript 6.0.3, tailwindcss 4.3.3, lucide-react 1.59.0, @supabase/ssr 0.12.7, @supabase/supabase-js 2.118.0, zod 4.6.7, vitest 5.0.5, @playwright/test 1.64.1, @axe-core/playwright 4.14.0, PostgREST v12.2.3, PostgreSQL 16 (bac à sable) / 17 (CI, Supabase).
+**Tech Stack:** next 16.4.2, react 19.3.1, typescript 5.9.3, tailwindcss 4.3.3, lucide-react 1.59.0, @supabase/ssr 0.12.7, @supabase/supabase-js 2.118.0, zod 4.6.7, vitest 5.0.5, @playwright/test 1.64.1, @axe-core/playwright 4.14.0, PostgREST v12.2.3, PostgreSQL 16 (bac à sable) / 17 (CI, Supabase).
 
 **Spec:** `docs/superpowers/specs/2026-10-18-wikimasters-rebuild-design.md` (le « design », cité D§x) et sa référence `docs/rea-recap.md` (le « recap », cité R§x).
 
 ## Global Constraints
 
-- Versions **exactes** dans `package.json` (aucun `^` ni `~`) : celles de la ligne Tech Stack, plus eslint 10.13.0, eslint-config-next 16.4.2, @tailwindcss/postcss 4.3.3, @types/node 24.19.2, @types/react 19.3.0, @types/react-dom 19.3.0, server-only 0.0.1. TypeScript 6.0.3 et non 7.0.2 : la 7 est le portage natif sans l'API JS dont `next build` a besoin (`shortcut:` à revoir quand Next annoncera TS 7).
+- Versions **exactes** dans `package.json` (aucun `^` ni `~`) : celles de la ligne Tech Stack, plus eslint 9.39.5, eslint-config-next 16.4.2, @tailwindcss/turbopack 4.3.3, @types/node 24.19.2, @types/react 19.3.0, @types/react-dom 19.3.0, server-only 0.0.1. TypeScript 5.9.3 et eslint 9.39.5 sont les versions installées par le create-next-app du dépôt ; TS 7.0 est le portage natif sans l'API JS dont `next build` a besoin (`shortcut:` à revoir quand Next annoncera TS 7).
+- **Le dépôt part d'un create-next-app** (branche `develop`) : on le complète, on ne le recrée pas. On garde `AGENTS.md`, qui impose de lire le guide concerné dans `node_modules/next/dist/docs/` avant d'écrire du code touchant une API Next (proxy, cache, route handlers, polices) ; on garde `cacheComponents: true`, `partialPrefetching: true` et la règle Turbopack `@tailwindcss/turbopack` de `next.config.ts` (donc pas de `postcss.config.mjs`).
+- Flux Git : branche de travail créée depuis `develop`, PR vers `develop`.
 - Node 24 en CI et sur Vercel (`.nvmrc` = `24`, `engines.node` = `>=22.22`) ; tout doit aussi tourner sur Node 22.22 (bac à sable).
 - Arborescence à la racine (`app/`, `components/`, `lib/`, `supabase/`, `contract/`, `e2e/`), alias `@/*` → `./*` (D§5.2).
 - Aucun préfixe de locale dans les URL ; `<html lang="fr">` ; toute chaîne visible en français ; « tu » dans le jeu, « vous » dans les pages légales (D§14).
@@ -38,13 +40,15 @@
 ### Task 1: Squelette Next.js et marque (fail-closed)
 
 **Files:**
-- Create: `package.json`, `package-lock.json`, `.nvmrc`, `.gitignore`, `.env.example`, `tsconfig.json`, `next.config.ts`, `eslint.config.mjs`, `postcss.config.mjs`, `vitest.config.ts`, `lib/brand.ts`
+- Modify: `package.json`, `package-lock.json`, `.gitignore`, `.env.example`, `tsconfig.json`, `next.config.ts`, `README.md` (une page courte : but du projet, commandes, liens vers `docs/`)
+- Create: `.nvmrc`, `vitest.config.ts`, `lib/brand.ts`
+- Delete: `public/{file,globe,next,vercel,window}.svg` (gabarit)
 - Test: `lib/brand.test.ts`
 
 **Interfaces:**
 - Produces: `BRAND_DEFAULT: string` (= `'WikiCartes'`, nom neutre provisoire, décision de Claude) ; `normalizeBrand(name: string): string` ; `assertBrandSafe(name: string, gatePassword: string | undefined): void` ; `splitBrand(name: string): { name: string; prefix: string | null; rest: string }` ; `brand` (= `splitBrand` de la marque configurée) ; `pageTitle(page: string): string`.
 
-- [ ] **Step 1: Initialiser le projet** — `package.json` (`"private": true`, `"type": "module"`, versions du Global Constraints), scripts : `dev`, `build` (`next build`), `build:test` (`NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test next build`, voir Task 9), `start`, `typecheck` (`next typegen && tsc --noEmit`), `lint` (`eslint .`), `test` (`vitest run`), `test:db` (`bash scripts/db-test.sh`), `test:contract` (`vitest run --config vitest.contract.config.ts`), `test:e2e` (`playwright test`), `coverage:recap` (`node contract/recap-coverage.ts`). `tsconfig.json` : strict, `moduleResolution: bundler`, `allowImportingTsExtensions: true`, `noEmit: true`, `paths {"@/*": ["./*"]}`. `.gitignore` : `node_modules`, `.next`, `.cache`, `.env*` sauf `.env.example`, `test-results`, `playwright-report`, `next-env.d.ts`. `npm install` doit écrire un lockfile sans avertissement de peer bloquant.
+- [ ] **Step 1: Compléter le create-next-app** — `package.json` (garder `name`, `"private": true`, ajouter `"type": "module"` et `engines`, versions exactes du Global Constraints, react/react-dom 19.3.1), scripts : `dev`, `build` (`next build`), `build:test` (`NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test next build`, voir Task 9), `start`, `typecheck` (`next typegen && tsc --noEmit`), `lint` (`eslint .`), `test` (`vitest run`), `test:db` (`bash scripts/db-test.sh`), `test:contract` (`vitest run --config vitest.contract.config.ts`), `test:e2e` (`playwright test`), `coverage:recap` (`node contract/recap-coverage.ts`). `tsconfig.json` (existant) : ajouter `allowImportingTsExtensions: true`. `.env.example` : remplacer le texte d'exemple par la liste commentée des variables du D§12.2. `.gitignore` : `node_modules`, `.next`, `.cache`, `.env*` sauf `.env.example`, `test-results`, `playwright-report`, `next-env.d.ts`. `npm install` doit écrire un lockfile sans avertissement de peer bloquant.
 
 - [ ] **Step 2: Écrire le test qui échoue** (`lib/brand.test.ts`)
 
@@ -79,7 +83,7 @@ describe('marque', () => {
 
 - [ ] **Step 4: Implémenter `lib/brand.ts`** — `normalizeBrand` : NFD, suppression des diacritiques, minuscules, suppression de tout ce qui n'est pas `[a-z0-9]`. `assertBrandSafe` lève `Error('Marque d\'origine configurée sans porte démo : définis DEMO_GATE_PASSWORD')`. `splitBrand(name): { name; prefix; rest }` (préfixe `'Wiki'` sensible à la casse). `brand = splitBrand(process.env.NEXT_PUBLIC_BRAND_NAME || BRAND_DEFAULT)`. **Ne pas** appeler `assertBrandSafe` au niveau module (le fichier est importé côté client, où le mot de passe n'existe pas).
 
-- [ ] **Step 5: Brancher le fail-closed au build et au démarrage** — `next.config.ts` appelle `assertBrandSafe(process.env.NEXT_PUBLIC_BRAND_NAME || BRAND_DEFAULT, process.env.DEMO_GATE_PASSWORD)` en tête (lu par `next build` **et** `next start`). Config : `poweredByHeader: false`, `cacheComponents: true`, redirection `{ source: '/pull', destination: '/pulls', permanent: true }` (308, D§8.1), en-têtes `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` sur `/:path*`.
+- [ ] **Step 5: Brancher le fail-closed au build et au démarrage** — dans le `next.config.ts` existant (en gardant ses options), appeler `assertBrandSafe(process.env.NEXT_PUBLIC_BRAND_NAME || BRAND_DEFAULT, process.env.DEMO_GATE_PASSWORD)` en tête (lu par `next build` **et** `next start`). Ajouter : `poweredByHeader: false`, redirection `{ source: '/pull', destination: '/pulls', permanent: true }` (308, D§8.1), en-têtes `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` sur `/:path*`.
 
 - [ ] **Step 6: Vérifier** — Run: `npx vitest run lib/brand.test.ts && NEXT_PUBLIC_BRAND_NAME=WikiMasters npx next build; echo "exit=$?"` · Expected: tests PASS ; le build échoue avec le message `DEMO_GATE_PASSWORD` (exit ≠ 0).
 
@@ -90,7 +94,9 @@ describe('marque', () => {
 ### Task 2: Jetons de design, polices, layout racine, DESIGN.md
 
 **Files:**
-- Create: `app/globals.css`, `app/layout.tsx`, `app/fonts/*.woff2` (+ `app/fonts/OFL.txt`), `app/icon.tsx`, `app/not-found.tsx`, `docs/DESIGN.md`
+- Modify: `app/globals.css`, `app/layout.tsx` (remplacer Geist par nos polices, `lang="fr"`)
+- Create: `app/fonts/*.woff2` (+ `app/fonts/OFL.txt`), `app/icon.tsx`, `app/not-found.tsx`, `docs/DESIGN.md`
+- Delete: `app/favicon.ico` (remplacé par `app/icon.tsx`)
 - Test: `lib/contrast.test.ts`
 
 **Interfaces:**
@@ -462,7 +468,7 @@ it('le vrai recap', () => {
 ### Task 10: Shell de l'application, pages d'attente, E2E et a11y
 
 **Files:**
-- Create: `components/shell/nav.ts`, `components/shell/Logo.tsx`, `components/shell/Sidebar.tsx`, `components/shell/BottomBar.tsx`, `components/shell/Bell.tsx`, `components/shell/PageHeader.tsx`, `app/(game)/layout.tsx`, une `page.tsx` par entrée de `NAV` sous `app/(game)/`, `app/(public)/page.tsx`, `app/(public)/login/page.tsx`, `playwright.config.ts`, `e2e/fixtures.ts`
+- Create: `components/shell/nav.ts`, `components/shell/Logo.tsx`, `components/shell/Sidebar.tsx`, `components/shell/BottomBar.tsx`, `components/shell/Bell.tsx`, `components/shell/PageHeader.tsx`, `app/(game)/layout.tsx`, une `page.tsx` par entrée de `NAV` sous `app/(game)/`, `app/(public)/page.tsx` (et suppression de `app/page.tsx` du gabarit, qui entrerait en conflit sur `/`), `app/(public)/login/page.tsx`, `playwright.config.ts`, `e2e/fixtures.ts`
 - Test: `e2e/shell.spec.ts`, `e2e/a11y.spec.ts`
 
 **Interfaces:**
@@ -527,7 +533,7 @@ test.describe('chaque page a son h1', () => { /* pour chaque NAV : goto(href) �
 - Modify: `supabase/migrations/1000_wm_core.sql` (seulement si une correction s'impose)
 - Create: `docs/verifications.md` (journal, complété à la Task 14)
 
-- [ ] **Step 1: Appliquer les migrations** sur `vlazmfshvuborizccqza` via le MCP Supabase `apply_migration`, une par fichier, avec pour nom le nom de fichier sans extension (`0001_mirror_core`, `0002_mirror_rls`, `1000_wm_core`) pour pouvoir plus tard aligner `supabase migration repair` sur ces versions.
+- [ ] **Step 1: Appliquer les migrations** sur le projet « WMR » `iggurckxmoagsajzrnwd` via le MCP Supabase `apply_migration`, une par fichier, avec pour nom le nom de fichier sans extension (`0001_mirror_core`, `0002_mirror_rls`, `1000_wm_core`) pour pouvoir plus tard aligner `supabase migration repair` sur ces versions.
 
 - [ ] **Step 2: Exposer `wm` à PostgREST** — via `execute_sql` : `alter role authenticator set pgrst.db_schemas = 'public, graphql_public, wm'; notify pgrst, 'reload config';`. La preuve viendra de `/api/health` en Task 13 ; si elle échoue avec `PGRST106` (schéma non exposé), **étape humaine** : l'utilisateur ajoute `wm` dans Supabase → Settings → API → Exposed schemas.
 
@@ -545,9 +551,9 @@ test.describe('chaque page a son h1', () => { /* pour chaque NAV : goto(href) �
 - Create: `vercel.json`
 - Modify: `.github/workflows/health.yml` (URL de la démo)
 
-- [ ] **Step 1: `vercel.json`** — `{ "regions": ["cdg1"] }`.
+- [ ] **Step 1: `vercel.json`** — `{ "regions": ["dub1"] }` (Dublin, à côté de la base en eu-west-1).
 
-- [ ] **Step 2: Projet Vercel** — via le MCP Vercel (équipe `team_EdDmARh6VZ9afHMb1WTeywEN`) : `create_project` nommé `wikimaster`, framework `nextjs`, dépôt GitHub `ilan9903/wikimaster`. Si le lien Git est refusé (accès de l'app Vercel au dépôt, ou règle Hobby sur l'auteur des commits d'un dépôt privé, C32), **étape humaine** : l'utilisateur importe le dépôt depuis le tableau de bord Vercel ; noter la cause dans `docs/verifications.md`.
+- [ ] **Step 2: Projet Vercel existant** — l'utilisateur a créé le projet `wmr` (`prj_bNmEEgvcwM6Mhb8jC8QWNUbLukiz`, équipe IVM `team_nXdYy8ZVSzoNaYlzG7a1whey`, Node 24). Via le MCP Vercel `get_project` : relever le dépôt lié et la branche de production, et les consigner dans `docs/verifications.md`. Si le projet n'est pas lié à `IVM-Projects/wm-remake`, ou si Vercel refuse nos commits (règle Hobby sur l'auteur des commits d'un dépôt privé, C32), **étape humaine** : l'utilisateur lie le dépôt depuis le tableau de bord ; sinon déploiement par le MCP. La Vercel Authentication reste active sur les déploiements (hors domaines personnalisés) : la démo publique passe par `https://wmr-ivm.vercel.app`, protégée par notre porte.
 
 - [ ] **Step 3: Variables d'environnement** (production et preview) via `create_project_env` :
   - `NEXT_PUBLIC_SUPABASE_URL` (MCP Supabase `get_project_url`) et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (`get_publishable_keys`, clé `sb_publishable_…`) ;
@@ -555,13 +561,13 @@ test.describe('chaque page a son h1', () => { /* pour chaque NAV : goto(href) �
   - `SUPABASE_SECRET_KEY` : **étape humaine** (le MCP ne lit pas les clés secrètes) — l'utilisateur copie la clé `sb_secret_…` depuis Supabase → Settings → API Keys vers Vercel, type *sensitive* ;
   - `NEXT_PUBLIC_BRAND_NAME` non défini (marque provisoire `WikiCartes`).
 
-- [ ] **Step 4: Déployer et vérifier depuis l'extérieur** — déclencher un déploiement de la branche (push ou MCP) ; suivre `get_deployment` / `list_deployment_events` jusqu'à `READY`. Puis, via `web_fetch_vercel_url` (qui traverse la protection Vercel des previews) :
+- [ ] **Step 4: Déployer et vérifier depuis l'extérieur** — déclencher un déploiement de la branche (push ou MCP) puis, après fusion dans la branche de production, de `https://wmr-ivm.vercel.app` ; suivre `get_deployment` / `list_deployment_events` jusqu'à `READY`. Puis, via `web_fetch_vercel_url` (qui traverse la protection Vercel des previews) :
   - `/api/health` → 200 `{"ok":true,"db":"ok",…}` (prouve clé secrète, schéma `wm` exposé et privilèges) ;
   - `/` → redirection vers `/gate?next=%2F`, en-tête `X-Robots-Tag: noindex, nofollow, noarchive` ;
   - `/robots.txt` → `Disallow: /`.
   En cas d'échec : `get_runtime_logs`, diagnostic, correction, nouveau déploiement.
 
-- [ ] **Step 5: URL de santé** — écrire l'URL du déploiement de la branche dans `health.yml` ; commit `git commit -am "chore: déploiement Vercel protégé (cdg1) et URL de santé"`.
+- [ ] **Step 5: URL de santé** — écrire `https://wmr-ivm.vercel.app` dans `health.yml` (domaine personnalisé, donc hors Vercel Authentication ; `/api/health` est exemptée de la porte) ; commit `git commit -am "chore: déploiement Vercel protégé (dub1) et URL de santé"`.
 
 ---
 
@@ -585,4 +591,4 @@ test.describe('chaque page a son h1', () => { /* pour chaque NAV : goto(href) �
 
 ## Done when (critère du M0, D§13)
 
-CI verte sur la branche ; migrations appliquées sur PG16 local, sur `postgres:17` en CI et sur le projet Supabase ; démo déployée en `cdg1`, derrière la porte et en noindex, avec `/api/health` à 200 ; test fail-closed vert ; rapport de couverture listant toutes les routes de R§3 ; vérifications consignées dans `docs/verifications.md` et dans Graphify.
+CI verte sur la branche ; migrations appliquées sur PG16 local, sur `postgres:17` en CI et sur le projet Supabase ; démo déployée en `dub1`, derrière la porte et en noindex, avec `/api/health` à 200 ; test fail-closed vert ; rapport de couverture listant toutes les routes de R§3 ; vérifications consignées dans `docs/verifications.md` et dans Graphify.

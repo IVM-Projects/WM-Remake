@@ -15,11 +15,15 @@ Avant de lancer M0, l'utilisateur connecte de **nouveaux comptes** GitHub, Supab
 
 | Élément | Ancien (ne plus utiliser) | Nouveau |
 |---|---|---|
-| Organisation et projet Supabase | org `xwlidrqbodwlulipmcym` (XBZ), projet `vlazmfshvuborizccqza` | org « WM Prod » (Free), projet « WM-Remake » créé par l'utilisateur (Paris `eu-west-3` conseillé, Data API activée, exposition automatique des tables **désactivée**, RLS automatique activée, sans lien GitHub) ; récupérer son ref par MCP `list_projects` |
-| Équipe Vercel | `team_EdDmARh6VZ9afHMb1WTeywEN` (XBZ) | à découvrir (MCP `list_teams`) |
-| Dépôt GitHub | `ilan9903/wikimaster` | `IVM-Projects/WM-Remake` (la branche de travail y est recopiée ou le dépôt y est transféré) |
+| Organisation et projet Supabase | org `xwlidrqbodwlulipmcym` (XBZ), projet `vlazmfshvuborizccqza` | org « WM Prod » `xyyxepqjbgmhyocqqcbx` (Free), projet « WMR » `iggurckxmoagsajzrnwd`, eu-west-1 (Irlande) |
+| Équipe Vercel | `team_EdDmARh6VZ9afHMb1WTeywEN` (XBZ) | équipe IVM `team_nXdYy8ZVSzoNaYlzG7a1whey`, projet `wmr` `prj_bNmEEgvcwM6Mhb8jC8QWNUbLukiz`, démo https://wmr-ivm.vercel.app, région des fonctions `dub1` |
+| Dépôt GitHub | `ilan9903/wikimaster` | `IVM-Projects/wm-remake` ; branche de travail `claude/clever-cannon-59x0dj` créée depuis `develop` (flux : `develop`, `master`, `hotfix`) ; l'ancien dépôt sera supprimé par l'utilisateur |
 
-## Première étape de la nouvelle session
+## Fait le 2026-10-19
+
+Comptes connectés et vérifiés dans la session d'origine ; les 7 commits de documentation ont été recopiés dans `IVM-Projects/wm-remake` ; design et plan mis à jour avec les nouveaux identifiants. Le dépôt contient un create-next-app (Next 16.4.2) que la Task 1 complète.
+
+## Si une nouvelle session reprend
 
 1. Vérifier les connecteurs : Supabase (`list_organizations`, `list_projects`), Vercel (`list_teams`), accès GitHub au dépôt (push sur la branche de travail).
 2. Vérifier le projet Supabase « WM-Remake » (région, exposition automatique désactivée). Conséquence : chaque migration porte ses `GRANT` explicites (déjà prévu). La RLS automatique crée un *event trigger* en prod qui n'existe pas dans le banc local : les migrations activent quand même la RLS explicitement (test `02_mirror_rls`).
