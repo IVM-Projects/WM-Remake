@@ -1045,7 +1045,7 @@ L'ancienne pile reste intacte jusqu'à J+14.
 Règles : toute fonction `wm.*` est écrite en TDD (Superpowers), et toute fonction monétaire a son test d'invariant. Un test vérifie qu'**aucune** réponse client ne contient de bonne réponse de quiz, et un autre qu'aucune colonne hors liste blanche n'est touchée par le catalogue.
 
 ### 12.2 CI/CD et Vercel
-- **`ci.yml`** (sur chaque PR) : `npm ci` (Node 24), `tsc --noEmit`, eslint, vitest, tests SQL, contrat HTTP, rapport de couverture du recap. Puis un job d'intégration : `supabase start` → `db reset` → `next build && next start` → contrat HTTP → Playwright + axe.
+- **`ci.yml`** (sur chaque PR, à chaque push sur `develop` et `master`, et à la demande ; voir C31) : `npm ci` (Node 24), `tsc --noEmit`, eslint, vitest, tests SQL, contrat HTTP, rapport de couverture du recap. Puis un job d'intégration : `supabase start` → `db reset` → `next build && next start` → contrat HTTP → Playwright + axe.
 - **`db.yml`** (sur `master`, la branche de production ; `develop` est l'intégration, `hotfix` porte les correctifs urgents vers `master`) : `supabase db push` vers `iggurckxmoagsajzrnwd` **avant** la promotion Vercel (sans approbation pendant la construction, C24 ; approbation manuelle activée pour la bascule de production). Les migrations sont expand-only, donc l'ancien build continue de marcher pendant ce temps.
 - **Vercel** (équipe IVM, projet `wmr`, intégration Git) : une preview par PR et la production (démo privée), toutes **derrière la porte**. Région `dub1`, Fluid compute.
 - **Variables d'environnement** :
