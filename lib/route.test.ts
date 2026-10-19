@@ -131,11 +131,17 @@ describe('route()', () => {
     expect(args).toHaveBeenCalledWith(undefined, expect.objectContaining({ idem: 'k'.repeat(128) }))
   })
 
-  it('auth: false → getClaims jamais appelé, args par défaut {}', async () => {
+  it('auth: false → getClaims jamais appelé, aucune clé p_uid envoyée', async () => {
     const res = await route({ fn: 'health', auth: false })(req(), ctx)
     expect(getClaims).not.toHaveBeenCalled()
-    expect(rpc).toHaveBeenCalledWith('health', {})
+    expect(rpc.mock.calls[0]).toStrictEqual(['health', {}])
     expect(res.status).toBe(200)
+  })
+
+  it('args ne peut pas remplacer p_uid', async () => {
+    signedIn()
+    await route({ fn: 'fn', args: () => ({ p_uid: 'evil', p_x: 1 }) })(req(), ctx)
+    expect(rpc.mock.calls[0]).toStrictEqual(['fn', { p_uid: 'u1', p_x: 1 }])
   })
 
   it('une ligne de log JSON, uid haché', async () => {

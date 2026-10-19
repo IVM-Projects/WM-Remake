@@ -75,7 +75,8 @@ export function route<I = undefined>(opts: {
       if (!parsed.success) return fail(400, parsed.error.issues[0].message, 'invalid_request')
       input = parsed.data
     }
-    const args = opts.args ? opts.args(input, ctx) : auth ? { p_uid: ctx.uid } : {}
+    // p_uid posé en dernier : un handler ne peut pas le remplacer par un uid venu du client.
+    const args = { ...opts.args?.(input, ctx), ...(auth && { p_uid: ctx.uid }) }
     const { data, error } = await createAdminClient().schema('wm').rpc(opts.fn, args)
     if (error) return { ...toHttpError(error), pgCode: error.code }
     return { status: 200, body: data ?? null }
