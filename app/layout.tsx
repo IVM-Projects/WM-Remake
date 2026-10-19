@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { brand } from "@/lib/brand";
+import { gateEnv } from "@/lib/gate";
 import "./globals.css";
 
 // Fichiers @fontsource-variable 5.3.0 (OFL, app/fonts/OFL.txt) : next/font/google télécharge au build.
@@ -20,7 +21,7 @@ const inter = localFont({
 
 export const metadata: Metadata = {
   title: { default: brand.name, template: `%s — ${brand.name}` },
-  robots: process.env.DEMO_GATE_PASSWORD ? { index: false, follow: false } : undefined,
+  robots: gateEnv() ? { index: false, follow: false } : undefined,
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

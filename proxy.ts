@@ -30,9 +30,10 @@ async function handle(request: NextRequest, gate: ReturnType<typeof gateEnv>): P
 }
 
 export async function proxy(request: NextRequest) {
-  const gate = gateEnv()
+  let gate: ReturnType<typeof gateEnv>
   try {
-    // brand.name est figé au build, la porte lue à l'exécution ; mot de passe sans secret = porte inactive, donc refusé aussi.
+    // brand.name est figé au build, la porte lue à l'exécution : porte à moitié configurée ou marque d'origine sans porte → 500.
+    gate = gateEnv()
     assertBrandSafe(brand.name, gate?.password)
   } catch {
     return NextResponse.json({ error: 'Configuration invalide', message: 'Configuration invalide' }, { status: 500 })

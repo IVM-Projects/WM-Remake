@@ -3,10 +3,12 @@ export const GATE_COOKIE = 'wm_gate'
 // Chemins bruts exacts : aucune normalisation, donc `/GATE` ou `/api/health/` ne passent pas.
 const EXEMPT = new Set(['/gate', '/api/health', '/api/stripe/webhook', '/robots.txt', '/icon'])
 
-// Porte active seulement si les deux variables sont définies ; lues à l'exécution.
+// Seule définition de « porte active » (proxy, next.config, layout, robots) : les deux variables, ou aucune.
+// Une seule définie lève (fail-closed) au lieu d'ouvrir la porte. Lues à l'appel.
 export function gateEnv(): { password: string; secret: string } | null {
   const password = process.env.DEMO_GATE_PASSWORD
   const secret = process.env.GATE_COOKIE_SECRET
+  if (!password !== !secret) throw new Error('Porte démo à moitié configurée : définis DEMO_GATE_PASSWORD et GATE_COOKIE_SECRET, ou aucune des deux')
   return password && secret ? { password, secret } : null
 }
 

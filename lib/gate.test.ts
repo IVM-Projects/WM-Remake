@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { gateDecision, gateToken, isGateCookieValid, safeNext } from '@/lib/gate'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { gateDecision, gateEnv, gateToken, isGateCookieValid, safeNext } from '@/lib/gate'
 
 describe('porte démo', () => {
   it.each([
@@ -26,5 +26,24 @@ describe('porte démo', () => {
     expect(await isGateCookieValid(t, 'autre-secret', 'pw')).toBe(false)
     expect(await isGateCookieValid(undefined, 'k', 'pw')).toBe(false)
     expect(await isGateCookieValid('', 'k', 'pw')).toBe(false)
+  })
+  describe('gateEnv()', () => {
+    afterEach(() => vi.unstubAllEnvs())
+    const env = (password: string, secret: string) => {
+      vi.stubEnv('DEMO_GATE_PASSWORD', password)
+      vi.stubEnv('GATE_COOKIE_SECRET', secret)
+    }
+    it('les deux variables → porte active', () => {
+      env('pw', 'k')
+      expect(gateEnv()).toEqual({ password: 'pw', secret: 'k' })
+    })
+    it('aucune (ou vides) → porte inactive', () => {
+      env('', '')
+      expect(gateEnv()).toBeNull()
+    })
+    it.each([['pw', ''], ['', 'k']])('une seule (%j, %j) → erreur, jamais porte inactive', (password, secret) => {
+      env(password, secret)
+      expect(() => gateEnv()).toThrow(/DEMO_GATE_PASSWORD et GATE_COOKIE_SECRET/)
+    })
   })
 })

@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
-import { assertBrandSafe, BRAND_DEFAULT } from "./lib/brand.ts";
+import { assertBrandSafe, brand } from "./lib/brand.ts";
+import { gateEnv } from "./lib/gate.ts";
 
-// Fail-closed : lu par `next build` et par `next start`.
-assertBrandSafe(process.env.NEXT_PUBLIC_BRAND_NAME || BRAND_DEFAULT, process.env.DEMO_GATE_PASSWORD);
+// Fail-closed : lu par `next build` et par `next start` ; gateEnv() lève aussi si la porte est à moitié configurée.
+assertBrandSafe(brand.name, gateEnv()?.password);
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
