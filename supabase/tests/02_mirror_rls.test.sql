@@ -17,17 +17,17 @@ do $$ begin
           where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity) = 0, 'table de public sans RLS';
 end $$;
 
--- Droits exacts : rien pour anon ; en écriture, seuls starred, tags.name/color et les insert/delete listés.
+-- Droits exacts : rien pour anon ni PUBLIC (grantee 0) ; en écriture, seuls starred, tags.name/color et les insert/delete listés.
 do $$ declare got text; begin
   select string_agg(g, ', ' order by g) into got from (
-    select format('%s %s %s', a.grantee::regrole, c.relname, a.privilege_type) g
+    select format('%s %s %s', coalesce(nullif(a.grantee, 0)::regrole::text, 'public'), c.relname, a.privilege_type) g
     from pg_class c, aclexplode(c.relacl) a
-    where c.relnamespace = 'public'::regnamespace and a.grantee in ('anon'::regrole, 'authenticated'::regrole)
+    where c.relnamespace = 'public'::regnamespace and a.grantee in ('anon'::regrole::oid, 'authenticated'::regrole::oid, 0)
       and c.relname in ('profiles', 'cards', 'user_cards', 'tags', 'user_card_tags', 'wishlist_items')
     union all
-    select format('%s %s.%s %s', a.grantee::regrole, c.relname, att.attname, a.privilege_type)
+    select format('%s %s.%s %s', coalesce(nullif(a.grantee, 0)::regrole::text, 'public'), c.relname, att.attname, a.privilege_type)
     from pg_class c join pg_attribute att on att.attrelid = c.oid, aclexplode(att.attacl) a
-    where c.relnamespace = 'public'::regnamespace and a.grantee in ('anon'::regrole, 'authenticated'::regrole)
+    where c.relnamespace = 'public'::regnamespace and a.grantee in ('anon'::regrole::oid, 'authenticated'::regrole::oid, 0)
       and c.relname in ('profiles', 'cards', 'user_cards', 'tags', 'user_card_tags', 'wishlist_items')
   ) s;
   assert got = 'authenticated cards SELECT, authenticated profiles SELECT, authenticated tags DELETE, '

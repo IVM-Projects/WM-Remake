@@ -9,6 +9,9 @@ alter table public.tags enable row level security;
 alter table public.user_card_tags enable row level security;
 alter table public.wishlist_items enable row level security;
 
+-- Table rase d'abord (droits de colonne compris) : une base aux anciens défauts Supabase (GRANT ALL) ne garde rien de plus.
+revoke all on table public.profiles, public.cards, public.user_cards, public.tags, public.user_card_tags,
+  public.wishlist_items from public, anon, authenticated;
 grant select on table public.profiles, public.cards to authenticated;
 grant select, update (starred) on table public.user_cards to authenticated;
 grant select, insert, update (name, color), delete on table public.tags to authenticated;
