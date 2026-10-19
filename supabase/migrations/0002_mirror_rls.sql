@@ -1,4 +1,5 @@
 -- MIRROR : RLS et droits de la surface PostgREST directe de l'original (R§3.3, R§7.1, D§5.3, D§6.3). Idempotente.
+-- Ne jamais la rejouer seule après des migrations plus récentes : son `revoke all` retirerait les droits qu'elles accordent sur ces tables.
 -- anon : rien. authenticated : lit le catalogue et ses lignes, n'écrit que starred, ses étiquettes, liaisons et souhaits.
 -- Jamais d'écriture client sur les soldes, count, packs_*, snapshot_*, obtained_at, ni insert/delete de user_cards.
 
