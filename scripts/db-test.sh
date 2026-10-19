@@ -2,12 +2,14 @@
 # Banc de tests SQL : base wm_test neuve (cluster PG jetable dans .cache/pg, ou serveur de $DATABASE_URL),
 # stub Supabase, migrations, helpers, puis supabase/tests/*.test.{sql,sh}.
 # --setup-only : imprime une seule ligne DATABASE_URL=… et laisse la base en place.
+# --stop : arrête et supprime le cluster local laissé par --setup-only (rien à faire avec $DATABASE_URL).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tests="$root/supabase/tests"
 setup_only=false
 [[ "${1:-}" == --setup-only ]] && setup_only=true
+[[ "${1:-}" == --stop && -n "${DATABASE_URL:-}" ]] && exit 0
 
 export LC_COLLATE=C                                                  # ordre lexical des migrations
 export PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning"     # pas de NOTICE parasite
@@ -19,6 +21,7 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   as_pg() { if [[ $EUID -eq 0 ]]; then runuser -u postgres -- "$@"; else "$@"; fi; }  # initdb refuse root
   cleanup() { as_pg "$pgbin/pg_ctl" -D "$dir" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$dir" "$dir.pw"; }
   cleanup  # un cluster laissé par un --setup-only précédent
+  [[ "${1:-}" == --stop ]] && exit 0
   trap cleanup EXIT
   mkdir -p "$dir"
   echo postgres >"$dir.pw"
