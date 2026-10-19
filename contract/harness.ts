@@ -146,7 +146,7 @@ export async function startBackend(): Promise<Backend> {
     stops.push(() => kill(postgrest))
     await waitReady('postgrest', postgrest, `http://127.0.0.1:${POSTGREST_PORT}/`)
 
-    const mailpit = spawnLogged('mailpit', `${cache}/mailpit/mailpit`, ['--smtp', `127.0.0.1:${MAILPIT_SMTP_PORT}`, '--listen', '127.0.0.1:54324'], process.env)
+    const mailpit = spawnLogged('mailpit', `${cache}/mailpit/mailpit`, ['--smtp', `127.0.0.1:${MAILPIT_SMTP_PORT}`, '--listen', '127.0.0.1:54324', '--disable-version-check'], process.env)
     stops.push(() => kill(mailpit))
     await waitReady('mailpit', mailpit, `${MAILPIT_URL}/api/v1/info`)
 
@@ -180,6 +180,7 @@ export async function startBackend(): Promise<Backend> {
       GOTRUE_SMTP_PORT: String(MAILPIT_SMTP_PORT),
       GOTRUE_SMTP_ADMIN_EMAIL: 'noreply@wikicartes.test',
       GOTRUE_SMTP_SENDER_NAME: 'WikiCartes',
+      GOTRUE_SMTP_MAX_FREQUENCY: '1s', // défaut 60 s : « Renvoyer le code » prendrait 429 over_email_send_rate_limit
       // Liens d'e-mail résolus sur l'hôte d'API_EXTERNAL_URL sans son chemin (comme le docker-compose de Supabase).
       GOTRUE_MAILER_URLPATHS_CONFIRMATION: '/auth/v1/verify',
       GOTRUE_MAILER_URLPATHS_RECOVERY: '/auth/v1/verify',

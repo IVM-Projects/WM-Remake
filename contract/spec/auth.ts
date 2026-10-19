@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import type { RouteSpec } from '../../lib/contract.ts'
 import { latestMail, latestOtp } from '../mail.ts'
+import { authCookie, makeUser } from '../users.ts'
 
 const KEY = 'sb_publishable_test'
 
@@ -65,6 +66,17 @@ export const auth: RouteSpec = {
         const res = await gotrue(backend.supabaseUrl, '/token?grant_type=password', { email, password })
         assert.equal(res.status, 200)
         assert.equal(typeof ((await res.json()) as { access_token?: unknown }).access_token, 'string')
+      },
+    },
+    {
+      name: 'joueur de makeUser : le jeton de son authCookie → GET /auth/v1/user 200, même id (ligne auth.users lisible par GoTrue)',
+      run: async ({ backend }) => {
+        const { uid } = makeUser(backend.databaseUrl)
+        const { value } = authCookie(backend, uid)
+        const { access_token } = JSON.parse(Buffer.from(value.slice('base64-'.length), 'base64url').toString()) as { access_token: string }
+        const res = await fetch(`${backend.supabaseUrl}/auth/v1/user`, { headers: { apikey: KEY, authorization: `Bearer ${access_token}` } })
+        assert.equal(res.status, 200, await res.clone().text())
+        assert.equal(((await res.json()) as { id: string }).id, uid)
       },
     },
   ],

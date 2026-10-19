@@ -2,14 +2,19 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { MAILPIT_URL } from './harness.ts'
 
+async function mailpit<T>(path: string): Promise<T> {
+  const res = await fetch(`${MAILPIT_URL}/api/v1/${path}`)
+  if (!res.ok) throw new Error(`Mailpit : GET /api/v1/${path} → ${res.status}`)
+  return (await res.json()) as T
+}
+
 export async function latestMail(email: string): Promise<{ subject: string; text: string; html: string }> {
   const deadline = Date.now() + 10_000
   for (;;) {
     // Mailpit trie du plus récent au plus ancien.
-    const search = await fetch(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`)
-    const { messages } = (await search.json()) as { messages: { ID: string }[] }
+    const { messages } = await mailpit<{ messages: { ID: string }[] }>(`search?query=${encodeURIComponent(`to:${email}`)}`)
     if (messages.length) {
-      const mail = (await (await fetch(`${MAILPIT_URL}/api/v1/message/${messages[0].ID}`)).json()) as { Subject: string; Text: string; HTML: string }
+      const mail = await mailpit<{ Subject: string; Text: string; HTML: string }>(`message/${messages[0].ID}`)
       return { subject: mail.Subject, text: mail.Text, html: mail.HTML }
     }
     if (Date.now() > deadline) throw new Error(`aucun e-mail pour ${email} en 10 s`)
