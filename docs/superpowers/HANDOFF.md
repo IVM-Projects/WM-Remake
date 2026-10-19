@@ -15,15 +15,15 @@ Avant de lancer M0, l'utilisateur connecte de **nouveaux comptes** GitHub, Supab
 
 | Élément | Ancien (ne plus utiliser) | Nouveau |
 |---|---|---|
-| Organisation et projet Supabase | org `xwlidrqbodwlulipmcym` (XBZ), projet `vlazmfshvuborizccqza` | à découvrir (MCP `list_organizations`) ; créer le projet `WikiMaster`, région `eu-west-3`, plan Free |
+| Organisation et projet Supabase | org `xwlidrqbodwlulipmcym` (XBZ), projet `vlazmfshvuborizccqza` | org « WM Prod » (Free), projet « WM-Remake » créé par l'utilisateur (Paris `eu-west-3` conseillé, Data API activée, exposition automatique des tables **désactivée**, RLS automatique activée, sans lien GitHub) ; récupérer son ref par MCP `list_projects` |
 | Équipe Vercel | `team_EdDmARh6VZ9afHMb1WTeywEN` (XBZ) | à découvrir (MCP `list_teams`) |
-| Dépôt GitHub | `ilan9903/wikimaster` | inchangé, sauf si l'utilisateur l'a transféré |
+| Dépôt GitHub | `ilan9903/wikimaster` | `IVM-Projects/WM-Remake` (la branche de travail y est recopiée ou le dépôt y est transféré) |
 
 ## Première étape de la nouvelle session
 
 1. Vérifier les connecteurs : Supabase (`list_organizations`, `list_projects`), Vercel (`list_teams`), accès GitHub au dépôt (push sur la branche de travail).
-2. Créer le projet Supabase dans la nouvelle organisation (plan Free, `eu-west-3`) après confirmation du coût nul par le MCP.
-3. Remplacer les anciens identifiants dans le design (§3.2, §4.1 point 7, §12.2) et dans le plan (Tasks 12 et 13) ; commit.
+2. Vérifier le projet Supabase « WM-Remake » (région, exposition automatique désactivée). Conséquence : chaque migration porte ses `GRANT` explicites (déjà prévu). La RLS automatique crée un *event trigger* en prod qui n'existe pas dans le banc local : les migrations activent quand même la RLS explicitement (test `02_mirror_rls`).
+3. Remplacer les anciens identifiants (projet Supabase, équipe Vercel, dépôt) dans le design (§3.2, §4.1 point 7, §12.2) et dans le plan (Tasks 12 et 13) ; commit.
 4. Exécuter le plan M0 avec `superpowers:subagent-driven-development`.
 
 ## Rappels pour l'exécution
