@@ -195,7 +195,7 @@ Chaque rareté a une **teinte foncée** (`--color-rarity-{x}-dark`, celle de L e
 
 ## Layout
 
-Le shell suit R§6.3 à la lettre : `body > div.flex.h-dvh`, la barre latérale `nav.w-64` (padding 24 px) visible dès `md` (768 px), puis `main.min-h-0.flex-1.overflow-y-auto` : c'est `main` qui défile, jamais `body`. Sous `md`, la navigation passe en barre basse (`order-last`, surface à 95 % avec flou d'arrière-plan, marge `env(safe-area-inset-bottom)`).
+Le shell suit R§6.3 : `body > div.flex.h-dvh`, la barre latérale `nav.w-64` (padding 24 px) visible dès `md` (768 px), puis une colonne qui porte l'en-tête (logo et cloche, hors de la `nav` et de `main` ; seul écart au relevé, où `main` est enfant direct) et `main.min-h-0.flex-1.overflow-y-auto` : c'est `main` qui défile, jamais `body`. Sous `md`, la navigation passe en barre basse (`order-last`, surface à 95 % avec flou d'arrière-plan, marge `env(safe-area-inset-bottom)`).
 
 Le conteneur de page est `div.flex-1.p-4.md:p-6.space-y-6` : 16 px de marge sur mobile, 24 px dès `md`, 24 px entre sections. L'en-tête de page est une ligne `justify-between` (titre à gauche, actions à droite). Les grilles de cartes s'appuient sur la taille `clamp()` de la carte de grille : deux colonnes sur un téléphone de 390 px, puis autant que la largeur le permet. Cibles tactiles d'au moins 44 px (D§8.6).
 
@@ -250,7 +250,7 @@ Le DOM est un contrat. Il est repris tel quel, sauf le premier enfant, qui devie
 ### Navigation
 - **Lien** : `a.flex.items-center.gap-3.px-4.py-3.rounded-xl.text-sm.font-medium`, icône lucide puis libellé.
 - **Actif** : `bg-[var(--color-accent)]/10 text-[var(--color-accent)]`, un point accent de 1,5 px, `aria-current="page"`.
-- **Mobile** : quatre entrées et « Plus », qui ouvre une feuille (`role="dialog"`).
+- **Mobile** : quatre entrées et « Plus » (icône au-dessus d'un libellé de 11 px, cibles de 56 px), qui ouvre une feuille basse : `<dialog>` natif modal, Échap ou un lien la ferment et le focus revient au bouton.
 
 ### Modale de carte (R§6.5)
 Voile `fixed inset-0 z-50 bg-black/70 backdrop-blur-sm`, puis `div.card-frame.relative.w-full.animate-fade-in-up.p-6.max-w-2xl.max-h-[90vh].overflow-y-auto`. Contrairement à l'original : `role="dialog"`, piège de focus, fermeture par Échap et bouton `aria-label="Fermer"` (D§8.6). Pastille PRO : `bg-violet-500/20 text-violet-300`.
