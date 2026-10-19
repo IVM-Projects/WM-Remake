@@ -11,7 +11,7 @@ async function expectNoSeriousViolations(page: Page) {
   expect(serious.map((v) => `${v.id} : ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([])
 }
 
-for (const path of ['/', '/login', 'http://127.0.0.1:3101/gate', '/pulls', '/collection']) {
+for (const path of ['/', '/login', '/signup', 'http://127.0.0.1:3101/gate', '/pulls', '/collection']) {
   test(`axe ${path}`, async ({ page, login }) => {
     if (path === '/pulls' || path === '/collection') await login(UID)
     await page.goto(path)
