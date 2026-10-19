@@ -171,7 +171,7 @@ Chaque rareté a une **teinte foncée** (`--color-rarity-{x}-dark`, celle de L e
 
 **La règle du plancher à 60 %.** Le texte secondaire s'obtient par opacité du blanc cassé, jamais en dessous de `/60` (≥ 6:1 sur les trois plans). L'original utilisait `/30` pour le bloc méta de la modale (2,5:1) : on le remonte à `/60` (D§8.6).
 
-**La règle des teintes foncées.** Une teinte foncée ne sert jamais de texte sur le graphite (2,6 à 3,9:1) ni de fond sous un texte noir. Elle sert de trait, de remplissage décoratif, ou de fond sous un texte blanc.
+**La règle des teintes foncées.** Les teintes foncées de C, PC, R, SR et UR ne servent jamais de texte sur le graphite (2,6 à 3,9:1) ni de fond sous un texte noir (2,5 à 3,8:1). Elles servent de trait, de remplissage décoratif, ou de fond sous un texte blanc (5,0 à 7,5:1). **Exception L :** sa teinte foncée est l'orange UR (`#fa9931`), une couleur claire. Le texte blanc y échoue (2,2:1) : elle prend l'encre de badge (8,7:1) ou aucun texte. Ces couples sont vérifiés par `lib/contrast.test.ts`.
 
 ## Typography
 

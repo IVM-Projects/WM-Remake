@@ -29,6 +29,9 @@ const pairs: [fg: string, bg: string, min: number][] = [
   ['--color-accent', '--color-background', 4.5],
   ['--color-accent-foreground', '--color-accent', 4.5],
   ...RARITIES.map(r => ['#0d1117', `--color-rarity-${r}`, 4.5] as [string, string, number]), // texte du badge, R§6.4
+  // Règle des teintes foncées (docs/DESIGN.md) : texte blanc dessus, sauf L (orange clair) qui prend l'encre noire.
+  ...RARITIES.slice(0, 5).map(r => ['#ffffff', `--color-rarity-${r}-dark`, 4.5] as [string, string, number]),
+  ['#0d1117', '--color-rarity-l-dark', 4.5],
 ]
 
 describe('jetons de design', () => {
