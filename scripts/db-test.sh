@@ -37,13 +37,14 @@ psql "$DATABASE_URL" -qX -v ON_ERROR_STOP=1 -c 'drop database if exists wm_test 
 
 run() { psql "$url" -qX -v ON_ERROR_STOP=1 "$@"; }
 
-run -f "$tests/bootstrap_local.sql"
+# stdout jeté : un SELECT de migration ne doit pas polluer la ligne DATABASE_URL= de --setup-only.
+run -f "$tests/bootstrap_local.sql" >/dev/null
 cron="$(run -Atc "select exists (select from pg_available_extensions where name = 'pg_cron')")"
 for f in "$root"/supabase/migrations/*.sql; do
   [[ $cron == f && ${f##*/} == 9000_* ]] && continue
-  run -f "$f"
+  run -f "$f" >/dev/null
 done
-run -f "$tests/helpers.sql"
+run -f "$tests/helpers.sql" >/dev/null
 
 if $setup_only; then
   trap - EXIT
