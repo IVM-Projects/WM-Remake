@@ -1,0 +1,164 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { NextRequest } from 'next/server'
+import { z } from 'zod'
+
+const getClaims = vi.fn()
+const rpc = vi.fn()
+const schema = vi.fn(() => ({ rpc }))
+vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ auth: { getClaims } }) }))
+vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => ({ schema }) }))
+
+const { route, toHttpError, UNAUTHORIZED, BUSY, INTERNAL } = await import('@/lib/route')
+
+const ctx = { params: Promise.resolve({}) }
+const req = (init: { method?: string; body?: string; headers?: Record<string, string>; query?: string } = {}) =>
+  new NextRequest(`http://localhost/api/t${init.query ?? ''}`, { method: init.method ?? 'GET', body: init.body, headers: init.headers })
+const signedIn = (sub = 'u1') => getClaims.mockResolvedValue({ data: { claims: { sub } }, error: null })
+const pgError = (error: { code: string; message?: string; details?: string | null }) =>
+  rpc.mockResolvedValue({ data: null, error: { message: 'm', details: null, hint: null, ...error } })
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  getClaims.mockResolvedValue({ data: null, error: null })
+  rpc.mockResolvedValue({ data: { ok: true }, error: null })
+})
+
+describe('route()', () => {
+  it('sans claims → 401, RPC non appelée', async () => {
+    const res = await route({ fn: 'fn' })(req(), ctx)
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ code: 'unauthorized', error: UNAUTHORIZED, message: UNAUTHORIZED })
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('claims sub u1 → rpc(fn, {p_uid}) sur le schéma wm, 200 avec data', async () => {
+    signedIn()
+    const res = await route({ fn: 'fn' })(req(), ctx)
+    expect(schema).toHaveBeenCalledWith('wm')
+    expect(rpc).toHaveBeenCalledWith('fn', { p_uid: 'u1' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+  })
+
+  it('entrée zod invalide → 400 invalid_request en français, RPC non appelée', async () => {
+    signedIn()
+    const res = await route({ fn: 'fn', input: z.object({ n: z.number() }) })(req({ method: 'POST', body: '{"n":"x"}' }), ctx)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.code).toBe('invalid_request')
+    expect(body.message).toMatch(/attendu/)
+    expect(body.error).toBe(body.message)
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('corps illisible → 400 Corps JSON invalide', async () => {
+    signedIn()
+    const res = await route({ fn: 'fn', input: z.object({}) })(req({ method: 'POST', body: '{' }), ctx)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ code: 'invalid_request', error: 'Corps JSON invalide', message: 'Corps JSON invalide' })
+  })
+
+  it('GET : entrée lue dans la query string et passée à args', async () => {
+    signedIn()
+    const handler = route({ fn: 'fn', input: z.object({ page: z.coerce.number() }), args: (i, c) => ({ p_uid: c.uid, p_page: i.page }) })
+    await handler(req({ query: '?page=2' }), ctx)
+    expect(rpc).toHaveBeenCalledWith('fn', { p_uid: 'u1', p_page: 2 })
+  })
+
+  it('P0001 à détail JSON → statut recopié, corps sans clé status', async () => {
+    signedIn()
+    pgError({ code: 'P0001', details: '{"status":409,"code":"bid_too_low","min":110,"error":"m","message":"m"}' })
+    const res = await route({ fn: 'fn' })(req(), ctx)
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ code: 'bid_too_low', min: 110, error: 'm', message: 'm' })
+  })
+
+  it('P0001 429 avec retry_after → Retry-After', async () => {
+    signedIn()
+    pgError({ code: 'P0001', details: '{"status":429,"rate_limited":true,"retry_after":3,"error":"m","message":"m"}' })
+    const res = await route({ fn: 'fn' })(req(), ctx)
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('3')
+  })
+
+  it.each(['55P03', '57014'])('%s → 503 BUSY + Retry-After: 1', async (code) => {
+    signedIn()
+    pgError({ code })
+    const res = await route({ fn: 'fn' })(req(), ctx)
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ code: 'BUSY', error: BUSY, message: BUSY })
+    expect(res.headers.get('Retry-After')).toBe('1')
+  })
+
+  it.each([
+    { code: 'XX000', message: 'relation secrète' },
+    { code: 'P0001', message: 'relation secrète', details: 'pas du JSON' },
+    { code: 'P0001', message: 'relation secrète', details: '{"code":"x"}' },
+  ])('erreur inconnue %j → 500 générique sans détail Postgres', async (e) => {
+    signedIn()
+    pgError(e)
+    const res = await route({ fn: 'fn' })(req(), ctx)
+    expect(res.status).toBe(500)
+    const text = await res.text()
+    expect(JSON.parse(text)).toEqual({ error: INTERNAL, message: INTERNAL })
+    expect(text).not.toContain('relation')
+  })
+
+  it('exception (réseau, configuration) → 500 générique', async () => {
+    signedIn()
+    rpc.mockRejectedValue(new Error('relation secrète'))
+    const res = await route({ fn: 'fn' })(req(), ctx)
+    expect(res.status).toBe(500)
+    expect(await res.text()).not.toContain('relation')
+  })
+
+  it('x-wiki-calendar-tz invalide → ctx.tz Europe/Paris', async () => {
+    signedIn()
+    const args = vi.fn(() => ({}))
+    await route({ fn: 'fn', args })(req({ headers: { 'x-wiki-calendar-tz': '../../etc/passwd' } }), ctx)
+    expect(args).toHaveBeenCalledWith(undefined, expect.objectContaining({ tz: 'Europe/Paris', uid: 'u1' }))
+  })
+
+  it('Idempotency-Key de 129 caractères → 400, 128 acceptés', async () => {
+    signedIn()
+    const args = vi.fn(() => ({}))
+    const bad = await route({ fn: 'fn', args })(req({ headers: { 'Idempotency-Key': 'k'.repeat(129) } }), ctx)
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).code).toBe('invalid_request')
+    expect(rpc).not.toHaveBeenCalled()
+    await route({ fn: 'fn', args })(req({ headers: { 'Idempotency-Key': 'k'.repeat(128) } }), ctx)
+    expect(args).toHaveBeenCalledWith(undefined, expect.objectContaining({ idem: 'k'.repeat(128) }))
+  })
+
+  it('auth: false → getClaims jamais appelé, args par défaut {}', async () => {
+    const res = await route({ fn: 'health', auth: false })(req(), ctx)
+    expect(getClaims).not.toHaveBeenCalled()
+    expect(rpc).toHaveBeenCalledWith('health', {})
+    expect(res.status).toBe(200)
+  })
+
+  it('une ligne de log JSON, uid haché', async () => {
+    signedIn()
+    pgError({ code: '57014' })
+    await route({ fn: 'fn' })(req({ headers: { 'x-vercel-id': 'dub1::abc' } }), ctx)
+    expect(console.log).toHaveBeenCalledTimes(1)
+    const line = JSON.parse(vi.mocked(console.log).mock.calls[0][0])
+    expect(line).toEqual({ route: '/api/t', status: 503, ms: expect.any(Number), rpc: 'fn', pg_code: '57014',
+      uid_hash: 'bb82030dbc2b', vercel_id: 'dub1::abc' })
+  })
+
+  it('log : segments dynamiques masqués', async () => {
+    await route({ fn: 'fn', auth: false })(new NextRequest('http://localhost/api/profile/abc-1/collection'), { params: Promise.resolve({ id: 'abc-1' }) })
+    expect(JSON.parse(vi.mocked(console.log).mock.calls[0][0]).route).toBe('/api/profile/[id]/collection')
+  })
+})
+
+describe('toHttpError', () => {
+  it('429 sans retry_after → Retry-After 1', () => {
+    expect(toHttpError({ code: 'P0001', details: '{"status":429,"error":"m","message":"m"}' }).retryAfter).toBe(1)
+  })
+  it('statut hors 400–599 → 500', () => {
+    expect(toHttpError({ code: 'P0001', details: '{"status":200,"error":"m","message":"m"}' }).status).toBe(500)
+  })
+})
