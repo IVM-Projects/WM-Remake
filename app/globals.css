@@ -1,26 +1,141 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* Sombre uniquement (D§2.2) : `dark:` suit la classe posée sur <html>, pas le réglage du système. */
+@custom-variant dark (&:where(.dark, .dark *));
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+/* Jetons : docs/DESIGN.md. `static` les émet tous, car les styles inline (`var(--color-rarity-…)`) échappent au scan. */
+@theme static {
+  --color-background: #0d0d0d;
+  --color-foreground: #f2f4f3;
+  --color-surface: #151917;
+  --color-surface-light: #1e2421;
+  --color-border: #2b322e;
+  --color-accent: #34d399;
+  --color-accent-light: #6ee7b7;
+  --color-accent-foreground: #062b1e;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  --color-rarity-c: #b8f2d5;
+  --color-rarity-pc: #b1cff2;
+  --color-rarity-r: #c6a7f2;
+  --color-rarity-sr: #ed6fa3;
+  --color-rarity-ur: #fa9931;
+  --color-rarity-l: #ffe144;
+  --color-rarity-c-dark: #2b7d58;
+  --color-rarity-pc-dark: #2c5c99;
+  --color-rarity-r-dark: #6439b8;
+  --color-rarity-sr-dark: #a8235b;
+  --color-rarity-ur-dark: #9a4f05;
+  --color-rarity-l-dark: #fa9931;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-fade-in-up: fade-in-up 0.45s var(--ease-out-expo);
+
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      translate: 0 var(--fade-in-up-shift, 0.5rem);
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  html {
+    color-scheme: dark;
+    scrollbar-color: var(--color-border) transparent;
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-body, ui-sans-serif, system-ui, sans-serif);
+  }
+  h1, h2, h3 {
+    font-family: var(--font-heading, ui-sans-serif, system-ui, sans-serif);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-accent) 35%, transparent);
+    color: var(--color-foreground);
+  }
+}
+
+/* prefers-reduced-motion : un simple fondu (D§8.6). */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --fade-in-up-shift: 0;
+  }
+}
+
+/* Classes du contrat DOM (R§6.4, R§6.8) : ne pas renommer. */
+@layer components {
+  .card-frame {
+    border-radius: 1rem;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+
+  /* Double halo : un filet net + une lueur portée vers le bas, plus intense avec la rareté. */
+  .glow-c { --glow: var(--color-rarity-c); --glow-a: 30%; }
+  .glow-pc { --glow: var(--color-rarity-pc); --glow-a: 30%; }
+  .glow-r { --glow: var(--color-rarity-r); --glow-a: 35%; }
+  .glow-sr { --glow: var(--color-rarity-sr); --glow-a: 45%; }
+  .glow-ur { --glow: var(--color-rarity-ur); --glow-a: 50%; }
+  .glow-l { --glow: var(--color-rarity-l); --glow-a: 60%; }
+  :is(.glow-c, .glow-pc, .glow-r, .glow-sr, .glow-ur, .glow-l) {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--glow) 60%, transparent),
+      0 8px 28px -6px color-mix(in oklab, var(--glow) var(--glow-a), transparent);
+  }
+
+  /* Fonds de rareté recréés (D§8.5) : uniquement des voiles blancs, le texte noir de la carte ne perd jamais en contraste. */
+  .rarity-bg-c,
+  .rarity-bg-pc,
+  .rarity-bg-r {
+    background:
+      radial-gradient(120% 70% at 50% 0%, rgb(255 255 255 / 0.4), transparent 70%),
+      var(--rarity);
+  }
+  .rarity-bg-c { --rarity: var(--color-rarity-c); }
+  .rarity-bg-pc { --rarity: var(--color-rarity-pc); }
+  .rarity-bg-r { --rarity: var(--color-rarity-r); }
+  .rarity-bg-sr {
+    background:
+      repeating-linear-gradient(135deg, rgb(255 255 255 / 0.28) 0 6px, transparent 6px 14px),
+      var(--color-rarity-sr);
+  }
+  .rarity-bg-ur {
+    background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='16'%3E%3Cpath d='M0 8q10-8 20 0t20 0' fill='none' stroke='white' stroke-opacity='.35' stroke-width='2'/%3E%3C/svg%3E")
+        0 0 / 40px 16px,
+      var(--color-rarity-ur);
+  }
+  .rarity-bg-l {
+    background:
+      radial-gradient(circle at 30% 30%, rgb(255 255 255 / 0.9) 0 1px, transparent 2px) 0 0 / 22px 22px,
+      radial-gradient(circle at 70% 70%, rgb(255 255 255 / 0.7) 0 1px, transparent 2px) 0 0 / 31px 31px,
+      linear-gradient(135deg, rgb(255 255 255 / 0.45), transparent 45%, rgb(255 255 255 / 0.3) 70%, transparent),
+      var(--color-rarity-l);
+  }
+
+  /* Voile des L : une bande qui balaie la carte ; absente sans mouvement (rien de statique sur le texte). */
+  .legendary-shimmer-sheen {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(110deg, transparent 35%, rgb(255 255 255 / 0.35) 50%, transparent 65%);
+    translate: -100% 0;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .legendary-shimmer-sheen {
+      animation: legendary-sheen 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    }
+  }
+}
+
+@keyframes legendary-sheen {
+  55%,
+  to {
+    translate: 100% 0;
+  }
 }
