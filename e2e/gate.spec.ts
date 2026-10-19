@@ -35,6 +35,18 @@ test('porte : bon mot de passe → next, cookie httpOnly (non secure sur 127.0.0
   expect(cookie!.expires).toBeGreaterThan(Date.now() / 1000 + 29 * 24 * 3600) // maxAge 30 jours
 })
 
+// Sans JS (ou clic avant l'hydratation) : envoi natif du formulaire ; `next` et l'erreur doivent survivre.
+test('porte sans JavaScript : erreur affichée, puis bon mot de passe → next', async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false })
+  const page = await context.newPage()
+  await submit(page, '/collection', 'faux')
+  await expect(page.getByRole('main').getByRole('alert')).toHaveText('Mot de passe incorrect.')
+  await submit(page, '/', GATE.password)
+  await expect(page).toHaveURL(`${GATED}/`)
+  expect((await context.cookies(GATED)).map((c) => c.name)).toContain(GATE_COOKIE)
+  await context.close()
+})
+
 test('porte : next=//evil.example → /pulls (où le proxy sert /login faute de session)', async ({ page }) => {
   const hosts = new Set<string>()
   page.on('request', (r) => void hosts.add(new URL(r.url()).host))

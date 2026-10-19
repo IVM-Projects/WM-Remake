@@ -3,11 +3,10 @@
 import { useActionState } from 'react'
 import { enterGate } from './actions'
 
-export function GateForm({ next }: { next: string }) {
+export function GateForm() {
   const [error, action, pending] = useActionState(enterGate, null)
   return (
     <form action={action} className="flex flex-col gap-4">
-      <input type="hidden" name="next" value={next} />
       <label htmlFor="gate-password" className="text-sm font-medium">
         Mot de passe de la démo
       </label>

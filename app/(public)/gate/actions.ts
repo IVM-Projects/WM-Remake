@@ -12,7 +12,9 @@ export async function enterGate(_prev: string | null, formData: FormData): Promi
     const v = formData.get(name)
     return typeof v === 'string' ? v : ''
   }
-  const next = safeNext(field('next'))
+  const h = await headers()
+  // `next` vient de l'adresse de la page (/gate?next=…) : la page reste statique, avec un seul formulaire, même envoyé sans JS.
+  const next = safeNext(URL.parse(h.get('referer') ?? '')?.searchParams.get('next'))
   const gate = gateEnv()
   if (!gate) redirect(next)
 
@@ -20,7 +22,7 @@ export async function enterGate(_prev: string | null, formData: FormData): Promi
   const token = await gateToken(gate.secret, field('password'))
   if (!(await isGateCookieValid(token, gate.secret, gate.password))) return 'Mot de passe incorrect.'
 
-  const host = (await headers()).get('host') ?? ''
+  const host = h.get('host') ?? ''
   const store = await cookies()
   store.set(GATE_COOKIE, token, {
     httpOnly: true,
