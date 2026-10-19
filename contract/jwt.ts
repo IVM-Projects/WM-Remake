@@ -6,9 +6,10 @@ const KID = 'wm-test-es256'
 export function generateKeys(): { privateJwk: JsonWebKey; publicJwk: JsonWebKey } {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
   const meta = { kid: KID, alg: 'ES256', use: 'sig' }
+  // GOTRUE_JWT_KEYS exige key_ops : la clé privée signe (et vérifie), la publique du JWKS vérifie seulement.
   return {
-    privateJwk: { ...privateKey.export({ format: 'jwk' }), ...meta },
-    publicJwk: { ...publicKey.export({ format: 'jwk' }), ...meta },
+    privateJwk: { ...privateKey.export({ format: 'jwk' }), ...meta, key_ops: ['sign', 'verify'] },
+    publicJwk: { ...publicKey.export({ format: 'jwk' }), ...meta, key_ops: ['verify'] },
   }
 }
 
@@ -25,7 +26,7 @@ export function sessionCookie(supabaseUrl: string, accessToken: string, uid: str
   const { exp } = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString()) as { exp: number }
   const session = {
     access_token: accessToken,
-    refresh_token: 'contract-refresh-token', // jamais utilisé : pas de GoTrue, expires_at doit rester loin
+    refresh_token: 'contract-refresh-token', // inconnu de GoTrue : jamais rafraîchi tant qu'expires_at reste loin
     expires_at: exp,
     expires_in: exp - Math.floor(Date.now() / 1000),
     token_type: 'bearer',

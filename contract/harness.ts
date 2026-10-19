@@ -1,8 +1,8 @@
-// Banc de contrat : PG local (db-test.sh) + PostgREST + passerelle imitant Supabase + `next start`.
+// Banc de contrat : PG local (db-test.sh) + PostgREST + Mailpit + GoTrue + passerelle imitant Supabase + `next start`.
 // Lancé aussi par `node contract/serve.ts` : imports relatifs en .ts seulement, aucun alias @/.
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request, type Server } from 'node:http'
 import { createServer as createTcpServer } from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -13,12 +13,24 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const cache = `${root}.cache`
 const SUPABASE_URL = 'http://127.0.0.1:54321' // figée dans le build par `npm run build:test`
 const POSTGREST_PORT = 54322
+const GOTRUE_PORT = 54323
+export const MAILPIT_URL = 'http://127.0.0.1:54324'
+const MAILPIT_SMTP_PORT = 54325
 const STARTUP_MS = 120_000
 // Clés de test uniquement (build:test) ; la passerelle les échange contre un JWT du rôle, comme Supabase.
 const KEY_ROLES = new Map([['sb_publishable_test', 'anon'], ['sb_secret_test', 'service_role']])
 export const GATE = { password: 'test-gate', secret: 'test-secret' }
 
-export type Backend = { supabaseUrl: typeof SUPABASE_URL; databaseUrl: string; privateJwk: JsonWebKey; stop(): Promise<void> }
+// Vérificateur Turnstile du banc (POST /turnstile/siteverify) : seul ce couple est accepté.
+const TURNSTILE = { secret: 'test-turnstile', response: 'dev-bypass' }
+
+export type Backend = {
+  supabaseUrl: typeof SUPABASE_URL
+  databaseUrl: string
+  mailpitUrl: typeof MAILPIT_URL
+  privateJwk: JsonWebKey
+  stop(): Promise<void>
+}
 type Stop = () => Promise<void>
 
 function assertFree(port: number): Promise<void> {
@@ -28,10 +40,10 @@ function assertFree(port: number): Promise<void> {
   })
 }
 
-function spawnLogged(name: string, command: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess {
+function spawnLogged(name: string, command: string, args: string[], env: NodeJS.ProcessEnv, cwd = root): ChildProcess {
   mkdirSync(`${cache}/logs`, { recursive: true })
   const log = openSync(`${cache}/logs/${name}.log`, 'w')
-  const child = spawn(command, args, { cwd: root, env, stdio: ['ignore', log, log] })
+  const child = spawn(command, args, { cwd, env, stdio: ['ignore', log, log] })
   closeSync(log)
   return child
 }
@@ -63,37 +75,55 @@ async function stopAll(stops: Stop[]): Promise<void> {
   for (const stop of stops.splice(0).reverse()) await stop().catch((e: unknown) => console.error(e))
 }
 
-function gateway(privateJwk: JsonWebKey, publicJwk: JsonWebKey): Server {
-  const jwks = JSON.stringify({ keys: [publicJwk] })
+// Supabase laisse ouvertes sans apikey les routes GoTrue suivies depuis un lien d'e-mail ou lues par tous (JWKS).
+const OPEN_AUTH = /^\/auth\/v1\/(verify|\.well-known\/jwks\.json)(\?|$)/
+const UPSTREAMS = [['/rest/v1', POSTGREST_PORT], ['/auth/v1', GOTRUE_PORT]] as const
+
+function gateway(privateJwk: JsonWebKey): Server {
   return createServer((req, res) => {
-    const json = (status: number, body: string) => void res.writeHead(status, { 'content-type': 'application/json' }).end(body)
-    // auth-js getClaims() vérifie localement le JWT avec la clé de ce JWKS (même kid).
-    if (req.method === 'GET' && req.url === '/auth/v1/.well-known/jwks.json') return json(200, jwks)
-    if (!req.url?.startsWith('/rest/v1/')) return json(404, '{"message":"no Route matched with those values"}')
+    const json = (status: number, body: unknown) => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
+    const url = req.url ?? '/'
+    // Modèles d'e-mail lus par GoTrue (GOTRUE_MAILER_TEMPLATES_*) ; nom restreint, donc aucun `..`.
+    const template = req.method === 'GET' && /^\/templates\/([a-z]+)\.html$/.exec(url)
+    if (template) {
+      const file = `${root}supabase/templates/${template[1]}.html`
+      if (!existsSync(file)) return json(404, { message: 'modèle inconnu' })
+      return void res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(readFileSync(file))
+    }
+    if (req.method === 'POST' && url === '/turnstile/siteverify') {
+      let body = ''
+      req.setEncoding('utf8').on('data', (chunk: string) => (body += chunk))
+      return void req.on('end', () => {
+        const form = new URLSearchParams(body)
+        const ok = form.get('secret') === TURNSTILE.secret && form.get('response') === TURNSTILE.response
+        json(200, ok ? { success: true } : { success: false, 'error-codes': ['invalid-input-response'] })
+      })
+    }
+    const upstream = UPSTREAMS.find(([prefix]) => url.startsWith(`${prefix}/`))
+    if (!upstream) return json(404, { message: 'no Route matched with those values' })
+    const [prefix, port] = upstream
     const apikey = String(req.headers.apikey)
-    if (!KEY_ROLES.has(apikey)) return json(401, '{"message":"Invalid API key"}')
-    // Clé en Bearer, ou pas d'Authorization : JWT du rôle de la clé ; tout autre bearer (JWT utilisateur) passe tel quel.
-    const bearer = req.headers.authorization?.replace(/^Bearer /i, '') || apikey
-    const role = KEY_ROLES.get(bearer)
-    const now = Math.floor(Date.now() / 1000)
-    const token = role ? signJwt(privateJwk, { iss: 'supabase', role, iat: now, exp: now + 3600 }) : bearer
-    const headers = { ...req.headers, host: `127.0.0.1:${POSTGREST_PORT}`, authorization: `Bearer ${token}` }
-    const upstream = request(
-      { host: '127.0.0.1', port: POSTGREST_PORT, method: req.method, path: req.url.slice('/rest/v1'.length), headers },
-      (up) => {
-        res.writeHead(up.statusCode ?? 502, up.headers)
-        up.pipe(res)
-      },
-    )
-    upstream.on('error', () => (res.headersSent ? res.destroy() : json(502, '{"message":"PostgREST injoignable"}')))
-    req.pipe(upstream)
+    const headers = { ...req.headers, host: `127.0.0.1:${port}` }
+    if (KEY_ROLES.has(apikey)) {
+      // Clé en Bearer, ou pas d'Authorization : JWT du rôle de la clé ; tout autre bearer (JWT utilisateur) passe tel quel.
+      const bearer = req.headers.authorization?.replace(/^Bearer /i, '') || apikey
+      const role = KEY_ROLES.get(bearer)
+      const now = Math.floor(Date.now() / 1000)
+      headers.authorization = `Bearer ${role ? signJwt(privateJwk, { iss: 'supabase', role, iat: now, exp: now + 3600 }) : bearer}`
+    } else if (!(req.method === 'GET' && OPEN_AUTH.test(url))) return json(401, { message: 'Invalid API key' })
+    const proxied = request({ host: '127.0.0.1', port, method: req.method, path: url.slice(prefix.length), headers }, (up) => {
+      res.writeHead(up.statusCode ?? 502, up.headers)
+      up.pipe(res)
+    })
+    proxied.on('error', () => (res.headersSent ? res.destroy() : json(502, { message: `${prefix} injoignable` })))
+    req.pipe(proxied)
   })
 }
 
 export async function startBackend(): Promise<Backend> {
   const stops: Stop[] = []
   try {
-    await Promise.all([54321, POSTGREST_PORT].map(assertFree))
+    await Promise.all([54321, POSTGREST_PORT, GOTRUE_PORT, 54324, MAILPIT_SMTP_PORT].map(assertFree))
     // Cluster jetable .cache/pg, ou base wm_test recréée sur le serveur de $DATABASE_URL (CI).
     const out = execFileSync('bash', [`${root}scripts/db-test.sh`, '--setup-only'], { encoding: 'utf8' })
     const databaseUrl = out.trim().replace(/^DATABASE_URL=/, '')
@@ -111,18 +141,67 @@ export async function startBackend(): Promise<Backend> {
       PGRST_JWT_SECRET: JSON.stringify({ keys: [publicJwk] }), // PostgREST accepte un JWKS (vérifié ES256 sur v12.2.3)
       PGRST_SERVER_HOST: '127.0.0.1',
       PGRST_SERVER_PORT: String(POSTGREST_PORT),
+      PGRST_DB_MAX_ROWS: '1000', // D§8.1 n° 3
     })
     stops.push(() => kill(postgrest))
     await waitReady('postgrest', postgrest, `http://127.0.0.1:${POSTGREST_PORT}/`)
 
-    const server = gateway(privateJwk, publicJwk)
+    const mailpit = spawnLogged('mailpit', `${cache}/mailpit/mailpit`, ['--smtp', `127.0.0.1:${MAILPIT_SMTP_PORT}`, '--listen', '127.0.0.1:54324'], process.env)
+    stops.push(() => kill(mailpit))
+    await waitReady('mailpit', mailpit, `${MAILPIT_URL}/api/v1/info`)
+
+    const authUri = new URL(databaseUrl)
+    authUri.username = 'supabase_auth_admin' // mot de passe de test de bootstrap_local.sql
+    authUri.password = 'auth'
+    const templates = `${SUPABASE_URL}/templates`
+    // Limites relevées par `strings auth | grep GOTRUE_RATE_LIMIT` : EMAIL_SENT, VERIFY, TOKEN_REFRESH, OTP.
+    const rateLimits = Object.fromEntries(['EMAIL_SENT', 'VERIFY', 'TOKEN_REFRESH', 'OTP'].map((k) => [`GOTRUE_RATE_LIMIT_${k}`, '10000']))
+    const gotrue = spawnLogged('gotrue', `${cache}/gotrue/auth`, ['serve'], {
+      ...process.env,
+      ...rateLimits,
+      GOTRUE_DB_DRIVER: 'postgres',
+      DATABASE_URL: authUri.href,
+      GOTRUE_API_HOST: '127.0.0.1',
+      PORT: String(GOTRUE_PORT),
+      API_EXTERNAL_URL: `${SUPABASE_URL}/auth/v1`,
+      GOTRUE_SITE_URL: 'http://127.0.0.1:3100',
+      GOTRUE_URI_ALLOW_LIST: 'http://127.0.0.1:3100/**,http://127.0.0.1:3101/**',
+      GOTRUE_JWT_SECRET: 'banc-de-test-secret-hs256-inutilise-32c', // exigé, inutilisé : GoTrue signe avec GOTRUE_JWT_KEYS
+      GOTRUE_JWT_KEYS: JSON.stringify([privateJwk]),
+      GOTRUE_JWT_EXP: '3600',
+      GOTRUE_JWT_AUD: 'authenticated',
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: 'authenticated',
+      GOTRUE_JWT_ADMIN_ROLES: 'service_role',
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: 'true',
+      GOTRUE_MAILER_AUTOCONFIRM: 'false',
+      GOTRUE_MAILER_OTP_LENGTH: '6',
+      GOTRUE_MAILER_OTP_EXP: '3600', // « Il expire dans une heure » (confirmation.html), défaut de Supabase hébergé
+      GOTRUE_SMTP_HOST: '127.0.0.1',
+      GOTRUE_SMTP_PORT: String(MAILPIT_SMTP_PORT),
+      GOTRUE_SMTP_ADMIN_EMAIL: 'noreply@wikicartes.test',
+      GOTRUE_SMTP_SENDER_NAME: 'WikiCartes',
+      // Liens d'e-mail résolus sur l'hôte d'API_EXTERNAL_URL sans son chemin (comme le docker-compose de Supabase).
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: '/auth/v1/verify',
+      GOTRUE_MAILER_URLPATHS_RECOVERY: '/auth/v1/verify',
+      GOTRUE_MAILER_TEMPLATES_CONFIRMATION: `${templates}/confirmation.html`,
+      GOTRUE_MAILER_TEMPLATES_RECOVERY: `${templates}/recovery.html`,
+      GOTRUE_MAILER_SUBJECTS_CONFIRMATION: 'Ton code de confirmation',
+      GOTRUE_MAILER_SUBJECTS_RECOVERY: 'Choisis un nouveau mot de passe',
+      GOTRUE_SECURITY_CAPTCHA_ENABLED: 'false',
+      GOTRUE_LOG_LEVEL: 'warn',
+    }, `${cache}/gotrue`) // lit ./migrations
+    stops.push(() => kill(gotrue))
+    await waitReady('gotrue', gotrue, `http://127.0.0.1:${GOTRUE_PORT}/health`)
+
+    const server = gateway(privateJwk)
     stops.push(() => new Promise((resolve) => void server.close(() => resolve()).closeAllConnections()))
     await once(server.listen(54321, '127.0.0.1'), 'listening')
 
     // Pour les fixtures E2E (Task 10) ; supprimé à l'arrêt pour ne jamais servir une clé périmée.
-    writeFileSync(`${cache}/backend.json`, JSON.stringify({ supabaseUrl: SUPABASE_URL, databaseUrl, privateJwk }))
+    const backend: Omit<Backend, 'stop'> = { supabaseUrl: SUPABASE_URL, databaseUrl, mailpitUrl: MAILPIT_URL, privateJwk }
+    writeFileSync(`${cache}/backend.json`, JSON.stringify(backend))
     stops.push(async () => rmSync(`${cache}/backend.json`, { force: true }))
-    return { supabaseUrl: SUPABASE_URL, databaseUrl, privateJwk, stop: () => stopAll(stops) }
+    return { ...backend, stop: () => stopAll(stops) }
   } catch (e) {
     await stopAll(stops)
     throw e
@@ -142,6 +221,8 @@ export async function startNext(name: 'plain' | 'gated', backend: Backend): Prom
     SUPABASE_SECRET_KEY: 'sb_secret_test',
     DEMO_GATE_PASSWORD: name === 'gated' ? GATE.password : undefined, // undefined : variable absente du processus
     GATE_COOKIE_SECRET: name === 'gated' ? GATE.secret : undefined,
+    TURNSTILE_SECRET_KEY: TURNSTILE.secret,
+    TURNSTILE_VERIFY_URL: `${backend.supabaseUrl}/turnstile/siteverify`,
   })
   const stop = () => kill(child)
   try {

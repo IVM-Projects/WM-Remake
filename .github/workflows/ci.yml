@@ -55,7 +55,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: bash scripts/get-postgrest.sh
+      - run: bash scripts/get-tools.sh
       - run: npm run test:db
       - run: npm run build:test
       - run: npm run test:contract

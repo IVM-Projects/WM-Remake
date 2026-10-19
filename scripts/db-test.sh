@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Banc de tests SQL : base wm_test neuve (cluster PG jetable dans .cache/pg, ou serveur de $DATABASE_URL),
-# stub Supabase, migrations, helpers, puis supabase/tests/*.test.{sql,sh}.
-# --setup-only : imprime une seule ligne DATABASE_URL=… et laisse la base en place.
+# stub Supabase, schéma auth de GoTrue, migrations, helpers, puis supabase/tests/*.test.{sql,sh}.
+# --setup-only : applique aussi supabase/seed.sql s'il existe, imprime une seule ligne DATABASE_URL=… et laisse la base en place.
 # --stop : arrête et supprime le cluster local laissé par --setup-only (rien à faire avec $DATABASE_URL).
 set -euo pipefail
 
@@ -42,6 +42,11 @@ run() { psql "$url" -qX -v ON_ERROR_STOP=1 "$@"; }
 
 # stdout jeté : un SELECT de migration ne doit pas polluer la ligne DATABASE_URL= de --setup-only.
 run -f "$tests/bootstrap_local.sql" >/dev/null
+[[ -x "$root/.cache/gotrue/auth" ]] || { echo "db-test : lancer bash scripts/get-tools.sh" >&2; exit 1; }
+# Vrai schéma auth de GoTrue (users, uid(), jwt()…) ; le binaire lit ./migrations, d'où le cd.
+(cd "$root/.cache/gotrue" && GOTRUE_DB_DRIVER=postgres DATABASE_URL="$(sed -E 's#^([a-z]+://)([^@/]*@)?#\1supabase_auth_admin:auth@#' <<<"$url")" \
+  GOTRUE_JWT_SECRET=banc-de-test-secret-hs256-inutilise-32c API_EXTERNAL_URL=http://127.0.0.1:54321/auth/v1 \
+  GOTRUE_SITE_URL=http://127.0.0.1:3100 GOTRUE_LOG_LEVEL=warn ./auth migrate >/dev/null)
 cron="$(run -Atc "select exists (select from pg_available_extensions where name = 'pg_cron')")"
 for f in "$root"/supabase/migrations/*.sql; do
   [[ $cron == f && ${f##*/} == 9000_* ]] && continue
@@ -50,6 +55,8 @@ done
 run -f "$tests/helpers.sql" >/dev/null
 
 if $setup_only; then
+  # Catalogue d'essai du banc de contrat et des E2E (Task 5), absent des tests SQL.
+  [[ -f "$root/supabase/seed.sql" ]] && run -f "$root/supabase/seed.sql" >/dev/null
   trap - EXIT
   echo "DATABASE_URL=$url"
   exit 0

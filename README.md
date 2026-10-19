@@ -29,6 +29,14 @@ Le nom affiché vient de `NEXT_PUBLIC_BRAND_NAME` (par défaut `WikiCartes`). Co
 | `npm run test:e2e` | Playwright + axe |
 | `npm run coverage:recap` | couverture des routes du recap |
 
+### Prérequis des tests SQL, de contrat et E2E
+
+- `psql`, et PostgreSQL 16 dans `/usr/lib/postgresql/16/bin` (autre dossier : `PGBIN`) pour le cluster jetable ; ou un serveur existant désigné par `DATABASE_URL` (CI : `postgres:17`).
+- `bash scripts/get-tools.sh` : télécharge dans `.cache/` PostgREST, GoTrue (Supabase Auth) et Mailpit, à SHA-256 épinglé.
+- `npm run build:test` avant `npm run test:contract` et `npm run test:e2e`.
+- E2E : `PW_CHROMIUM_PATH` désigne un Chromium déjà installé, sinon `npx playwright install chromium`.
+- Le banc occupe les ports 54321 à 54325 (passerelle, PostgREST, GoTrue, Mailpit HTTP et SMTP), 54329 (PG local), 3100 et 3101 (Next).
+
 ## Documentation
 
 - [Design de la refonte](docs/superpowers/specs/2026-10-18-wikimasters-rebuild-design.md)
