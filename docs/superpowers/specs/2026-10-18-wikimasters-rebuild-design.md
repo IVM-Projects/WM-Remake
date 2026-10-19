@@ -809,7 +809,7 @@ Les messages du domaine social, des guildes et des batailles ne sont pas connus 
 - `auction_bids (auction_id, placed_at desc)`, `(bidder_id, placed_at desc)`.
 - `trades (initiator_id, status, created_at desc)`, `(recipient_id, status, created_at desc)` · `trade_items (trade_id)`, `(offered_by, card_id)`.
 - `notifications (user_id, created_at desc)` et partiel `(user_id) where read = false` · `chat_messages (sender_id, recipient_id, created_at desc)`.
-- `profiles` : unique `lower(username)` · `wm.wb_ledger (user_id, created_at desc)` · `wm.user_stats` sur les colonnes de classement.
+- `profiles` : unique `lower(username)`, partiel `(avatar_user_card_id) where avatar_user_card_id is not null` (sinon chaque suppression de copie parcourt `profiles` à cause du `on delete set null`) · `wm.wb_ledger (user_id, created_at desc)` · `wm.user_stats` sur les colonnes de classement.
 
 ### 9.5 Cache et polling
 
