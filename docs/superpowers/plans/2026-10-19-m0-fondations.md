@@ -158,7 +158,7 @@ it('valeurs imposées par le recap §6.1', () => {
 it.each([
   ['/api/health', 'pass'], ['/api/stripe/webhook', 'pass'], ['/api/cron/push', 'pass'], ['/gate', 'pass'],
   ['/robots.txt', 'pass'], ['/icon', 'pass'],
-  ['/', 'redirect'], ['/pulls', 'redirect'], ['/GATE', 'redirect'], ['/api/health/../pulls', 'redirect'],
+  ['/', 'redirect'], ['/pulls', 'redirect'], ['/GATE', 'redirect'], ['/api/health/../pulls', 'unauthorized'],
   ['/api/cronx', 'unauthorized'], ['/api/health2', 'unauthorized'], ['/api/marketplace', 'unauthorized'],
 ])('porte active sans cookie : %s → %s', (p, d) => expect(gateDecision(p, true, false)).toBe(d))
 it('cookie valide ou porte inactive → pass', () => {
