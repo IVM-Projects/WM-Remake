@@ -1,7 +1,9 @@
 name: CI
 
+# Branches de travail : CI par leur PR (ou à la demande), pas à chaque push, sinon chaque commit tourne deux fois.
 on:
   push:
+    branches: [develop, master]
   pull_request:
   workflow_dispatch:
 
