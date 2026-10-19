@@ -12,6 +12,8 @@ function redirectWithNext(request: NextRequest, pathname: string, next: string):
 
 async function handle(request: NextRequest, gate: ReturnType<typeof gateEnv>): Promise<NextResponse> {
   const { pathname, search } = request.nextUrl
+  // Ici et non dans next.config `redirects` : les `headers` de la config ne s'appliquent pas à ces redirections (X-Robots-Tag absent).
+  if (pathname === '/pull') return NextResponse.redirect(new URL(`/pulls${search}`, request.url), 308)
   const cookieValid = !!gate && (await isGateCookieValid(request.cookies.get(GATE_COOKIE)?.value, gate.secret, gate.password))
   const decision = gateDecision(pathname, !!gate, cookieValid)
   if (decision === 'unauthorized') {
@@ -41,5 +43,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:woff2|png|svg|ico)$).*)'],
+  // Aucune exclusion par extension : `/marketplace/x.png` passerait sinon la porte. Les polices sont sous _next/static.
+  matcher: ['/((?!_next/static|_next/image).*)'],
 }

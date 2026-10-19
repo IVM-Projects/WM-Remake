@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata: Metadata = { title: "Page introuvable" };
+// Servie aussi devant la porte (chemins exemptés inconnus) : titre absolu, sans la marque.
+export const metadata: Metadata = { title: { absolute: "Page introuvable" } };
 
 export default function NotFound() {
   return (

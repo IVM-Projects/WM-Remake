@@ -16,7 +16,6 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  redirects: async () => [{ source: "/pull", destination: "/pulls", permanent: true }],
   headers: async () => [
     {
       source: "/:path*",
@@ -24,6 +23,8 @@ const nextConfig: NextConfig = {
         { key: "X-Content-Type-Options", value: "nosniff" },
         { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
         { key: "X-Frame-Options", value: "DENY" },
+        // Démo privée : tout en noindex (D§3.4), porte ou non ; proxy.ts le pose aussi sur ses propres réponses.
+        { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
       ],
     },
   ],

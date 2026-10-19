@@ -15,7 +15,9 @@ describe('porte démo', () => {
   })
   it.each([['/collection', '/collection'], ['//evil.example', '/pulls'], ['/\\evil', '/pulls'],
     ['https://evil.example', '/pulls'], [null, '/pulls'], ['/pulls?x=1', '/pulls?x=1'],
-    ['/\t/evil.example', '/pulls'], ['javascript:alert(1)', '/pulls'], ['', '/pulls']])('safeNext(%j) = %j', (i, o) => expect(safeNext(i)).toBe(o))
+    ['/\t/evil.example', '/pulls'], ['javascript:alert(1)', '/pulls'], ['', '/pulls'],
+    ['/.//evil.example', '/pulls'], ['/x/..//evil.example', '/pulls'], ['/%2e//evil.example', '/pulls'],
+    ['/./\\evil.example', '/pulls']])('safeNext(%j) = %j', (i, o) => expect(safeNext(i)).toBe(o))
   it('jeton de porte vérifiable et lié au mot de passe', async () => {
     const t = await gateToken('k', 'pw')
     expect(t).toMatch(/^[0-9a-f]{64}$/)
