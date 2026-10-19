@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Versions **exactes** dans `package.json` (aucun `^` ni `~`) : celles de la ligne Tech Stack, plus eslint 9.39.5, eslint-config-next 16.4.2, @tailwindcss/turbopack 4.3.3, @types/node 24.19.2, @types/react 19.3.0, @types/react-dom 19.3.0, server-only 0.0.1. TypeScript 5.9.3 et eslint 9.39.5 sont les versions installées par le create-next-app du dépôt ; TS 7.0 est le portage natif sans l'API JS dont `next build` a besoin (`shortcut:` à revoir quand Next annoncera TS 7).
+- Versions **exactes** dans `package.json` (aucun `^` ni `~`) : celles de la ligne Tech Stack, plus eslint 9.39.5, eslint-config-next 16.4.2, @tailwindcss/turbopack 4.3.3, @types/node 24.19.2, @types/react 19.3.0, @types/react-dom 19.3.0, server-only 0.0.1. eslint 9.39.5 est la version installée par le create-next-app du dépôt. TypeScript 5.9.3 est gardé (version du scaffold) ; Next 16.4.2 sait builder avec TS 7 en lançant la CLI `tsc` locale (vérifié dans ses guides et son code, `docs/verifications.md`) : la montée de version reste possible plus tard.
 - **Le dépôt part d'un create-next-app** (branche `develop`) : on le complète, on ne le recrée pas. On garde `AGENTS.md`, qui impose de lire le guide concerné dans `node_modules/next/dist/docs/` avant d'écrire du code touchant une API Next (proxy, cache, route handlers, polices) ; on garde `cacheComponents: true`, `partialPrefetching: true` et la règle Turbopack `@tailwindcss/turbopack` de `next.config.ts` (donc pas de `postcss.config.mjs`).
 - Flux Git : branche de travail créée depuis `develop`, PR vers `develop`.
 - Node 24 en CI et sur Vercel (`.nvmrc` = `24`, `engines.node` = `>=22.22`) ; tout doit aussi tourner sur Node 22.22 (bac à sable).
@@ -495,7 +495,7 @@ test('barre latérale : 13 entrées dans l\'ordre', async ({ page, login }) => {
 test('mobile : 4 entrées + Plus', async ({ page, login }) => { /* 390×844 : Paquets, Collection, Échanges, Marché visibles ; « Plus » ouvre un dialog avec les 9 autres ; Échap le ferme et rend le focus au bouton */ })
 test.describe('chaque page a son h1', () => { /* pour chaque NAV : goto(href) → h1 a le texte `title` */ })
 ```
-  (Le logo du shell contient aussi un `h1` : cibler le `h1` de `main`.) `e2e/a11y.spec.ts` : `/`, `/login`, `/gate` (pile avec porte), `/pulls`, `/collection` → `new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag22aa']).analyze()` sans violation `serious` ni `critical`. Fixture `login(uid)` (`e2e/fixtures.ts`) : lit `.cache/backend.json`, crée l'utilisateur par `psql <databaseUrl> -c "select tests.make_user(…)"` (`execFileSync`), signe un JWT `authenticated` (`sub` = uid, `exp` = +1 h) et pose `sessionCookie(...)` dans le contexte du navigateur.
+  (Le logo du shell contient aussi un `h1` : cibler le `h1` de `main`.) `e2e/a11y.spec.ts` : `/`, `/login`, `/gate` (pile avec porte), `/pulls`, `/collection` → `new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa']).analyze()` sans violation `serious` ni `critical`. Fixture `login(uid)` (`e2e/fixtures.ts`) : lit `.cache/backend.json`, crée l'utilisateur par `psql <databaseUrl> -c "select tests.make_user(…)"` (`execFileSync`), signe un JWT `authenticated` (`sub` = uid, `exp` = +1 h) et pose `sessionCookie(...)` dans le contexte du navigateur.
 
 - [ ] **Step 2: Lancer, constater l'échec** — Run: `npm run build:test && npm run test:e2e` · Expected: FAIL (shell absent).
 

@@ -4,35 +4,34 @@
 
 ## Où on en est (2026-10-19)
 
-- **Validé par l'utilisateur** : le récap REA (`docs/rea-recap.md`), le design (`docs/superpowers/specs/2026-10-18-wikimasters-rebuild-design.md`) et le plan du jalon M0 (`docs/superpowers/plans/2026-10-19-m0-fondations.md`).
-- **Méthode d'exécution choisie** : `superpowers:subagent-driven-development` (un implémenteur neuf par tâche, puis un relecteur, puis une revue de toute la branche).
-- **Rien n'est encore construit** : aucun code d'app, aucune ressource Vercel, aucune migration appliquée.
-- **Branche de travail** : `claude/clever-cannon-59x0dj`.
+- **M0 implémenté et relu** sur la branche `claude/clever-cannon-59x0dj` : les 14 tâches du plan `docs/superpowers/plans/2026-10-19-m0-fondations.md`, une revue par tâche, puis une revue de toute la branche, corrigée.
+- **CI verte** (`.github/workflows/ci.yml`) : contrôles, puis intégration sur `postgres:17` (tests SQL, contrat HTTP, Playwright + axe).
+- **Migrations appliquées** (MCP) au projet Supabase « WMR » `iggurckxmoagsajzrnwd` ; journal dans `docs/verifications.md`.
+- **Preview Vercel** (projet `wmr`, région `dub1`) derrière la porte démo. Son `/api/health` répond 500 tant que la clé secrète manque.
+- Comptes : org Supabase « WM Prod » `xyyxepqjbgmhyocqqcbx`, équipe Vercel IVM `team_nXdYy8ZVSzoNaYlzG7a1whey`, dépôt `IVM-Projects/wm-remake` (flux `develop` intégration, `master` production, `hotfix`).
 
-## Changement de comptes demandé par l'utilisateur
+## Étapes humaines ouvertes
 
-Avant de lancer M0, l'utilisateur connecte de **nouveaux comptes** GitHub, Supabase et Vercel. Les identifiants cités dans le design et le plan sont ceux de **l'ancien** compte et doivent être remplacés :
+1. Ajouter `SUPABASE_SECRET_KEY` (clé `sb_secret_…`, Supabase → Settings → API Keys) au projet Vercel `wmr`, pour Production et Preview, puis redéployer.
+2. Régler Vercel → Settings → Git → Production Branch sur `develop` ou `master` (`main` n'existe pas).
+3. Ajouter le dépôt `IVM-Projects/wm-remake` à un espace de travail Graphify, puis rejouer les notes de `docs/decisions-graphify.md`.
+4. Facultatif : ajouter `wm` dans Supabase → Settings → API → Exposed schemas, pour que le réglage du rôle (`pgrst.db_schemas`) ne puisse pas dériver.
+5. **Délai** : tout cela avant le 2026-10-26 (7 jours après le 2026-10-19), sinon le projet Supabase Free se met en pause. `health.yml` ne peut le garder éveillé qu'une fois que la production sert ce build avec la clé.
 
-| Élément | Ancien (ne plus utiliser) | Nouveau |
-|---|---|---|
-| Organisation et projet Supabase | org `xwlidrqbodwlulipmcym` (XBZ), projet `vlazmfshvuborizccqza` | org « WM Prod » `xyyxepqjbgmhyocqqcbx` (Free), projet « WMR » `iggurckxmoagsajzrnwd`, eu-west-1 (Irlande) |
-| Équipe Vercel | `team_EdDmARh6VZ9afHMb1WTeywEN` (XBZ) | équipe IVM `team_nXdYy8ZVSzoNaYlzG7a1whey`, projet `wmr` `prj_bNmEEgvcwM6Mhb8jC8QWNUbLukiz`, démo https://wmr-ivm.vercel.app, région des fonctions `dub1` |
-| Dépôt GitHub | `ilan9903/wikimaster` | `IVM-Projects/wm-remake` ; branche de travail `claude/clever-cannon-59x0dj` créée depuis `develop` (flux : `develop`, `master`, `hotfix`) ; l'ancien dépôt sera supprimé par l'utilisateur |
+## Étape suivante : écrire le plan M1
 
-## Fait le 2026-10-19
+Trancher d'abord :
 
-Comptes connectés et vérifiés dans la session d'origine ; les 7 commits de documentation ont été recopiés dans `IVM-Projects/wm-remake` ; design et plan mis à jour avec les nouveaux identifiants. Le dépôt contient un create-next-app (Next 16.4.2) que la Task 1 complète.
+- le banc d'auth des tests : conteneur GoTrue ou `supabase start` en CI ;
+- un helper d'appel `wm` sans HTTP pour les Server Components ;
+- `route()` : POST à corps vide, validation des paramètres de chemin, transmission de la clé d'idempotence.
 
-## Si une nouvelle session reprend
+## Points différés
 
-1. Vérifier les connecteurs : Supabase (`list_organizations`, `list_projects`), Vercel (`list_teams`), accès GitHub au dépôt (push sur la branche de travail).
-2. Vérifier le projet Supabase « WM-Remake » (région, exposition automatique désactivée). Conséquence : chaque migration porte ses `GRANT` explicites (déjà prévu). La RLS automatique crée un *event trigger* en prod qui n'existe pas dans le banc local : les migrations activent quand même la RLS explicitement (test `02_mirror_rls`).
-3. Remplacer les anciens identifiants (projet Supabase, équipe Vercel, dépôt) dans le design (§3.2, §4.1 point 7, §12.2) et dans le plan (Tasks 12 et 13) ; commit.
-4. Exécuter le plan M0 avec `superpowers:subagent-driven-development`.
+Triés par jalon dans `docs/m0-suivi.md`. Le fichier de suivi des tâches (`.superpowers/sdd/2026-10-19-m0-fondations/progress.md`) est ignoré par git et sera supprimé.
 
 ## Rappels pour l'exécution
 
-- Choix du modèle de chaque sous-agent selon le skill `model-routing` (silencieusement) : code, architecture, revue → Opus ; tâches mécaniques sans ambiguïté → Haiku.
-- Réseau du bac à sable : wiki-masters.com, Wikimedia, Stripe, Brevo et l'hôte Postgres Supabase sont bloqués ; Supabase passe par son MCP. Voir le design §3.3.
-- Étapes humaines prévues au M0 (à demander au bon moment) : copier la clé secrète Supabase (`sb_secret_…`) dans Vercel ; ajouter le dépôt à l'espace Graphify ; exposer le schéma `wm` dans Supabase si la commande SQL ne suffit pas (plan, Task 12).
-- Les décisions de l'utilisateur sont listées au design §4.1 (vente à Naïm, plan B, plans gratuits pendant la construction puis Supabase Pro environ un mois autour du pitch, démo privée, aucune capture de session connectée sur wiki-masters.com sans son accord).
+- Choix du modèle de chaque sous-agent selon le skill `model-routing` (silencieusement).
+- Réseau du bac à sable : wiki-masters.com, Wikimedia, Stripe, Brevo et l'hôte Postgres Supabase sont bloqués ; Supabase passe par son MCP (design §3.3).
+- Les décisions de l'utilisateur sont listées au design §4.1.
