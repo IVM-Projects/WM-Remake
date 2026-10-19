@@ -11,6 +11,7 @@ const barItem = 'flex min-h-14 min-w-0 flex-col items-center justify-center gap-
 // <dialog> natif ouvert par showModal() : role dialog, reste de la page inerte, Échap ferme et rend le focus au bouton.
 export function BottomBar() {
   const sheet = useRef<HTMLDialogElement>(null)
+  const more = useRef<HTMLButtonElement>(null)
   // Clic sur le voile (cible = le dialog lui-même) ou sur un lien (navigation client, la barre reste montée).
   const closeOnClick = (e: MouseEvent<HTMLDialogElement>) => {
     if (e.target === e.currentTarget || (e.target as Element).closest('a')) e.currentTarget.close()
@@ -40,6 +41,7 @@ export function BottomBar() {
             </NavLink>
           ))}
           <button
+            ref={more}
             type="button"
             aria-haspopup="dialog"
             onClick={() => sheet.current?.showModal()}
@@ -56,6 +58,8 @@ export function BottomBar() {
         aria-labelledby="more-sheet-title"
         onClick={closeOnClick}
         onKeyDown={trapTab}
+        // Safari et Firefox macOS ne focalisent pas un bouton cliqué : le focus rendu par le navigateur irait sur body.
+        onClose={() => more.current?.focus()}
         className="mx-0 mt-auto mb-0 max-h-[85dvh] w-full max-w-full rounded-t-2xl border-t border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-foreground)] backdrop:bg-black/70 backdrop:backdrop-blur-sm motion-safe:animate-fade-in-up"
       >
         <div className="p-4 pb-[calc(16px+env(safe-area-inset-bottom,0px))]">
@@ -63,7 +67,8 @@ export function BottomBar() {
             <h2 id="more-sheet-title" className="px-4 text-lg font-bold">Plus</h2>
             <button
               type="button"
-              aria-label="Fermer"
+              // Pas « Fermer » seul : c'est le sélecteur d'extension du bouton de la modale de carte (R§6.8).
+              aria-label="Fermer le menu"
               onClick={() => sheet.current?.close()}
               className="inline-flex size-11 items-center justify-center rounded-xl transition-colors hover:bg-[var(--color-surface-light)]"
             >

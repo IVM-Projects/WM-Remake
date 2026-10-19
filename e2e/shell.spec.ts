@@ -68,6 +68,15 @@ test('mobile : 4 entrées + Plus', async ({ page, login }) => {
   await expect(sheet).toBeHidden()
   await expect(more).toBeFocused()
 
+  // Ouverte et fermée à la souris : le focus revient à « Plus » sans compter sur le navigateur.
+  // dispatchEvent ne focalise pas le bouton, comme un clic sous Safari : le focus natif irait sur body.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await more.dispatchEvent('click')
+  await sheet.getByRole('button', { name: 'Fermer le menu' }).click()
+  await expect(sheet).toBeHidden()
+  await expect(more).toBeFocused()
+  await expect(page.locator('[aria-label="Fermer"]')).toHaveCount(0)
+
   // Un lien de la feuille navigue et la referme.
   await more.click()
   await sheet.getByRole('link', { name: 'Amis' }).click()
