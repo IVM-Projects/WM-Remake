@@ -10,5 +10,4 @@ Relevés par les revues des tâches et de la branche du M0, triés par jalon : c
 
 ## En attente d'étapes humaines
 
-- **R15** : `/api/health` en 200 sur Vercel, en attente des étapes humaines 1 et 2 de `docs/superpowers/HANDOFF.md` (clé secrète, branche de production).
 - **Graphify** : indexation du dépôt et notes de `docs/decisions-graphify.md`, en attente de l'étape humaine 3 de `docs/superpowers/HANDOFF.md`.
