@@ -175,4 +175,4 @@ grant usage on schema wm to service_role;
 revoke all on all tables in schema wm from public, anon, authenticated;
 revoke execute on all functions in schema wm from public, anon, authenticated;
 grant execute on all functions in schema wm to service_role;
-alter default privileges in schema wm revoke execute on functions from public;
+-- Chaque migration wm finit par ce couple revoke/grant (PG ne sait pas fermer par défaut un seul schéma) ; vérifié par le scan de supabase/tests/10_wm_core.test.sql.
