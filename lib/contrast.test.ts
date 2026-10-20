@@ -123,3 +123,27 @@ const pullsPairs: [label: string, fg: string, bg: string, min: number][] = [
 describe('page des paquets', () => {
   it.each(pullsPairs)('%s', (_label, a, b, min) => expect(contrast(resolve(a), resolve(b))).toBeGreaterThanOrEqual(min))
 })
+
+// /collection : pastilles de rareté (fond inline inerte, donc le graphite dessous), pleines ou atténuées dès qu'un filtre est posé.
+// L'opacity-50 d'origine ferait 2,5:1 pour SR : 80 % est le plus bas qui tienne 4,5:1 pour les six raretés.
+describe('page de la collection', () => {
+  it.each(RARITIES.flatMap(r => [1, 0.8].map(a => [r, a] as const)))('pastille %s à l\'opacité %s ≥ 4,5:1', (r, a) => {
+    const bg = resolve('--color-background')
+    expect(contrast(over(resolve(`--color-rarity-${r}`), a, bg), bg)).toBeGreaterThanOrEqual(4.5)
+  })
+  it.each(RARITIES)('pastille %s pressée, sur sa teinte à 20 % ≥ 4,5:1', (r) => {
+    const c = resolve(`--color-rarity-${r}`)
+    expect(contrast(c, over(c, 0.2, resolve('--color-background')))).toBeGreaterThanOrEqual(4.5)
+  })
+  it('l\'opacity-50 d\'origine échouerait (SR)', () => {
+    const bg = resolve('--color-background')
+    expect(contrast(over(resolve('--color-rarity-sr'), 0.5, bg), bg)).toBeLessThan(4.5)
+  })
+  it('bouton désactivé (pagination, sélection vide), /60 sur la page et sur le panneau', () => {
+    expect(contrast(fg(0.6, '--color-background'), resolve('--color-background'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(fg(0.6, '--color-surface'), resolve('--color-surface'))).toBeGreaterThanOrEqual(4.5)
+  })
+  it('contour d\'une pastille pressée (sa couleur) ≥ 3:1 sur le graphite', () => {
+    for (const r of RARITIES) expect(contrast(resolve(`--color-rarity-${r}`), resolve('--color-background'))).toBeGreaterThanOrEqual(3)
+  })
+})

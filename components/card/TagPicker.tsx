@@ -18,6 +18,16 @@ export function inkOn(hex: string): 'black' | 'white' {
 
 const byName = (a: Tag, b: Tag) => a.name.localeCompare(b.name, 'fr')
 
+// POST rest/v1/tags {user_id, name, color: null} ; 23505 : créée entre-temps (autre onglet), on reprend celle-là. Aussi pour l'étiquette en masse.
+export async function createTag(name: string): Promise<Tag> {
+  const sb = createBrowserSupabase()
+  const { data: auth } = await sb.auth.getSession()
+  const res = await sb.from('tags').insert({ user_id: auth.session?.user.id, name, color: null }).select('id,name,color').single()
+  const row = res.error?.code === '23505' ? (await sb.from('tags').select('id,name,color').eq('name', name).single()).data : res.data
+  if (!row) throw res.error
+  return row as Tag
+}
+
 // Étiquettes d'une copie (R§6.5), lues et écrites en direct par PostgREST sous RLS (D§7.3).
 // DOM du contrat : input[placeholder="Ajouter une étiquette…"], [role=listbox] li[role=option] button, « Retirer l'étiquette X ».
 export function TagPicker({ userCardId, tags, onChange }: Props) {
@@ -51,13 +61,9 @@ export function TagPicker({ userCardId, tags, onChange }: Props) {
     try {
       let tag = choice ?? exact
       if (!tag) {
-        const { data: auth } = await sb.auth.getSession()
-        const res = await sb.from('tags').insert({ user_id: auth.session?.user.id, name, color: null }).select('id,name,color').single()
-        // 23505 : créée entre-temps (autre onglet) ; on reprend celle-là.
-        const row = res.error?.code === '23505' ? (await sb.from('tags').select('id,name,color').eq('name', name).single()).data : res.data
-        if (!row) throw res.error
-        tag = row as Tag
-        setMine((m) => [...(m ?? []), row as Tag].sort(byName))
+        const row = await createTag(name)
+        tag = row
+        setMine((m) => [...(m ?? []), row].sort(byName))
       }
       const link = await sb.from('user_card_tags').insert({ user_card_id: userCardId, tag_id: tag.id })
       if (link.error && link.error.code !== '23505') throw link.error

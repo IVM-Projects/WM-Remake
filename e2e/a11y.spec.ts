@@ -1,17 +1,33 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { expect, sql, test } from './fixtures'
 
-// D§8.6 : 0 violation serious ou critical (WCAG 2.2 AA).
-async function expectNoSeriousViolations(page: Page) {
+type Known = { rule: string; selector: string }
+
+// D§8.6 : 0 violation serious ou critical (WCAG 2.2 AA). `known` tolère une seule règle sur les seuls nœuds d'un sélecteur.
+async function expectNoSeriousViolations(page: Page, known?: Known) {
   const { violations } = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze()
-  const serious = violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')
-  expect(serious.map((v) => `${v.id} : ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([])
+  const serious: string[] = []
+  for (const v of violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')) {
+    const nodes: string[] = []
+    for (const n of v.nodes) {
+      const target = n.target.join(' ')
+      const tolerated = known?.rule === v.id && await page.locator(target).evaluate((el, s) => el.matches(s), known.selector)
+      if (!tolerated) nodes.push(target)
+    }
+    if (nodes.length) serious.push(`${v.id} : ${nodes.join(' | ')}`)
+  }
+  expect(serious).toEqual([])
 }
+
+// R21 : écart de contrat connu, consigné pour le M7 (parity/allowed-diffs) — le DOM de R§6.5 `[role=listbox] li[role=option] button`
+// fait lever nested-interactive à axe tant que la liste est ouverte (boutons hors tabulation, clavier par aria-activedescendant).
+const TAG_OPTION: Known = { rule: 'nested-interactive', selector: '[role=listbox] li[role=option]' }
 
 // Contenu rendu après l'hydratation (useSearchParams, session lue par le client) : attendu avant l'analyse.
 const READY: Record<string, string> = {
   '/reset-password': 'main [role=alert]', '/verify-email?email=a11y%40test.local': '#signup-otp-code', '/pulls': '[data-stock-bar]',
+  '/collection': 'main a[href="/pulls"]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -45,4 +61,44 @@ test('axe /pulls en révélation', async ({ page, login }) => {
   await expect(page.getByText('Carte 1 / 5', { exact: true })).toBeVisible()
   await settled(page)
   await expectNoSeriousViolations(page)
+})
+
+// Collection garnie : une copie de chaque rareté (2 de C), pour que la grille, les pastilles et la modale aient de quoi s'afficher.
+async function collection(page: Page, login: () => Promise<{ uid: string }>) {
+  const { uid } = await login()
+  sql(`insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards
+where right(wikipedia_title, 4) in ('0001', '0007', '0031', '0121', '0401', '1001', '1002')`, { uid })
+  await page.goto('/collection')
+  await expect(page.locator('div.relative.isolate.group')).toHaveCount(7)
+  await settled(page)
+}
+
+test('axe /collection : grille, pastille de rareté active, sélection', async ({ page, login }) => {
+  await collection(page, login)
+  await expectNoSeriousViolations(page)
+  // Un filtre posé : les autres pastilles passent à l'état inactif.
+  await page.getByRole('button', { name: 'L', exact: true }).click()
+  await expect(page.locator('div.relative.isolate.group')).toHaveCount(1)
+  await expectNoSeriousViolations(page)
+  await page.getByRole('button', { name: 'Sélectionner', exact: true }).click()
+  await page.getByRole('button', { name: 'Tout sélectionner' }).click()
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /collection, modale de carte ouverte', async ({ page, login }) => {
+  await collection(page, login)
+  await page.locator('div.relative.isolate.group h3 button').first().click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await settled(page)
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /collection, liste d\'étiquettes ouverte', async ({ page, login }) => {
+  await collection(page, login)
+  await page.locator('div.relative.isolate.group h3 button').first().click()
+  await page.getByPlaceholder('Ajouter une étiquette…').fill('t')
+  await expect(page.getByRole('listbox')).toBeVisible()
+  await settled(page)
+  await expectNoSeriousViolations(page, TAG_OPTION)
 })
