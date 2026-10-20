@@ -51,9 +51,11 @@ export function PackStock({ remaining, cap, nextAt, period, busy, onOpen, onElap
         >
           {busy ? 'Ouverture…' : 'Ouvrir'}
         </button>
-        {/* Le libellé d'un bouton déjà focalisé n'est pas toujours relu : l'état passe aussi par une région polie. */}
-        <span role="status" className="sr-only">{busy ? 'Ouverture du paquet…' : ''}</span>
-        {empty && <p className="text-sm font-medium text-[var(--color-foreground)]/80">Plus de paquets disponibles</p>}
+        {/* Le libellé d'un bouton déjà focalisé n'est pas toujours relu : l'état passe aussi par une région polie,
+            stock vide compris (dernier paquet ouvert dans un autre onglet : la réponse 403 le dit ici). */}
+        <p role="status" className={empty && !busy ? 'text-sm font-medium text-[var(--color-foreground)]/80' : 'sr-only'}>
+          {busy ? 'Ouverture du paquet…' : empty ? 'Plus de paquets disponibles' : ''}
+        </p>
       </div>
       <div className="card-frame w-full max-w-sm space-y-3 p-4">
         <div className="flex items-baseline justify-between gap-3">

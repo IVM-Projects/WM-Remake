@@ -6,7 +6,7 @@ import { Field, FormError } from '@/components/auth/Field'
 import { useHydrated } from '@/components/auth/Submit'
 import { ghost as ghostBase } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, userMessage } from '@/lib/api'
 import { authErrorMessage, usernameProblem } from '@/lib/auth'
 import { setPrefs } from '@/lib/prefs'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -28,8 +28,6 @@ const ok = 'text-sm font-medium text-[var(--color-accent-light)]'
 
 const dateFr = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long' })
 const nextChange = (iso: unknown) => (typeof iso === 'string' ? ` Prochain changement possible le ${dateFr.format(new Date(iso))}.` : '')
-// Nos routes répondent en français sous 500 ; au-delà (ou hors réseau), le message de repli.
-const messageOf = (e: unknown, fallback: string) => (e instanceof ApiError && e.status < 500 ? e.message : fallback)
 
 // Onglet « Général » (R§2.2) : profil, préférences, compte. Page jamais capturée (D§8.5) : chaque section a ses états
 // de chargement, d'échec avec « Réessayer » et d'enregistrement ; une section en échec ne bloque pas les autres.
@@ -228,7 +226,7 @@ function UsernameForm({ current, onSaved }: { current: string; onSaved: (usernam
     } catch (err) {
       // Trop tôt : la date du prochain changement possible suit le message (409 username_change_too_soon).
       const at = err instanceof ApiError ? (err.body as { next_change_at?: unknown } | null)?.next_change_at : null
-      setError(messageOf(err, 'Ton pseudo n\'a pas pu être modifié.') + nextChange(at))
+      setError(userMessage(err, 'Ton pseudo n\'a pas pu être modifié.') + nextChange(at))
     }
     setPending(false)
   }

@@ -1,12 +1,12 @@
 'use client'
 
-import { useId, useState, type FormEvent, type ReactNode } from 'react'
+import { useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { createTag } from '@/components/card/TagPicker'
 import { ghost as ghostBase } from '@/components/ui/button'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
-import { api, ApiError } from '@/lib/api'
+import { apiOnce, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 import type { TagCount } from './CollectionToolbar'
@@ -20,8 +20,8 @@ type Props = {
   tagsFailed: boolean
   // Étiquettes posées ou retirées : la page relit la grille et les nombres de copies.
   onTagged: () => void
-  // Défausse finie (même en partie) : la page vide la sélection et relit grille, étiquettes et solde.
-  onDiscarded: () => void
+  // Défausse finie (même en partie) : la page ne garde sélectionnées que `keep` (lots sans verdict) et relit grille, étiquettes et solde.
+  onDiscarded: (keep: string[]) => void
 }
 
 type Action = 'apply' | 'remove' | 'discard'
@@ -36,6 +36,7 @@ const field = 'w-full min-h-11 rounded-xl border border-[var(--color-foreground)
 // Irréversible : rouge plein, distinct d'« Annuler » (texte blanc ≥ 4,5:1 au repos, au survol et en cours, lib/contrast.test.ts).
 const danger = 'inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-red-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-red-800 aria-disabled:cursor-not-allowed aria-disabled:opacity-80'
 const tagsError = <p role="alert" className="text-sm text-red-400">Tes étiquettes n&apos;ont pas pu être chargées.</p>
+const BULK_UNSURE = 'La défausse n\'a pas été confirmée : une partie a peut-être eu lieu. Ton solde et ta collection se mettent à jour.'
 
 // Multi-sélection (R§2.2) : étiquette appliquée ou retirée en direct par PostgREST (lots de 100, R§3.3), défausse en masse par lots de 50.
 export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTagged, onDiscarded }: Props) {
@@ -47,6 +48,8 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [blank, setBlank] = useState(false)
+  // Une Idempotency-Key par lot (ses copies), gardée tant que son issue est inconnue (apiOnce).
+  const keys = useRef(new Map<string, string>())
   const none = ids.length === 0
   const off = none || loading
   const noTags = tagsFailed || !tags.length
@@ -58,13 +61,14 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
     setAction(a)
   }
 
-  async function run(work: () => Promise<void>, failure: string) {
+  // maybe : message d'un échec sans verdict du serveur (réseau, 5xx), quand l'action a pu avoir lieu.
+  async function run(work: () => Promise<void>, failure: string, maybe = failure) {
     if (busy) return
     setBusy(true)
     try {
       await work()
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : failure)
+      setError(userMessage(e, unsure(e) ? maybe : failure))
     } finally {
       setBusy(false)
       setAction(null)
@@ -114,20 +118,28 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
   const discard = () => run(async () => {
     let done = 0
     let failed = 0
+    // Copies des lots qui ont reçu un verdict du serveur ; keep : celles qui restent sélectionnées pour la relance.
+    let answered = 0
+    let keep: string[] = []
     try {
       for (const part of chunks(ids, 50)) {
-        const r = await api<{ discarded_count: number; failed?: unknown[] }>('/api/user-cards/bulk-discard', {
-          method: 'POST', idem: true, body: JSON.stringify({ card_ids: part }),
+        const r = await apiOnce<{ discarded_count: number; failed?: unknown[] }>(keys.current, part.join(), '/api/user-cards/bulk-discard', {
+          method: 'POST', body: JSON.stringify({ card_ids: part }),
         })
+        answered += part.length
         done += r.discarded_count
         failed += r.failed?.length ?? 0
       }
       if (failed) setError(`${n(failed, 'carte n\'a', 'cartes n\'ont')} pas pu être défaussée${failed > 1 ? 's' : ''}.`)
+    } catch (e) {
+      // Lot sans verdict : lui et les suivants restent sélectionnés ; relancé, ce lot garde sa clé et le serveur rejoue sa réponse.
+      if (unsure(e)) keep = ids.slice(answered)
+      throw e
     } finally {
       if (done) toast(`${n(done, 'carte défaussée', 'cartes défaussées')} : +${n(done, 'wikibidou', 'wikibidous')}`)
-      onDiscarded()
+      onDiscarded(keep)
     }
-  }, 'La défausse s\'est arrêtée en cours de route.')
+  }, 'La défausse s\'est arrêtée en cours de route.', BULK_UNSURE)
 
   const submit = (e: FormEvent, go: () => Promise<void>, off = false) => {
     e.preventDefault()

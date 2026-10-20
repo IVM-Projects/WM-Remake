@@ -12,6 +12,8 @@ type Props = { onClose: () => void; labelledBy: string; className: string; child
 export function Modal({ onClose, labelledBy, className, children }: Props) {
   const panel = useRef<HTMLDivElement>(null)
   const downOnBackdrop = useRef(false)
+  // Une fois par montage : réaffichée par Activity, la modale ne prend pas pour ouvreur le lien de navigation cliqué entre-temps.
+  const opener = useRef<HTMLElement | null>(null)
 
   // Sur document : Échap et Tab marchent même si le focus est tombé sur body. Un enfant garde Échap par preventDefault (liste d'étiquettes ouverte).
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
@@ -36,12 +38,12 @@ export function Modal({ onClose, labelledBy, className, children }: Props) {
 
   // Focus sur le panneau à l'ouverture, rendu à l'élément d'origine à la fermeture.
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null
+    opener.current ??= document.activeElement as HTMLElement | null
     panel.current?.focus()
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      opener?.focus()
+      opener.current?.focus()
     }
   }, [])
 

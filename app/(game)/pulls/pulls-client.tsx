@@ -5,7 +5,7 @@ import { Turnstile } from '@/components/auth/Turnstile'
 import { PackOpening, type CardInPack } from '@/components/packs/PackOpening'
 import { PackStock } from '@/components/packs/PackStock'
 import { ProDailyBlock } from '@/components/packs/ProDailyBlock'
-import { api, ApiError, calendarTz } from '@/lib/api'
+import { api, ApiError, apiOnce, calendarTz, unsure, userMessage } from '@/lib/api'
 import { usePrefs } from '@/lib/prefs'
 import { playRip, unlockAudio } from '@/lib/sounds'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -24,6 +24,11 @@ const timing = (last: string | null | undefined, next: string | null | undefined
 const RESYNC_MS = 5_000
 const OPEN = '/api/packs/open'
 const PRO_DAILY = '/api/packs/pro-daily'
+// Réponse perdue ou 5xx : l'action a pu avoir lieu. La relance garde sa clé (apiOnce) et rejoue la même réponse.
+const UNSURE: Record<string, string> = {
+  [OPEN]: 'L\'ouverture n\'a pas été confirmée : le paquet a peut-être été ouvert. Ton stock se met à jour.',
+  [PRO_DAILY]: 'La récupération n\'a pas été confirmée : le paquet Pro a peut-être été reçu. Réessaie pour le voir, il ne sera pas donné deux fois.',
+}
 
 // Comme l'original, chaque visite appelle sync_profile_packs : le serveur régénère le stock à la lecture (R§3.1). null = illisible.
 async function readStock(): Promise<Stock | null> {
@@ -55,6 +60,8 @@ export function PullsClient() {
   const lastSync = useRef(0)
   // Génération du stock : une réponse qui porte un stock frais l'incrémente, une relecture partie avant elle arrive périmée et est jetée.
   const gen = useRef(0)
+  // Une Idempotency-Key par action (chemin), gardée tant que son issue est inconnue.
+  const keys = useRef(new Map<string, string>())
   const openBtn = useRef<HTMLButtonElement>(null)
   const idle = useRef<HTMLDivElement>(null)
 
@@ -92,9 +99,11 @@ export function PullsClient() {
     setBusy(path)
     setError(null)
     setVerify(null)
+    let sent = false
     try {
       if (token) await api('/api/human-check', { method: 'POST', idem: true, body: JSON.stringify({ token }) })
-      const res = await api<PackResponse>(path, { method: 'POST', idem: true, headers: calendarTz() })
+      sent = true
+      const res = await apiOnce<PackResponse>(keys.current, path, path, { method: 'POST', headers: calendarTz() })
       const left = res.packs_remaining
       // Pro du jour : { cards } seulement, aucun stock, donc la relecture en cours (parfois la toute première) reste valable.
       if (left !== undefined) {
@@ -108,11 +117,16 @@ export function PullsClient() {
       const body = (e instanceof ApiError ? e.body : null) as ErrorBody
       // Une seule relance après la vérification : un second refus s'affiche, sans boucle.
       if (body?.code === 'human_verification_required' && !token) setVerify(path)
+      const maybe = sent && unsure(e)
       if (body?.packs_remaining === 0) {
         gen.current++
         setFailed(false)
         setStock((s) => s && { ...s, remaining: 0, nextAt: at(body.next_regen_at) })
-      } else setError(e instanceof ApiError ? e.message : 'Le paquet n\'a pas pu être ouvert, réessaie.')
+        // Dernier paquet ouvert ailleurs : « Ouvrir » va être désactivé sous le focus (body sinon), la zone le reprend dès maintenant.
+        // PackStock annonce le stock vide dans sa région polie.
+        if (document.activeElement === openBtn.current) idle.current?.focus()
+      } else setError(userMessage(e, maybe ? UNSURE[path] : 'Le paquet n\'a pas pu être ouvert, réessaie.'))
+      if (maybe) void read()
     } finally {
       inflight.current = false
       setBusy(null)

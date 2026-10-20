@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { Page, Route } from '@playwright/test'
 import { expect, sql, test } from './fixtures'
 
 // 60 copies des cartes n° 0001 à 0060 du seed (L 1–6, UR 7–30, SR 31–60), la plus récente = le plus grand numéro.
@@ -527,4 +527,229 @@ test('collection vide : état vide et lien vers les paquets', async ({ page, log
   await page.goto('/collection')
   await expect(page.getByText('Ta collection est vide')).toBeVisible()
   await expect(page.locator('main').getByRole('link', { name: 'Ouvrir des paquets' })).toHaveAttribute('href', '/pulls')
+})
+
+// Page d'erreur de la plateforme (délai de la fonction dépassé) : texte brut, aucun JSON.
+const PLATFORM_504 = { status: 504, contentType: 'text/plain', body: 'An error occurred with your deployment\n\nFUNCTION_INVOCATION_TIMEOUT' }
+const DISCARD_UNSURE = 'La défausse n\'a pas été confirmée : la carte a peut-être été défaussée. Ton solde et ta collection se mettent à jour.'
+const BULK_UNSURE = 'La défausse n\'a pas été confirmée : une partie a peut-être eu lieu. Ton solde et ta collection se mettent à jour.'
+const isDiscard = (u: URL) => u.pathname.endsWith('/discard')
+
+test('défausse : 504 en texte brut de la plateforme → message français, solde relu', async ({ page, login }) => {
+  const { uid } = await login({ balance: 100 })
+  seed60(uid)
+  await page.goto('/collection')
+  await expect(balance(page)).toHaveText('100 wikibidous')
+  await page.route(isDiscard, (r) => r.fulfill(PLATFORM_504), { times: 1 })
+  await opener(page, 6).click()
+  const dialog = page.getByRole('dialog', { name: title(6) })
+  const reread = page.waitForRequest((r) => r.url().endsWith('/api/wikibidous'))
+  await dialog.getByRole('button', { name: /^Défausser/ }).click()
+  await expect(dialog.getByRole('alert')).toHaveText(DISCARD_UNSURE)
+  await reread
+  await expect(balance(page)).toHaveText('100 wikibidous')
+})
+
+test('réponse perdue après la défausse (504) : la relance garde la clé, un seul exemplaire retiré', async ({ page, login }) => {
+  const { uid } = await login({ balance: 100 })
+  seed60(uid)
+  const keys: string[] = []
+  page.on('request', (r) => { if (isDiscard(new URL(r.url()))) keys.push(r.headers()['idempotency-key'] ?? '') })
+  // La défausse atteint le serveur et s'y fait ; sa réponse est remplacée par la page d'erreur de la plateforme.
+  await page.route(isDiscard, async (r) => {
+    await r.fetch()
+    await r.fulfill(PLATFORM_504)
+  }, { times: 1 })
+  await page.goto('/collection?page=1')
+  await opener(page, 31).click()
+  const dialog = page.getByRole('dialog', { name: title(31) })
+  await expect(dialog).toContainText('Exemplaires : 3')
+  const discard = dialog.getByRole('button', { name: /^Défausser/ })
+  const lost = page.waitForResponse((r) => isDiscard(new URL(r.url())) && r.status() === 504)
+  await discard.click()
+  await lost
+  await expect(discard).not.toHaveAttribute('aria-disabled', 'true')
+  await discard.click()
+  await expect(dialog).toBeHidden()
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).toBe(keys[0])
+  expect(sql(`select count from public.user_cards where user_id = :'uid' and snapshot_title = :'t'`, { uid, t: title(31) })).toBe('2')
+  await expect(tile(page, 31)).toContainText('x2')
+  await expect(balance(page)).toHaveText('101 wikibidous')
+})
+
+test('défausse en masse, réponse du second lot perdue : la sélection garde ce lot, la relance rejoue sa clé', async ({ page, login }) => {
+  const { uid } = await login({ balance: 0 })
+  seed60(uid)
+  const sent: { key: string; size: number }[] = []
+  page.on('request', (r) => {
+    if (r.url().endsWith('/api/user-cards/bulk-discard')) sent.push({ key: r.headers()['idempotency-key'] ?? '', size: r.postDataJSON().card_ids.length })
+  })
+  let calls = 0
+  await page.route('**/api/user-cards/bulk-discard', async (r) => {
+    if (++calls !== 2) return r.continue()
+    await r.fetch()
+    await r.fulfill(PLATFORM_504)
+  })
+  await page.goto('/collection')
+  await expect(tiles(page)).toHaveCount(50)
+  await page.getByRole('button', { name: 'Sélectionner', exact: true }).click()
+  await page.getByRole('button', { name: 'Tout sélectionner' }).click()
+  await page.getByRole('button', { name: 'Suivant' }).click()
+  await expect(tiles(page)).toHaveCount(10)
+  await page.getByRole('button', { name: 'Tout sélectionner' }).click()
+  await expect(page.getByText('60 cartes sélectionnées')).toBeVisible()
+  await page.getByRole('button', { name: 'Défausser', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Défausser 60 cartes ?' }).getByRole('button', { name: 'Défausser', exact: true }).click()
+  await expect(page.getByText(BULK_UNSURE)).toBeVisible()
+  // Le premier lot a répondu : il sort de la sélection ; le second, à l'issue inconnue, y reste.
+  await expect(page.getByText('10 cartes sélectionnées')).toBeVisible()
+  await expect(balance(page)).toHaveText('60 wikibidous')
+  await page.getByRole('button', { name: 'Défausser', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Défausser 10 cartes ?' }).getByRole('button', { name: 'Défausser', exact: true }).click()
+  await expect(page.getByText('Aucune carte sélectionnée')).toBeVisible()
+  expect(sent.map((s) => s.size)).toEqual([50, 10, 10])
+  expect(sent[1].key).not.toBe(sent[0].key)
+  expect(sent[2].key).toBe(sent[1].key)
+  expect(sql(`select wikibidous_balance from public.profiles where id = :'uid'`, { uid })).toBe('60')
+  await expect(tile(page, 31)).toContainText('x2')
+})
+
+// Défausse de n° 0006 retenue, sa modale fermée par Échap, puis (another) n° 0005 ouverte avant la réponse.
+async function discardThenClose(page: Page, answer: (r: Route) => Promise<void>, another = true) {
+  let seen = 0
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route(isDiscard, async (r) => {
+    seen++
+    await held
+    await answer(r)
+  }, { times: 1 })
+  await page.goto('/collection')
+  await expect(balance(page)).toHaveText('100 wikibidous')
+  await opener(page, 6).click()
+  const first = page.getByRole('dialog', { name: title(6) })
+  await first.getByRole('button', { name: /^Défausser/ }).click()
+  await expect.poll(() => seen).toBe(1)
+  await page.keyboard.press('Escape')
+  await expect(first).toBeHidden()
+  const second = page.getByRole('dialog', { name: title(5) })
+  if (another) {
+    await opener(page, 5).click()
+    await expect(second).toBeVisible()
+  }
+  release()
+  return second
+}
+
+test('défausse finie après la fermeture de sa modale : la modale ouverte ensuite reste, toast, solde et grille relus', async ({ page, login }) => {
+  const { uid } = await login({ balance: 100 })
+  seed60(uid)
+  const second = await discardThenClose(page, (r) => r.continue())
+  await expect(page.locator('#wm-toasts')).toContainText('Carte défaussée : +1 wikibidou')
+  await expect(balance(page)).toHaveText('101 wikibidous')
+  await expect(tile(page, 6)).toHaveCount(0)
+  await expect(second).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(opener(page, 5)).toBeFocused()
+})
+
+test('défausse finie après la fermeture de sa modale, aucune autre ouverte : sa tuile retirée, le focus passe à la suivante', async ({ page, login }) => {
+  const { uid } = await login({ balance: 100 })
+  seed60(uid)
+  await discardThenClose(page, (r) => r.continue(), false)
+  await expect(page.locator('#wm-toasts')).toContainText('Carte défaussée : +1 wikibidou')
+  await expect(tile(page, 6)).toHaveCount(0)
+  await expect(balance(page)).toHaveText('101 wikibidous')
+  await expect(opener(page, 5)).toBeFocused()
+})
+
+test('défausse en échec après la fermeture de sa modale : le message passe par un toast', async ({ page, login }) => {
+  const { uid } = await login({ balance: 100 })
+  seed60(uid)
+  const second = await discardThenClose(page, (r) => r.fulfill(PLATFORM_504))
+  await expect(page.locator('#wm-toasts')).toContainText(DISCARD_UNSURE)
+  await expect(second).toBeVisible()
+  await expect(second.getByRole('alert')).toHaveCount(0)
+})
+
+test('étoile sur une grille périmée : inactive (aria-disabled) et focalisable, jamais écrasée par la relecture en cours', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  await page.goto('/collection')
+  await expect(tiles(page)).toHaveCount(50)
+  // La relecture de ?rarity=L lit la base tout de suite, mais sa réponse est retenue.
+  let fetched!: () => void
+  const read = new Promise<void>((r) => { fetched = r })
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route(isCollectionApi, async (r) => {
+    const res = await r.fetch()
+    fetched()
+    await held
+    await r.fulfill({ response: res })
+  }, { times: 1 })
+  await page.getByRole('button', { name: 'L', exact: true }).click()
+  await read
+  const star = tile(page, 6).getByRole('button', { name: 'Ajouter aux favoris' })
+  await expect(star).toHaveAttribute('aria-disabled', 'true')
+  await star.focus()
+  await expect(star).toBeFocused()
+  await star.click({ force: true })
+  release()
+  await expect(tiles(page)).toHaveCount(6)
+  expect(sql(`select starred from public.user_cards where user_id = :'uid' and snapshot_title = :'t'`, { uid, t: title(6) })).toBe('f')
+  await expect(tile(page, 6).getByRole('button', { name: 'Ajouter aux favoris' })).toBeVisible()
+  // Grille à jour : l'étoile marche de nouveau.
+  await tile(page, 6).getByRole('button', { name: 'Ajouter aux favoris' }).click()
+  await expect(tile(page, 6).getByRole('button', { name: 'Retirer des favoris' })).toBeVisible()
+})
+
+test('modale réaffichée par Activity : Échap rend le focus à la tuile d\'origine, pas au lien de navigation', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  await page.goto('/pulls')
+  const nav = page.locator('nav a[href="/collection"]').first()
+  await nav.click()
+  await expect(tiles(page)).toHaveCount(50)
+  await opener(page, 6).click()
+  const dialog = page.getByRole('dialog', { name: title(6) })
+  await expect(dialog).toBeVisible()
+  await page.goBack()
+  await expect(page).toHaveURL('/pulls')
+  await nav.click()
+  // Effets repris (panneau focalisé, Échap écouté) : la page réaffichée est prête.
+  await expect(dialog).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(opener(page, 6)).toBeFocused()
+})
+
+test('chargement complet : l\'en-tête n\'est inséré qu\'une fois (pas de second fondu à l\'hydratation)', async ({ page, login }) => {
+  await login()
+  await page.addInitScript(() => {
+    // Chaque h1 de PageHeader inséré, par l'analyse du HTML statique comme par React, compté une fois (le logo du shell a aussi un h1).
+    const header = 'h1[class*="md:text-3xl"]'
+    const h1s = new Set<Element>()
+    ;(window as unknown as { h1s: Set<Element> }).h1s = h1s
+    new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) {
+        if (n instanceof Element) for (const h of [n, ...n.querySelectorAll(header)]) if (h.matches(header)) h1s.add(h)
+      }
+    }).observe(document, { childList: true, subtree: true })
+  })
+  await page.goto('/collection')
+  await expect(page.getByText('Ta collection est vide')).toBeVisible()
+  await expect(balance(page)).toHaveText('0 wikibidous')
+  expect(await page.evaluate(() => (window as unknown as { h1s: Set<Element> }).h1s.size)).toBe(1)
+})
+
+test('lien « Voir l\'article sur Wikipédia → » de la modale : cible de 44 px', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  await page.goto('/collection')
+  await opener(page, 6).click()
+  const link = page.getByRole('dialog', { name: title(6) }).locator('a', { hasText: 'Voir l\'article sur Wikipédia →' })
+  // Hauteur de mise en page : la boîte englobante suit l'entrée animée du panneau (translate), d'où un 43,99… possible.
+  expect(await link.evaluate((a) => (a as HTMLElement).offsetHeight)).toBeGreaterThanOrEqual(44)
 })

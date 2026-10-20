@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode 
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
-import { api, ApiError } from '@/lib/api'
+import { apiOnce, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 import { rarityOf, type RarityCode } from '@/lib/rarity'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -49,10 +49,14 @@ export const faceOf = (i: OwnedItem): CardFace => ({
   def: i.snapshot_def ?? i.card.def,
 })
 
+// Réponse perdue ou 5xx : la défausse a pu avoir lieu ; relancée, elle garde sa clé et le serveur rejoue sa réponse.
+const DISCARD_UNSURE = 'La défausse n\'a pas été confirmée : la carte a peut-être été défaussée. Ton solde et ta collection se mettent à jour.'
+
 type Props = {
   item: OwnedItem | CatalogCard
   onClose: () => void
-  onDiscarded?: (balance: number) => void
+  // balance null : issue inconnue, solde à relire. closed : la modale était déjà fermée, la grille se relit tout de suite.
+  onDiscarded?: (balance: number | null, closed: boolean) => void
   onChanged?: (change: CardChange) => void
 }
 
@@ -73,6 +77,14 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   // Jamais disabled sur un bouton qu'on vient de presser : le navigateur poserait le focus sur body (aria-disabled et garde à la place).
   const [busy, setBusy] = useState(false)
   const starring = useRef(false)
+  // Une Idempotency-Key par copie défaussée, gardée tant que l'issue est inconnue (apiOnce).
+  const keys = useRef(new Map<string, string>())
+  // Défausse finie après la fermeture : ni onClose (il fermerait la modale ouverte depuis), ni setError (personne ne le verrait).
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const [error, setError] = useState<string | null>(null)
   const needMeta = card.q_score === undefined || card.pageviews === undefined
   const isOwned = !!owned
@@ -133,14 +145,18 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
     setBusy(true)
     setError(null)
     try {
-      const { balance } = await api<{ balance: number }>(`/api/user-cards/${owned.id}/discard`, { method: 'POST', idem: true })
+      const { balance } = await apiOnce<{ balance: number }>(keys.current, owned.id, `/api/user-cards/${owned.id}/discard`, { method: 'POST' })
       toast('Carte défaussée : +1 wikibidou')
-      onDiscarded?.(balance)
-      onClose()
+      onDiscarded?.(balance, !mounted.current)
+      if (mounted.current) return onClose()
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'La carte n\'a pas pu être défaussée.')
-      setBusy(false)
+      const message = userMessage(e, unsure(e) ? DISCARD_UNSURE : 'La carte n\'a pas pu être défaussée.')
+      if (unsure(e)) onDiscarded?.(null, !mounted.current)
+      if (mounted.current) setError(message)
+      else toast(message)
     }
+    // Aussi démontée : une page cachée par Activity garde son état, et la modale réaffichée ne doit pas rester bloquée.
+    setBusy(false)
   }
 
   const tabKey = (e: KeyboardEvent) => {
@@ -255,7 +271,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
                       href={card.wikipedia_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="font-medium text-[var(--color-accent-light)] underline-offset-2 hover:underline"
+                      className="inline-flex min-h-11 items-center font-medium text-[var(--color-accent-light)] underline-offset-2 hover:underline"
                     >
                       Voir l&apos;article sur Wikipédia →
                     </a>

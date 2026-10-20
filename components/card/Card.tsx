@@ -25,6 +25,8 @@ type Props = {
   owned?: boolean
   starred?: boolean
   onToggleStar?: () => void
+  // Étoile inactive mais focalisable (aria-disabled) : le parent garde aussi onToggleStar.
+  starOff?: boolean
   count?: number
   isShiny?: boolean
   friendOwner?: string
@@ -42,7 +44,7 @@ const SIZES = {
 }
 
 // DOM de R§6.4 : classes, ordre des enfants et aria-label sont un contrat avec les extensions (docs/DESIGN.md).
-export function Card({ card, size = 'lg', owned, starred, onToggleStar, count = 1, isShiny, friendOwner, onClick, excerpt }: Props) {
+export function Card({ card, size = 'lg', owned, starred, onToggleStar, starOff, count = 1, isShiny, friendOwner, onClick, excerpt }: Props) {
   const { hideSensitive } = usePrefs()
   // Miniature introuvable ou refusée (fichier Commons supprimé) : l'emblème plutôt que l'icône d'image cassée.
   const [broken, setBroken] = useState<string | null>(null)
@@ -98,12 +100,13 @@ export function Card({ card, size = 'lg', owned, starred, onToggleStar, count = 
               type="button"
               aria-label={starred ? 'Retirer des favoris' : 'Ajouter aux favoris'}
               disabled={!onToggleStar}
+              aria-disabled={starOff || undefined}
               onClick={(e) => {
                 e.stopPropagation()
                 onToggleStar?.()
               }}
               // Anneau de focus à l'intérieur : la carte (overflow-hidden) le couperait. ::after agrandit la cible vers l'intérieur de la carte, à 44 px au moins (D§8.6).
-              className="relative -m-2 inline-flex items-center justify-center rounded-full p-2 after:absolute after:top-0 after:right-0 after:-bottom-1.5 after:-left-1.5 focus-visible:-outline-offset-2 disabled:cursor-default"
+              className="relative -m-2 inline-flex items-center justify-center rounded-full p-2 after:absolute after:top-0 after:right-0 after:-bottom-1.5 after:-left-1.5 focus-visible:-outline-offset-2 disabled:cursor-default aria-disabled:cursor-progress"
             >
               <Star
                 className={`${s.star} drop-shadow-[0_1px_2px_rgb(0_0_0/0.6)] ${starred ? 'text-amber-200' : 'text-amber-200/65'}`}

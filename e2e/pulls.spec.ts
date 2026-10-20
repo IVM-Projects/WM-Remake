@@ -331,3 +331,46 @@ test('Pro du jour : Récupérer → révélation de 15 cartes', async ({ page, l
   await expect(counter(page, 1, 15)).toBeVisible()
   await expect(page.getByRole('button', { name: /^Aller à la carte \d+$/ })).toHaveCount(15)
 })
+
+// Page d'erreur de la plateforme (délai de la fonction dépassé) : texte brut, aucun JSON.
+const PLATFORM_504 = { status: 504, contentType: 'text/plain', body: 'An error occurred with your deployment\n\nFUNCTION_INVOCATION_TIMEOUT' }
+
+test('réponse perdue après l\'ouverture (504) : message français, stock relu, la relance garde la clé et rejoue le même paquet', async ({ page, login }) => {
+  const { uid } = await login({ humanVerified: true })
+  sql(`update public.profiles set packs_remaining = 3 where id = :'uid'`, { uid })
+  const keys: string[] = []
+  page.on('request', (r) => { if (r.url().endsWith('/api/packs/open')) keys.push(r.headers()['idempotency-key'] ?? '') })
+  // L'ouverture atteint le serveur et s'y fait ; sa réponse est remplacée par la page d'erreur de la plateforme.
+  await page.route('**/api/packs/open', async (route) => {
+    await route.fetch()
+    await route.fulfill(PLATFORM_504)
+  }, { times: 1 })
+  await page.goto('/pulls')
+  await expect(stockFrame(page)).toContainText('3 / 10')
+  await openButton(page).click()
+  // Le stock est relu : le paquet ouvert là-bas est décompté.
+  await expect(stockFrame(page)).toContainText('2 / 10')
+  await expect(page.getByText('L\'ouverture n\'a pas été confirmée : le paquet a peut-être été ouvert. Ton stock se met à jour.')).toBeVisible()
+  await expect(page.getByText('Erreur 504')).toHaveCount(0)
+  await openButton(page).click()
+  await expect(counter(page, 1)).toBeVisible()
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).toBe(keys[0])
+  // Un seul paquet consommé : la relance a rejoué la réponse stockée.
+  expect(sql(`select packs_remaining from public.profiles where id = :'uid'`, { uid })).toBe('2')
+})
+
+test('stock vidé ailleurs : « Ouvrir » refusé (0 paquet) garde le focus dans la page et annonce le stock vide', async ({ page, login }) => {
+  const { uid } = await login({ humanVerified: true })
+  await page.goto('/pulls')
+  await expect(stockFrame(page)).toContainText('1 / 10')
+  // Un autre onglet vient d'ouvrir le dernier paquet : la base dit 0, la page montre encore 1.
+  sql(`update public.profiles set packs_remaining = 0, packs_last_regen_at = now() where id = :'uid'`, { uid })
+  await openButton(page).focus()
+  await page.keyboard.press('Enter')
+  await expect(stockFrame(page)).toContainText('0 / 10')
+  await expect(openButton(page)).toBeDisabled()
+  await expect(page.getByRole('status').filter({ hasText: 'Plus de paquets disponibles' })).toBeVisible()
+  await expect(page.locator('body')).not.toBeFocused()
+  await expect(page.locator('main :focus')).toHaveCount(1)
+})

@@ -3,7 +3,7 @@
 import { BookOpen } from 'lucide-react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { Suspense, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Card } from '@/components/card/Card'
 import { CardModal, faceOf, type CardChange, type OwnedItem } from '@/components/card/CardModal'
 import { CollectionToolbar, type TagCount } from '@/components/collection/CollectionToolbar'
@@ -44,7 +44,58 @@ function go(patch: Record<string, string | string[] | null>, replace = false) {
   else window.history.pushState(null, '', url)
 }
 
+type Balance = { readBalance: () => void; freshBalance: (b: number) => void }
+
+// En-tête et solde hors du Suspense : rendus une fois dans la coquille statique, ils ne sont pas remplacés (ni refondus) à l'hydratation.
 export function CollectionClient() {
+  const [balance, setBalance] = useState<number | 'error' | null>(null)
+  // Génération du solde : une réponse de défausse rend périmée une lecture partie avant elle.
+  const balanceGen = useRef(0)
+  const readBalance = () => {
+    const g = ++balanceGen.current
+    api<{ balance: number }>('/api/wikibidous').then(
+      (r) => { if (g === balanceGen.current) setBalance(r.balance) },
+      () => { if (g === balanceGen.current) setBalance('error') },
+    )
+  }
+  const freshBalance = (b: number) => {
+    balanceGen.current++
+    setBalance(b)
+  }
+  // À chaque affichage (Activity compris).
+  const onShow = useEffectEvent(readBalance)
+  useEffect(() => onShow(), [])
+
+  return (
+    <>
+      <PageHeader title={entry.title} icon={entry.icon}>
+        {balance !== null && (
+          <p title="Solde de wikibidous" className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm font-semibold tabular-nums">
+            <WCoin className="size-5 text-amber-300" />
+            {balance === 'error' ? (
+              // Relu à la prochaine défausse.
+              <>
+                <span aria-hidden="true">—</span>
+                <span className="sr-only">Solde indisponible</span>
+              </>
+            ) : (
+              <>
+                {formatInt(balance)}
+                <span className="sr-only"> wikibidous</span>
+              </>
+            )}
+          </p>
+        )}
+      </PageHeader>
+      {/* useSearchParams : seule la grille attend le client. */}
+      <Suspense fallback={<Loading label="Chargement de la collection" />}>
+        <CollectionBody readBalance={readBalance} freshBalance={freshBalance} />
+      </Suspense>
+    </>
+  )
+}
+
+function CollectionBody({ readBalance, freshBalance }: Balance) {
   const params = useSearchParams()
   const rawPage = params.get('page')
   const rawSort = params.get('sort')
@@ -65,7 +116,6 @@ export function CollectionClient() {
   const key = `${query}#${reload}`
   const [data, setData] = useState<(CollectionPage & { key: string }) | null>(null)
   const [failedKey, setFailedKey] = useState<string | null>(null)
-  const [balance, setBalance] = useState<number | 'error' | null>(null)
   const [tags, setTags] = useState<TagCount[]>([])
   const [tagsFailed, setTagsFailed] = useState(false)
   const [text, setText] = useState(q)
@@ -81,8 +131,6 @@ export function CollectionClient() {
   const [open, setOpen] = useState<OwnedItem | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  // Génération du solde : une réponse de défausse rend périmée une lecture partie avant elle.
-  const balanceGen = useRef(0)
   const tagsGen = useRef(0)
   const starring = useRef(new Set<string>())
   // La modale a changé ce que montre la grille (défausse, étiquettes) : relecture à sa fermeture.
@@ -111,17 +159,6 @@ export function CollectionClient() {
     }
   }, [key, query])
 
-  const readBalance = () => {
-    const g = ++balanceGen.current
-    api<{ balance: number }>('/api/wikibidous').then(
-      (r) => { if (g === balanceGen.current) setBalance(r.balance) },
-      () => { if (g === balanceGen.current) setBalance('error') },
-    )
-  }
-  const freshBalance = (b: number) => {
-    balanceGen.current++
-    setBalance(b)
-  }
   // Étiquettes du joueur et nombre de copies de chacune (PostgREST, comptage embarqué), pour « Toutes les étiquettes ».
   // Génération : une réponse tardive n'écrase pas des nombres plus frais.
   const loadTags = () => {
@@ -138,11 +175,8 @@ export function CollectionClient() {
     loadTags()
   }
 
-  // À chaque affichage (Activity compris) : solde et étiquettes relus. Retour/Avancer : le champ reprend la recherche de l'adresse.
-  const onShow = useEffectEvent(() => {
-    readBalance()
-    loadTags()
-  })
+  // À chaque affichage (Activity compris) : étiquettes relues (le solde, par CollectionClient). Retour/Avancer : le champ reprend la recherche de l'adresse.
+  const onShow = useEffectEvent(loadTags)
   useEffect(() => {
     onShow()
     const onPop = () => {
@@ -183,8 +217,9 @@ export function CollectionClient() {
     setData((d) => d && { ...d, collection: d.collection.map((x) => (x.id === id ? { ...x, ...change } : x)) })
 
   // PATCH user_cards {starred} en direct (RLS, D§7.3), optimiste ; un PATCH à la fois par copie.
+  // Grille périmée (relecture en cours) : sa réponse, lue avant ce PATCH, écraserait l'étoile ; inactive le temps de la relecture.
   async function toggleStar(item: OwnedItem) {
-    if (starring.current.has(item.id)) return
+    if (stale || starring.current.has(item.id)) return
     starring.current.add(item.id)
     const next = !item.starred
     patchItem(item.id, { starred: next })
@@ -235,26 +270,6 @@ export function CollectionClient() {
 
   return (
     <>
-      <PageHeader title={entry.title} icon={entry.icon}>
-        {balance !== null && (
-          <p title="Solde de wikibidous" className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm font-semibold tabular-nums">
-            <WCoin className="size-5 text-amber-300" />
-            {balance === 'error' ? (
-              // Relu à la prochaine défausse.
-              <>
-                <span aria-hidden="true">—</span>
-                <span className="sr-only">Solde indisponible</span>
-              </>
-            ) : (
-              <>
-                {formatInt(balance)}
-                <span className="sr-only"> wikibidous</span>
-              </>
-            )}
-          </p>
-        )}
-      </PageHeader>
-
       <CollectionToolbar
         text={text}
         onText={onText}
@@ -278,8 +293,8 @@ export function CollectionClient() {
           tags={tags}
           tagsFailed={tagsFailed}
           onTagged={refresh}
-          onDiscarded={() => {
-            setSelected([])
+          onDiscarded={(keep) => {
+            setSelected(keep)
             refresh()
             readBalance()
           }}
@@ -359,6 +374,7 @@ export function CollectionClient() {
                     owned
                     starred={item.starred}
                     onToggleStar={() => void toggleStar(item)}
+                    starOff={stale}
                     count={item.count}
                     isShiny={item.is_shiny}
                     onClick={selecting ? undefined : () => setOpen(item)}
@@ -398,9 +414,16 @@ export function CollectionClient() {
         <CardModal
           item={open}
           onClose={closeModal}
-          onDiscarded={(b) => {
-            freshBalance(b)
-            dirty.current = true
+          onDiscarded={(b, closed) => {
+            if (b === null) readBalance()
+            else freshBalance(b)
+            if (!closed) {
+              dirty.current = true
+              return
+            }
+            // Défausse finie après la fermeture de sa modale : grille relue tout de suite ; si sa tuile disparaît sous le focus, la suivante le prend.
+            refocus.current = Math.max(0, items.findIndex((x) => x.id === open.id))
+            refresh()
           }}
           onChanged={(change) => onChanged(open.id, change)}
         />
