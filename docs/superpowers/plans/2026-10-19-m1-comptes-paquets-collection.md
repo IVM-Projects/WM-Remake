@@ -982,6 +982,8 @@
 
 - [ ] **Step 2: Suite complète en local** — `npm run lint && npm run typecheck && npm test && npm run test:db && npm run build:test && npm run test:contract && npm run test:e2e && npm run coverage:recap`. Attendu : tout est vert, axe ne trouve aucune violation *serious* ni *critical* sur chaque route ajoutée, et le rapport de couverture liste toutes les routes du R§3.1 au R§3.4.
 
+> Ordre (R32) : le Step 4 (migrations et seed sur la démo) passe avant la fusion du Step 3, car `develop` est la branche de production de Vercel ; le Step 7 ajoute la sonde du cache de schéma de PostgREST (`HANDOFF.md`).
+
 - [ ] **Step 3: Pousser la branche de travail et lancer `ci.yml` à la demande sur elle (`workflow_dispatch`).** Quand la CI est verte, fusionner dans `develop` (`git merge --no-ff`, comme pour le M0) et pousser `develop`.
 
 - [ ] **Step 4: Base de la démo** (MCP Supabase, projet `iggurckxmoagsajzrnwd`)

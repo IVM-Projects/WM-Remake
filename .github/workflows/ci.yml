@@ -55,15 +55,28 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # Archives du banc : la SHA-256 de get-tools.sh reste le contrôle, le cache évite seulement le téléchargement.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            .cache/postgrest
+            .cache/gotrue
+            .cache/mailpit
+          key: bench-tools-${{ hashFiles('scripts/get-tools.sh') }}
       - run: bash scripts/get-tools.sh
       - run: npm run test:db
       - run: npm run build:test
       - run: npm run test:contract
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      # Échec de n'importe quelle étape : rapport, traces et captures Playwright, journaux Next/GoTrue/PostgREST/Mailpit du banc.
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
-          path: playwright-report/
+          name: integration-failure
+          path: |
+            playwright-report/
+            test-results/
+            .cache/logs/
+          include-hidden-files: true
           retention-days: 7

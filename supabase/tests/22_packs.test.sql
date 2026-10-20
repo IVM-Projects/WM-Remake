@@ -293,6 +293,27 @@ do $$ declare u uuid := pg_temp.player('Grace1'); g1 bigint; g2 bigint; d jsonb;
   assert pg_temp.err(format('select wm.claim_grace(%L)', u)) = d, 'dotation réclamée deux fois';
 end $$;
 
+-- Idempotency-Key rejouée sur le Pro du jour, un paquet spécial et la grâce → même réponse, une seule réclamation, un seul jeu de copies.
+-- Deux dotations de grâce : un rejeu exécuté prendrait la seconde au lieu de lever.
+do $$ declare u uuid := pg_temp.player('IdemPro'); v uuid := pg_temp.player('IdemSpec'); g uuid := pg_temp.player('IdemGrace');
+  sp uuid; a jsonb; begin
+  update public.profiles set is_pro = true where id = u;
+  a := wm.pro_daily_claim(u, 'Europe/Paris', 'kp');
+  assert wm.pro_daily_claim(u, 'Europe/Paris', 'kp') = a, 'Pro du jour : réponse rejouée différente';
+  assert (select count(*) from wm.pro_daily_claims where user_id = u) = 1 and (select count(*) from public.user_cards where user_id = u) = 15,
+    'Pro du jour : rejeu exécuté';
+  insert into wm.special_packs (name, size) values ('Rejeu', 3) returning id into sp;
+  a := wm.claim_special(v, sp, 'ks');
+  assert wm.claim_special(v, sp, 'ks') = a, 'paquet spécial : réponse rejouée différente';
+  assert (select count(*) from wm.special_pack_claims where user_id = v) = 1 and (select count(*) from public.user_cards where user_id = v) = 3,
+    'paquet spécial : rejeu exécuté';
+  insert into wm.grace_grants (user_id, size) values (g, 2), (g, 4);
+  a := wm.claim_grace(g, 'kg');
+  assert wm.claim_grace(g, 'kg') = a, 'grâce : réponse rejouée différente';
+  assert (select count(*) from wm.grace_grants where user_id = g and claimed_at is not null) = 1
+    and (select count(*) from public.user_cards where user_id = g) = 2, 'grâce : rejeu exécuté';
+end $$;
+
 -- Taille d'un paquet spécial ou d'une dotation de grâce : strictement positive.
 do $$ declare u uuid := tests.make_user('Size0'); begin
   begin insert into wm.special_packs (name, size) values ('Vide', 0); assert false, 'paquet spécial de taille 0 accepté';

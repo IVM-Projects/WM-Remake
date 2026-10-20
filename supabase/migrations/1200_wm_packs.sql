@@ -1,4 +1,5 @@
 -- ADDITIVE : paquets (D§7.2, D§7.0, C8, C10, C17) — pool de tirage, ouverture et ses gardes, Pro du jour, paquets spéciaux, grâce. Idempotente.
+-- Compatible pg-safeupdate (préchargé par le PostgREST hébergé, même dans les fonctions) : tout DELETE/UPDATE garde un WHERE, `where true` pour vider une table.
 
 insert into wm.config (key, value, note) values
   ('pack_size', '5', 'Cartes par paquet (R§5.1)'),
@@ -64,10 +65,10 @@ create index if not exists grace_grants_unclaimed_idx on wm.grace_grants (user_i
 create or replace function wm.rebuild_draw_pool()
 returns int language plpgsql security definer set search_path = '' as $$
 begin
-  delete from wm.draw_pool;
+  delete from wm.draw_pool where true;
   insert into wm.draw_pool (rarity, seq, card_id)
   select rarity, row_number() over (partition by rarity order by id), id from public.cards;
-  delete from wm.catalog_stats;
+  delete from wm.catalog_stats where true;
   insert into wm.catalog_stats (rarity, n) select rarity, count(*) from wm.draw_pool group by rarity;
   return (select count(*) from wm.draw_pool);
 end $$;

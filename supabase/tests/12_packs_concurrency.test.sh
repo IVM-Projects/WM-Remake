@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # open_pack en parallèle sur un même joueur (mini-catalogue et joueur supprimés à la sortie, intervalle minimal restauré) :
-# 50 ouvertures sur un stock de 3 → 3 paquets, 15 copies, stock 0, 47 refus « Plus de paquets disponibles », invariants vides.
+# 50 ouvertures sur un stock de 3 → 3 paquets, 15 copies, stock 0, 47 refus « Plus de paquets disponibles », invariants vides ;
+# puis 10 ouvertures en vol avec la même Idempotency-Key sur un stock de 5 → 1 paquet, 5 copies de plus, 10 sorties identiques.
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 tmp="$(mktemp -d)"
@@ -43,4 +44,24 @@ got="$(q -c "select format('%s %s %s %s', (select count(*) from public.user_card
     s.packs_opened, s.cards_obtained)
   from public.profiles p join wm.user_stats s on s.user_id = p.id where p.id = '$uid'")"
 [[ $got == '15 0 3 15' ]] || { echo "copies, stock, paquets ouverts, cartes obtenues : $got" >&2; exit 1; }
+[[ "$(q -c 'select wm.check_invariants()')" == '[]' ]] || { echo "invariants violés" >&2; exit 1; }
+
+# Même clé en vol : les doublons attendent la clé non validée de la première (idem_claim), puis rejouent sa réponse.
+q -c "update public.profiles set packs_remaining = 5, packs_last_regen_at = now() where id = '$uid'" >/dev/null
+q -c "begin; select from public.profiles where id = '$uid' for update; select pg_sleep(2); commit;" >/dev/null &
+blocker=$!
+until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do kill -0 "$blocker"; done
+
+pids=()
+for i in $(seq 10); do
+  q -c "set role service_role; select wm.open_pack('$uid', 'Europe/Paris', 'same-key')" >"$tmp/k$i" 2>&1 & pids+=($!)
+done
+wait "$blocker"
+for p in "${pids[@]}"; do wait "$p" || { echo "ouverture à clé rejouée en erreur" >&2; cat "$tmp"/k* >&2; exit 1; }; done
+[[ -s $tmp/k1 ]] || { echo "sortie vide" >&2; exit 1; }
+for f in "$tmp"/k*; do cmp -s "$tmp/k1" "$f" || { echo "sorties différentes" >&2; cat "$tmp"/k* >&2; exit 1; }; done
+
+got="$(q -c "select format('%s %s %s', (select count(*) from public.user_cards where user_id = p.id), p.packs_remaining, s.packs_opened)
+  from public.profiles p join wm.user_stats s on s.user_id = p.id where p.id = '$uid'")"
+[[ $got == '20 4 4' ]] || { echo "copies (15 + 5), stock, paquets ouverts (3 + 1) : $got" >&2; exit 1; }
 [[ "$(q -c 'select wm.check_invariants()')" == '[]' ]] || { echo "invariants violés" >&2; exit 1; }

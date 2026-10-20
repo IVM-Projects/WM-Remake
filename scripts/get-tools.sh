@@ -11,7 +11,7 @@ fetch() {
   local file="$dir/${url##*/}"
   mkdir -p "$dir"
   if ! echo "$sum  $file" | sha256sum -c --status 2>/dev/null; then
-    curl -fsSL -o "$file" "$url"
+    curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 -o "$file" "$url"  # un 5xx ou une coupure passagère ne rougit pas la CI
     echo "$sum  $file" | sha256sum -c --status || { rm -f "$file"; echo "get-tools : SHA-256 inattendu pour ${file##*/}" >&2; exit 1; }
   fi
   # Toujours réextrait : les binaires sont ceux de l'archive vérifiée.
