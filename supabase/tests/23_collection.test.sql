@@ -1,4 +1,4 @@
--- Collection (1300_wm_collection.sql) : compteurs par rareté tenus par triggers, index, pages stables, tris, filtres, stats, collection d'un profil.
+-- Collection (1300_wm_collection.sql) : compteurs par rareté tenus par triggers, index, pages stables, tris, filtres, stats, collection d'un profil, défausse, solde.
 -- Catalogue et copies créés ici (le seed n'est pas chargé) ; now() est figé pour tout le fichier.
 
 -- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune).
@@ -46,6 +46,7 @@ do $$ declare p text; begin
   assert wm.search_text('Électricité STATIQUE', 'Géographie') = 'electricite statique geographie', wm.search_text('Électricité STATIQUE', 'Géographie');
   assert wm.search_text('Œuvre', null) = 'oeuvre ', wm.search_text('Œuvre', null);
   assert (select provolatile = 'i' and proparallel = 's' from pg_proc where oid = 'wm.search_text(text, text)'::regprocedure), 'search_text non immutable';
+  assert not has_type_privilege('anon', 'wm.rarity_delta', 'usage'), 'wm.rarity_delta : USAGE resté à PUBLIC';
 end $$;
 
 -- Coll1 : 60 cartes (10 par rareté), 2 copies chacune = 120 lignes, obtenues par groupes de 3 à la même date (départage par id).
@@ -243,4 +244,75 @@ do $$ declare u uuid := pg_temp.uid('Coll1'); v uuid := pg_temp.uid('Coll2'); c 
   d := wm.check_invariants();
   assert d = jsonb_build_array(jsonb_build_object('check', 'rarity_counts', 'user_id', u, 'snapshot_rarity', 'C', 'is_shiny', false,
     'rows', 20, 'copies', 21, 'actual_rows', 20, 'actual_copies', 20)), d::text;
+  update wm.user_rarity_counts set copies = copies - 1 where user_id = u and snapshot_rarity = 'C' and not is_shiny;
+end $$;
+
+-- Défausse (D§7.3) : count = 1 → ligne supprimée (avatar remis à null), count = 3 → 2 ; +1 WB compté dans discard_wb, sans grand livre.
+-- Permise sans vérification humaine ni accès aux paquets ; copie d'un autre ou id inconnu → 403 42501, rien ne bouge ; rejeu par Idempotency-Key.
+do $$ declare u uuid := tests.make_user('Disc1', 10); v uuid := tests.make_user('Disc2'); a uuid; b uuid; x uuid; d jsonb; begin
+  a := (wm.grant_copy(u, pg_temp.card(1), false)).id;
+  b := (wm.grant_copy(u, pg_temp.card(2), false)).id;
+  update public.user_cards set count = 3 where id = b;
+  update public.profiles set avatar_user_card_id = a, packs_blocked_until = now() + interval '1 hour' where id = u;
+  assert wm.discard(u, a) = '{"balance":11}'::jsonb, 'count = 1';
+  assert not exists (select from public.user_cards where id = a) and (select avatar_user_card_id from public.profiles where id = u) is null,
+    'copie ou avatar restant';
+  assert wm.discard(u, b) = '{"balance":12}'::jsonb, 'count = 3';
+  assert (select count from public.user_cards where id = b) = 2, 'count = 3 non décrémenté';
+  assert (select (discarded, discard_wb) = (2, 2) from wm.user_stats where user_id = u), 'compteurs';
+  assert not exists (select from wm.wb_ledger where user_id = u), 'défausse écrite au grand livre';
+  foreach x in array array[(wm.grant_copy(v, pg_temp.card(3), false)).id, gen_random_uuid()] loop
+    d := pg_temp.err(format('select wm.discard(%L, %L)', u, x));
+    assert d = '{"status":403,"code":"42501","error":"Vous ne possédez pas cette carte","message":"Vous ne possédez pas cette carte"}'::jsonb,
+      coalesce(d::text, 'accepté');
+  end loop;
+  assert (select wikibidous_balance from public.profiles where id = u) = 12 and exists (select from public.user_cards where user_id = v), 'refus suivi d''effet';
+  assert wm.discard(u, b, 'k1') = '{"balance":13}'::jsonb and wm.discard(u, b, 'k1') = '{"balance":13}'::jsonb, 'rejeu';
+  assert (select count from public.user_cards where id = b) = 1, 'rejeu défaussé deux fois';
+  perform pg_temp.inv('défausse');
+end $$;
+
+-- Défausse en masse : ensembliste, une unité par id ; ids d'un autre ou inconnus dans failed, dans l'ordre reçu ; 1 à 50 ids uniques, sinon 400.
+do $$ declare u uuid := tests.make_user('Disc3'); v uuid := tests.make_user('Disc4'); ids uuid[]; o uuid; z uuid := gen_random_uuid(); r jsonb; d jsonb; begin
+  ids := array(select (wm.grant_copy(u, pg_temp.card(i), false)).id from generate_series(1, 3) i);
+  update public.user_cards set count = 2 where id = ids[2];
+  o := (wm.grant_copy(v, pg_temp.card(4), false)).id;
+  r := wm.bulk_discard(u, array[ids[1], o, ids[2], z, ids[3]]);
+  assert r = jsonb_build_object('discarded_count', 3, 'failed', jsonb_build_array(
+    jsonb_build_object('id', o, 'reason', 'Vous ne possédez pas cette carte'), jsonb_build_object('id', z, 'reason', 'Vous ne possédez pas cette carte'))),
+    r::text;
+  assert (select wikibidous_balance from public.profiles where id = u) = 3
+    and array(select id || ':' || count from public.user_cards where user_id = u) = array[ids[2] || ':1']
+    and exists (select from public.user_cards where id = o), 'copies ou solde après la défausse en masse';
+  assert (select (discarded, discard_wb) = (3, 3) from wm.user_stats where user_id = u), 'compteurs';
+  assert jsonb_array_length(wm.bulk_discard(u, array(select gen_random_uuid() from generate_series(1, 50)), 'k1') -> 'failed') = 50
+    and wm.bulk_discard(u, array[ids[2]], 'k1') ->> 'discarded_count' = '0', '50 ids ou rejeu';
+  assert exists (select from public.user_cards where id = ids[2]), 'rejeu défaussé';
+  foreach d in array array[pg_temp.err(format('select wm.bulk_discard(%L, %L)', u, '{}'::uuid[])),
+      pg_temp.err(format('select wm.bulk_discard(%L, null)', u)),
+      pg_temp.err(format('select wm.bulk_discard(%L, %L)', u, array(select gen_random_uuid() from generate_series(1, 51)))) ] loop
+    assert d = '{"status":400,"code":"invalid_request","error":"Entre 1 et 50 cartes par défausse","message":"Entre 1 et 50 cartes par défausse"}'::jsonb,
+      coalesce(d::text, 'accepté');
+  end loop;
+  d := pg_temp.err(format('select wm.bulk_discard(%L, %L)', u, array[ids[2], z, ids[2]]));
+  assert d = '{"status":400,"code":"invalid_request","error":"Cartes en double dans la défausse","message":"Cartes en double dans la défausse"}'::jsonb,
+    coalesce(d::text, 'accepté');
+  perform pg_temp.inv('défausse en masse');
+end $$;
+
+-- Grand livre (C5) : la première écriture ouvre à solde − discard_wb, et Σ delta + discard_wb = solde ; wallet_balance lit le solde.
+do $$ declare u uuid := tests.make_user('Disc5', 10); d jsonb; begin
+  perform wm.bulk_discard(u, array[(wm.grant_copy(u, pg_temp.card(1), false)).id, (wm.grant_copy(u, pg_temp.card(2), false)).id]);
+  assert wm.wallet_apply(u, 5, 'test', 'r1') = 17;
+  assert (select array_agg(format('%s:%s:%s', reason, delta, balance_after) order by id) from wm.wb_ledger where user_id = u)
+    = array['opening:10:12', 'test:5:17'], 'écritures inattendues';
+  perform wm.discard(u, (wm.grant_copy(u, pg_temp.card(3), false)).id);
+  assert wm.wallet_balance(u) = '{"balance":18}'::jsonb, wm.wallet_balance(u)::text;
+  perform pg_temp.inv('grand livre et défausses');
+  update wm.user_stats set discard_wb = discard_wb + 1 where user_id = u;
+  d := wm.check_invariants();
+  assert d = jsonb_build_array(jsonb_build_object('check', 'ledger_balance', 'user_id', u, 'balance', 18, 'ledger_sum', 15, 'discard_wb', 4)), d::text;
+  update wm.user_stats set discard_wb = discard_wb - 1 where user_id = u;
+  d := pg_temp.err(format('select wm.wallet_balance(%L)', gen_random_uuid()));
+  assert d ->> 'status' = '401' and d ->> 'code' = 'unauthorized', coalesce(d::text, 'accepté');
 end $$;

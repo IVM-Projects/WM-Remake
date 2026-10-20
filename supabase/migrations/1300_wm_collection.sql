@@ -1,4 +1,4 @@
--- ADDITIVE : collection, lectures (D§7.3, D§9.3, D§9.4, R§3.3) — compteurs par rareté, index, pages stables, stats, collection d'un profil. Idempotente.
+-- ADDITIVE : collection, lectures (D§7.3, D§9.3, D§9.4, R§3.3) — compteurs par rareté, index, pages stables, stats, collection d'un profil, défausse hors grand livre (C5), solde. Idempotente.
 
 create extension if not exists unaccent with schema extensions;
 
@@ -56,11 +56,11 @@ create or replace trigger user_cards_rarity_counts_del after delete on public.us
   referencing old table as old_t for each statement execute function wm.sync_rarity_counts();
 
 -- Remplissage initial sous verrou (triggers déjà posés) : on vide puis on recalcule, car un trigger a pu écrire avant le verrou.
--- lock_timeout : échouer plutôt que bloquer toutes les écritures en file derrière le verrou.
+-- lock_timeout : échouer plutôt que bloquer toutes les écritures en file derrière le verrou. delete, pas truncate : les lecteurs ne sont pas bloqués.
 do $$ begin
   set local lock_timeout = '5s';
   lock table public.user_cards in share mode;
-  truncate wm.user_rarity_counts;
+  delete from wm.user_rarity_counts;
   insert into wm.user_rarity_counts (user_id, snapshot_rarity, is_shiny, rows, copies)
   select user_id, snapshot_rarity, is_shiny, count(*), sum(count) from public.user_cards group by 1, 2, 3;
 end $$;
@@ -179,14 +179,109 @@ begin
        else '{}' end;
 end $$;
 
--- Violations (tableau vide = OK) ; lancée après chaque test monétaire et par le rapprochement (D§11.4). rarity_counts : compteurs = group by réel.
+-- Seul écrivain de wikibidous_balance (C5). Défausse : hors grand livre, comptée dans user_stats.discard_wb (p_ref ignoré, l'idempotence est
+-- celle de l'appelant). Ailleurs : rejeu de (reason, ref) → solde courant, et l'ouverture vaut solde − discard_wb pour que Σ delta + discard_wb = solde.
+create or replace function wm.wallet_apply(p_uid uuid, p_delta int, p_reason text, p_ref text)
+returns int language plpgsql security definer set search_path = '' as $$
+declare v_bal int;
+begin
+  -- Verrou d'abord (étape 2 de C4, déjà tenu si l'appelant l'a pris) : solde et discard_wb lus pour l'ouverture ne sont jamais périmés.
+  select wikibidous_balance into v_bal from public.profiles where id = p_uid for update;
+  if not found then
+    perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
+  end if;
+  if p_reason = 'discard' then
+    insert into wm.user_stats as s (user_id, discard_wb) values (p_uid, p_delta)
+    on conflict (user_id) do update set discard_wb = s.discard_wb + excluded.discard_wb;
+  else
+    insert into wm.wb_ledger (user_id, delta, reason, ref, balance_after)
+    select p_uid, v_bal - coalesce((select discard_wb from wm.user_stats where user_id = p_uid), 0), 'opening', 'opening', v_bal
+    where not exists (select from wm.wb_ledger where user_id = p_uid)
+    on conflict do nothing;
+    insert into wm.wb_ledger (user_id, delta, reason, ref, balance_after)
+    values (p_uid, p_delta, p_reason, p_ref, v_bal + p_delta)
+    on conflict do nothing;
+    if not found then
+      return v_bal;
+    end if;
+  end if;
+  update public.profiles set wikibidous_balance = wikibidous_balance + p_delta
+  where id = p_uid and wikibidous_balance + p_delta >= 0
+  returning wikibidous_balance into v_bal;
+  if not found then  -- l'exception annule aussi les écritures ci-dessus
+    perform wm.raise_err(409, 'insufficient_balance', 'Solde insuffisant');
+  end if;
+  return v_bal;
+end $$;
+
+-- 1 à 50 copies uniques, une unité chacune, en une passe ensembliste (D§7.3) ; les ids d'un autre ou inconnus vont dans failed, dans l'ordre reçu.
+create or replace function wm.bulk_discard(p_uid uuid, p_ids uuid[], p_idem text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_resp jsonb;
+  v_done uuid[];
+begin
+  if coalesce(cardinality(p_ids), 0) not between 1 and 50 then
+    perform wm.raise_err(400, 'invalid_request', 'Entre 1 et 50 cartes par défausse');
+  end if;
+  if exists (select from unnest(p_ids) x group by x having count(*) > 1) then
+    perform wm.raise_err(400, 'invalid_request', 'Cartes en double dans la défausse');
+  end if;
+  v_resp := wm.idem_claim(p_uid, p_idem);
+  if v_resp is not null then
+    return v_resp;
+  end if;
+  perform wm.actor(p_uid);  -- portée par défaut : la défausse reste permise sans vérification humaine (D§7.0)
+  perform wm.lock_user(p_uid);
+  -- shortcut: aucun verrou d'échange au M1 ; le 409 « Cette carte est déjà engagée dans un échange en attente » arrive au M4 avec trades.
+  v_done := array(select id from public.user_cards where id = any (p_ids) and user_id = p_uid for update);
+  -- Suppression d'abord : les lignes restantes ont count > 1 et perdent une unité. L'avatar suit la FK (on delete set null).
+  delete from public.user_cards where id = any (v_done) and count = 1;
+  update public.user_cards set count = count - 1 where id = any (v_done);
+  perform wm.wallet_apply(p_uid, cardinality(v_done), 'discard', 'discard');
+  update wm.user_stats set discarded = discarded + cardinality(v_done) where user_id = p_uid;
+  return wm.idem_store(p_uid, p_idem, jsonb_build_object('discarded_count', cardinality(v_done),
+    'failed', (select coalesce(jsonb_agg(jsonb_build_object('id', x, 'reason', 'Vous ne possédez pas cette carte') order by o), '[]')
+               from unnest(p_ids) with ordinality u (x, o) where array_position(v_done, x) is null)));
+end $$;
+
+-- Défausse en masse d'une seule copie : rien de retiré → 403 (D§7.3 étape 3).
+create or replace function wm.discard(p_uid uuid, p_user_card_id uuid, p_idem text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_resp jsonb;
+begin
+  v_resp := wm.idem_claim(p_uid, p_idem);
+  if v_resp is not null then
+    return v_resp;
+  end if;
+  if wm.bulk_discard(p_uid, array[p_user_card_id]) -> 'discarded_count' = '0' then
+    perform wm.raise_err(403, '42501', 'Vous ne possédez pas cette carte');
+  end if;
+  return wm.idem_store(p_uid, p_idem, jsonb_build_object('balance', (select wikibidous_balance from public.profiles where id = p_uid)));
+end $$;
+
+create or replace function wm.wallet_balance(p_uid uuid)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_bal int;
+begin
+  select wikibidous_balance into v_bal from public.profiles where id = p_uid;
+  if not found then
+    perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
+  end if;
+  return jsonb_build_object('balance', v_bal);
+end $$;
+
+-- Violations (tableau vide = OK) ; lancée après chaque test monétaire et par le rapprochement (D§11.4).
+-- ledger_balance : Σ delta + discard_wb = solde, pour les joueurs qui ont un grand livre ; rarity_counts : compteurs = group by réel.
 create or replace function wm.check_invariants()
 returns jsonb language sql security definer set search_path = '' as $$
   select coalesce(jsonb_agg(v), '[]') from (
-    select jsonb_build_object('check', 'ledger_balance', 'user_id', p.id, 'balance', p.wikibidous_balance, 'ledger_sum', l.s) v
+    select jsonb_build_object('check', 'ledger_balance', 'user_id', p.id, 'balance', p.wikibidous_balance, 'ledger_sum', l.s,
+      'discard_wb', coalesce(s.discard_wb, 0)) v
     from public.profiles p
     join (select user_id, sum(delta) s from wm.wb_ledger group by user_id) l on l.user_id = p.id
-    where l.s <> p.wikibidous_balance
+    left join wm.user_stats s on s.user_id = p.id
+    where l.s + coalesce(s.discard_wb, 0) <> p.wikibidous_balance
     union all
     select jsonb_build_object('check', 'negative_balance', 'user_id', p.id)
     from public.profiles p where p.wikibidous_balance < 0
@@ -198,6 +293,9 @@ returns jsonb language sql security definer set search_path = '' as $$
     where coalesce(a.n, 0) <> coalesce(k.rows, 0) or coalesce(a.c, 0) <> coalesce(k.copies, 0)
   ) x
 $$;
+
+-- Un type garde USAGE à PUBLIC par défaut, et le couple revoke/grant ci-dessous ne couvre que schéma, tables et fonctions.
+revoke usage on type wm.rarity_delta from public;
 
 revoke all on schema wm from public, anon, authenticated;
 grant usage on schema wm to service_role;
