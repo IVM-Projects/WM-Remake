@@ -47,6 +47,7 @@ export function userMessage(e: unknown, fallback: string): string {
 // Une Idempotency-Key par intention (design C6) : gardée dans `keys` tant que l'issue est inconnue, la relance rejoue
 // la réponse stockée au lieu d'agir deux fois ; oubliée dès qu'une réponse du serveur est lue (2xx au corps lisible, ou 4xx).
 // Un 2xx au corps illisible (connexion coupée après les en-têtes) rend null et garde la clé : l'appelant échoue sur null, la relance rejoue.
+// shortcut: un 200 null légitime garderait aussi la clé ; les routes passées à apiOnce renvoient toutes un objet, à revoir si l'une renvoie null.
 export async function apiOnce<T>(keys: Map<string, string>, intent: string, path: string, init: RequestInit = {}): Promise<T> {
   const idem = keys.get(intent) ?? idemKey()
   keys.set(intent, idem)

@@ -999,7 +999,7 @@
   Ce sont les clés de test publiques de Cloudflare, toujours valides (défaut D§15 n° 2). Redéployer après le merge, puis vérifier `/api/health` à 200 en production.
 
 - [ ] **Step 6: Étapes humaines à consigner dans `HANDOFF.md`.** Le MCP n'expose pas la configuration Auth, donc l'utilisateur fait ces réglages dans le tableau de bord Supabase :
-  1. **Authentication → URL Configuration** : Site URL `https://wmr-ivm.vercel.app`, Redirect URLs `https://wmr-ivm.vercel.app/**` et `https://*-ivm-projects.vercel.app/**`.
+  1. **Authentication → URL Configuration** : Site URL `https://wmr-ivm.vercel.app`, Redirect URLs `https://wmr-ivm.vercel.app/**` seulement (R32 : le joker de préversion est retiré, voir `HANDOFF.md`).
   2. **Authentication → Emails → Templates** : coller `supabase/templates/confirmation.html` dans « Confirm signup » (sujet « Ton code de confirmation ») et `recovery.html` dans « Reset password ». Vérifier que la longueur de l'OTP vaut 6.
   3. **Authentication → Emails → SMTP** : Brevo avec un domaine d'expédition contrôlé (D§15 n° 2). Sans SMTP, le service intégré de Supabase n'envoie qu'aux adresses des membres de l'organisation, avec un débit très bas.
   4. **Authentication → Attack Protection → Captcha** : Turnstile, avec le secret de test (ou une vraie paire de clés, en mettant à jour les deux variables Vercel).

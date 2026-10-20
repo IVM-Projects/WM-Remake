@@ -74,6 +74,8 @@ export function PullsClient() {
     setFailed(!s)
     if (!s) return
     keepFocus(s.remaining)
+    // Stock vide : « Ouvrir » ne peut plus rejouer l'ouverture incertaine ; la clé gardée rejouerait l'ancien paquet au retour du stock.
+    if (s.remaining < 1) keys.current.delete(OPEN)
     setStock(s)
   }
   // Résout à true si un stock lisible a été affiché.

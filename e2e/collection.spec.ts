@@ -727,12 +727,13 @@ test('défausse finie pendant que /collection est cachée (Activity) : au retour
   release()
   await answered
   await expect(page.locator('#wm-toasts')).toContainText('Carte défaussée : +1 wikibidou')
-  await page.locator('nav a[href="/collection"]').first().click()
+  // Retour comme un joueur (Précédent) : rien ne prend le focus en route, la refocalisation de la page le rend à la tuile.
+  await page.goBack()
   await expect(page).toHaveURL('/collection')
   await expect(tile(page, 6)).toContainText('x2')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(balance(page)).toHaveText('101 wikibidous')
-  await expect(page.locator('body')).not.toBeFocused()
+  await expect(opener(page, 6)).toBeFocused()
 })
 
 test('étoile sur une grille périmée : inactive (aria-disabled) et focalisable, jamais écrasée par la relecture en cours', async ({ page, login }) => {
