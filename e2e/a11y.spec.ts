@@ -6,6 +6,8 @@ type Known = { rule: string; selector: string }
 
 // D§8.6 : 0 violation serious ou critical (WCAG 2.2 AA). `known` tolère une seule règle sur les seuls nœuds d'un sélecteur.
 async function expectNoSeriousViolations(page: Page, known?: Known) {
+  // Fondus et transitions de couleur finis avant chaque analyse : en CI, axe lisait un bouton à mi-chemin vers l'accent.
+  await settled(page)
   const { violations } = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze()
   const serious: string[] = []
   for (const v of violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')) {
