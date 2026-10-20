@@ -39,11 +39,12 @@ export function ProDailyBlock({ busy, onClaim }: { busy: boolean; onClaim: () =>
             type="button"
             aria-disabled={busy || undefined}
             onClick={onClaim}
-            className="min-h-11 shrink-0 rounded-xl bg-violet-500/20 px-4 text-sm font-semibold text-violet-200 transition-colors hover:bg-violet-500/30 aria-disabled:cursor-progress"
+            className="min-h-11 shrink-0 rounded-xl bg-violet-500/20 px-4 text-sm font-semibold text-violet-200 transition-colors hover:bg-violet-500/30 aria-disabled:cursor-progress aria-disabled:opacity-80"
           >
-            Récupérer
+            {busy ? 'Récupération…' : 'Récupérer'}
           </button>
         )}
+        <span role="status" className="sr-only">{busy ? 'Récupération du paquet Pro…' : ''}</span>
       </div>
       {status === 'error' && <p className="text-sm text-[var(--color-foreground)]/70">Le paquet du jour n&apos;a pas pu être lu.</p>}
       {s && !s.is_pro && (

@@ -46,10 +46,13 @@ export function PackStock({ remaining, cap, nextAt, period, busy, onOpen, onElap
           disabled={empty}
           aria-disabled={busy || undefined}
           onClick={onOpen}
-          className="min-h-12 min-w-44 rounded-xl bg-[var(--color-accent)] px-8 py-3 text-base font-semibold text-[var(--color-accent-foreground)] transition-colors hover:enabled:bg-[var(--color-accent-light)] aria-disabled:cursor-progress disabled:cursor-not-allowed disabled:bg-[var(--color-surface-light)] disabled:text-[var(--color-foreground)]/60"
+          // Visible sans mouvement (le tremblement du paquet est coupé en motion-reduce) : libellé et opacité.
+          className="min-h-12 min-w-44 rounded-xl bg-[var(--color-accent)] px-8 py-3 text-base font-semibold text-[var(--color-accent-foreground)] transition-colors hover:enabled:bg-[var(--color-accent-light)] aria-disabled:cursor-progress aria-disabled:opacity-80 disabled:cursor-not-allowed disabled:bg-[var(--color-surface-light)] disabled:text-[var(--color-foreground)]/60"
         >
-          Ouvrir
+          {busy ? 'Ouverture…' : 'Ouvrir'}
         </button>
+        {/* Le libellé d'un bouton déjà focalisé n'est pas toujours relu : l'état passe aussi par une région polie. */}
+        <span role="status" className="sr-only">{busy ? 'Ouverture du paquet…' : ''}</span>
         {empty && <p className="text-sm font-medium text-[var(--color-foreground)]/80">Plus de paquets disponibles</p>}
       </div>
       <div className="card-frame w-full max-w-sm space-y-3 p-4">

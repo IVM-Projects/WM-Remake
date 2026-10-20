@@ -14,16 +14,28 @@ async function openPack(page: Page) {
 }
 
 // Tirage des joueurs Pro réduit aux L le temps de `run` : le catalogue partagé n'est pas touché, les poids sont rendus dans tous les cas.
-// Seuls les tests de ce fichier ouvrent des paquets en Pro, et ils s'y suivent dans un seul worker (pas de fullyParallel) :
-// deux copies lancées en parallèle (--repeat-each avec plusieurs workers) se rendraient mutuellement les poids d'origine.
+// Ces tests se suivent dans un seul worker (pas de fullyParallel) ; deux copies en parallèle (--repeat-each) se gêneraient.
+// ⚠ Toute ouverture de paquet en Pro doit rester dans ce fichier : ailleurs, elle tirerait des L pendant la surcharge.
 async function onlyLegendariesForPro(run: () => Promise<void>) {
   const before = sql(`select value::text from wm.config where key = 'draw_weights'`)
+  // Une surcharge restée d'un run interrompu ne doit jamais devenir la valeur « d'origine » rendue en fin de test.
+  expect(JSON.parse(before).pro, 'draw_weights.pro est déjà surchargé à {"L": 1}').not.toEqual({ L: 1 })
   sql(`update wm.config set value = jsonb_set(value, '{pro}', '{"L": 1}') where key = 'draw_weights'`)
   try {
     await run()
   } finally {
-    sql(`update wm.config set value = :'before'::jsonb where key = 'draw_weights'`, { before })
+    sql(`update wm.config set value = :'before'::jsonb where key = 'draw_weights' and value -> 'pro' = '{"L": 1}'::jsonb`, { before })
   }
+}
+
+// Réponse réelle de /api/packs/open, réécrite (paquet d'une carte, paquet vide) : aucune donnée partagée modifiée.
+async function rewriteOpen(page: Page, edit: (body: { cards: unknown[] }) => void) {
+  await page.route('**/api/packs/open', async (route) => {
+    const res = await route.fetch()
+    const body = await res.json()
+    edit(body)
+    await route.fulfill({ response: res, json: body })
+  })
 }
 
 test('repos : stock, compte à rebours, barre de 10, Ouvrir, Pro du jour, aide', async ({ page, login }) => {
@@ -144,6 +156,89 @@ test('parcours au clavier : ouvrir, révéler, récapitulatif, retour sur « Ouv
   await page.keyboard.press('Enter')
   await expect(openButton(page)).toBeFocused()
   await expect(stockFrame(page)).toContainText('1 / 10')
+})
+
+test('paquet d\'une carte : le focus va sur « Continuer », pas sur body', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await rewriteOpen(page, (body) => { body.cards = body.cards.slice(-1) })
+  await page.goto('/pulls')
+  await openButton(page).focus()
+  await page.keyboard.press('Enter')
+  await expect(counter(page, 1, 1)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Carte suivante' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Continuer' })).toBeFocused()
+})
+
+test('paquet vide (cards: []) : pas de révélation, retour au repos', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await rewriteOpen(page, (body) => { body.cards = [] })
+  await page.goto('/pulls')
+  await openButton(page).click()
+  await expect(stockFrame(page)).toContainText('0 / 10')
+  await expect(page.getByText(/^Carte \d/)).toHaveCount(0)
+})
+
+test('une relecture du stock partie avant l\'ouverture n\'écrase pas le stock qu\'elle a rendu', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await page.goto('/pulls')
+  await expect(stockFrame(page)).toContainText('1 / 10')
+  // La relecture suivante (retour sur la page gardée par Activity) lit le stock tout de suite (1), mais sa réponse est retenue.
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  let fetched = () => {}
+  const read = new Promise<void>((r) => { fetched = r })
+  let delivered = () => {}
+  const served = new Promise<void>((r) => { delivered = r })
+  await page.route('**/rest/v1/rpc/sync_profile_packs', async (route) => {
+    const res = await route.fetch()
+    fetched()
+    await held
+    await route.fulfill({ response: res })
+    delivered()
+  }, { times: 1 })
+  await page.locator('nav a[href="/collection"]').first().click()
+  await expect(page).toHaveURL('/collection')
+  await page.locator('nav a[href="/pulls"]').first().click()
+  await read
+  await openPack(page)
+  release()
+  for (let k = 0; k < 4; k++) await page.keyboard.press('ArrowRight')
+  await page.getByRole('button', { name: 'Continuer' }).click()
+  await page.getByRole('button', { name: 'Retour aux paquets' }).click()
+  await served
+  await expect(stockFrame(page)).toContainText('0 / 10')
+  await expect(openButton(page)).toBeDisabled()
+})
+
+test('relecture du stock en échec : message et « Réessayer » à côté du stock affiché', async ({ page, login }) => {
+  await login()
+  await page.goto('/pulls')
+  await expect(stockFrame(page)).toContainText('1 / 10')
+  await page.route('**/rest/v1/rpc/sync_profile_packs', (route) => route.abort(), { times: 1 })
+  await page.locator('nav a[href="/collection"]').first().click()
+  await expect(page).toHaveURL('/collection')
+  await page.locator('nav a[href="/pulls"]').first().click()
+  const note = page.getByText('Ton stock de paquets n\'a pas pu être lu.')
+  await expect(note).toBeVisible()
+  await expect(stockFrame(page)).toContainText('1 / 10')
+  await page.getByRole('button', { name: 'Réessayer' }).click()
+  await expect(note).toBeHidden()
+})
+
+test.describe('en cours, sans mouvement', () => {
+  test.use({ reducedMotion: 'reduce' })
+  test('« Ouverture… » visible et annoncé pendant la requête', async ({ page, login }) => {
+    await login({ humanVerified: true })
+    let release = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    await page.route('**/api/packs/open', async (route) => { await held; await route.continue() })
+    await page.goto('/pulls')
+    await openButton(page).click()
+    await expect(page.getByRole('button', { name: 'Ouverture…' })).toHaveAttribute('aria-disabled', 'true')
+    await expect(page.getByRole('status').filter({ hasText: 'Ouverture du paquet…' })).toBeAttached()
+    release()
+    await expect(counter(page, 1)).toBeVisible()
+  })
 })
 
 test('stock vide : Ouvrir désactivé, message et compte à rebours', async ({ page, login }) => {

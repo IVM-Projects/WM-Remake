@@ -36,9 +36,18 @@ test('sans AudioContext (Node, vieux navigateur), rien n\'échoue', async () => 
 test('sons coupés : aucun contexte audio créé', async () => {
   vi.stubGlobal('AudioContext', FakeAudio)
   sounds = false
-  const { playFlip, playLegendary, playRip } = await import('./sounds')
-  playRip(); playFlip(); playLegendary()
+  const { playFlip, playLegendary, playRip, unlockAudio } = await import('./sounds')
+  unlockAudio(); playRip(); playFlip(); playLegendary()
   expect(FakeAudio.made).toBe(0)
+})
+
+test('unlockAudio crée (et reprend) le contexte sans rien jouer : le son suivant le réutilise', async () => {
+  vi.stubGlobal('AudioContext', class extends FakeAudio { state = 'suspended'; resume = async () => undefined })
+  const { playRip, unlockAudio } = await import('./sounds')
+  unlockAudio()
+  expect([FakeAudio.made, FakeAudio.oscillators]).toEqual([1, 0])
+  playRip()
+  expect(FakeAudio.made).toBe(1)
 })
 
 test('sons actifs : un seul contexte, partagé, et des notes jouées', async () => {

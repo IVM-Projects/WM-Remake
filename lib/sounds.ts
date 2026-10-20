@@ -56,6 +56,9 @@ const sound = (draw: (a: AudioContext, t: number) => void) => (): void => {
   }
 }
 
+// À appeler dans le gestionnaire du geste lui-même, avant tout await : iOS Safari ne démarre l'audio que là.
+export const unlockAudio = sound(() => undefined)
+
 export const playRip = sound((a, t) => {
   noise(a, t, 0.34, 0.45, 700, 4200)
   noise(a, t + 0.06, 0.2, 0.2, 3000, 8000)

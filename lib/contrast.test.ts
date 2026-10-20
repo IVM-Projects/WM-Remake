@@ -112,6 +112,9 @@ const pullsPairs: [label: string, fg: string, bg: string, min: number][] = [
   ['« Réservé aux membres Pro », violet-300 sur le panneau', '#c4b4ff', '--color-surface', 4.5],
   ['« Récupérer », violet-200 sur violet-500 à 20 %', '#ddd6ff', over('#8e51ff', 0.2, resolve('--color-surface')), 4.5],
   ['erreur, red-400 sur la page', '#ff6467', '--color-background', 4.5],
+  // Bouton en cours (aria-disabled:opacity-80) : texte et fond fondus ensemble sur la page ou le panneau.
+  ['« Ouverture… », opacité 80 %', over(resolve('--color-accent-foreground'), 0.8, resolve('--color-background')), over(resolve('--color-accent'), 0.8, resolve('--color-background')), 4.5],
+  ['« Récupération… », opacité 80 %', over('#ddd6ff', 0.8, resolve('--color-surface')), over(over('#8e51ff', 0.2, resolve('--color-surface')), 0.8, resolve('--color-surface')), 4.5],
   // Repères non textuels (WCAG 1.4.11) : contour des boutons ronds et points des cartes vues.
   ['contour des boutons ronds, /40', fg(0.4, '--color-background'), '--color-background', 3],
   ['point d\'une carte vue, /40', fg(0.4, '--color-background'), '--color-background', 3],

@@ -31,8 +31,21 @@ const useReducedMotion = () => useSyncExternalStore(onMotionChange, () => matchM
 const spoken = (c: CardInPack) =>
   `${c.wikipedia_title}, ${rarityOf(c.rarity).label}${c.is_shiny ? ', Brillante' : ''}${c.is_new ? ', Nouvelle' : ''}`
 
-// Révélation carte par carte (R§2.2, D§8.5), puis récapitulatif. Classes du relevé d'origine : contrat, ne pas renommer.
-export function PackOpening({ cards, onDone }: { cards: CardInPack[]; onDone: () => void }) {
+type Props = { cards: CardInPack[]; onDone: () => void }
+
+// Révélation carte par carte (R§2.2, D§8.5), puis récapitulatif. Paquet vide (variante `cards: []` de R§3.1) : rien à révéler, retour au repos.
+export function PackOpening(props: Props) {
+  return props.cards.length ? <Reveal {...props} /> : <Skip onDone={props.onDone} />
+}
+
+function Skip({ onDone }: { onDone: () => void }) {
+  const done = useEffectEvent(onDone)
+  useEffect(() => done(), [])
+  return null
+}
+
+// Classes du relevé d'origine : contrat, ne pas renommer.
+function Reveal({ cards, onDone }: Props) {
   const reduced = useReducedMotion()
   const recapId = useId()
   const [index, setIndex] = useState(0)
@@ -78,7 +91,8 @@ export function PackOpening({ cards, onDone }: { cards: CardInPack[]; onDone: ()
     setAnnounce(true)
     if (played.current) return
     played.current = true
-    nextBtn.current?.focus()
+    // Paquet d'une carte : « Carte suivante » est désactivé dès le départ, le focus va sur « Continuer ».
+    ;(nextBtn.current?.disabled ? moreBtn : nextBtn).current?.focus()
     sound(cards[0], true)
   })
   useEffect(() => {
