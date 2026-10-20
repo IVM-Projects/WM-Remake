@@ -22,6 +22,7 @@ describe('schémas de query', () => {
     const i = CollectionQuery.parse({ search: 'abc', pending: '1', stats: '1', rarity: 'L' })
     expect(i).not.toHaveProperty('pending')
     expect(filterArgs(i)).toMatchObject({ p_q: 'abc', p_rarity: ['L'], p_untagged: false })
+    expect(filterArgs(CollectionQuery.parse({ q: '', search: 'x' })).p_q).toBe('x')
     expect(CollectionQuery.safeParse({ sort: 'xyz' }).success).toBe(false)
   })
 })

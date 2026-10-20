@@ -8,7 +8,7 @@ const schema = vi.fn(() => ({ rpc }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ auth: { getClaims } }) }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => ({ schema }) }))
 
-const { route, toHttpError, fail, UNAUTHORIZED, BUSY, INTERNAL } = await import('@/lib/route')
+const { route, toHttpError, fail, maskPath, UNAUTHORIZED, BUSY, INTERNAL } = await import('@/lib/route')
 
 const ctx = { params: Promise.resolve({}) }
 const req = (init: { method?: string; body?: string; headers?: Record<string, string>; query?: string } = {}) =>
@@ -244,6 +244,16 @@ describe('route()', () => {
   it('log : segments dynamiques masqués', async () => {
     await route({ fn: 'fn', auth: false })(new NextRequest('http://localhost/api/profile/abc-1/collection'), { params: Promise.resolve({ id: 'abc-1' }) })
     expect(JSON.parse(vi.mocked(console.log).mock.calls[0][0]).route).toBe('/api/profile/[id]/collection')
+  })
+
+  it('maskPath : segment entier décodé, jamais un préfixe ; valeur introuvable → null', () => {
+    const mask = (path: string, username: string) => maskPath(new NextRequest(`http://localhost${path}`).nextUrl.pathname, { username })
+    expect(mask('/api/profile/pro/collection', 'pro')).toBe('/api/profile/[username]/collection')
+    expect(mask('/api/profile/api/collection', 'api')).toBe('/[username]/profile/[username]/collection')
+    expect(mask('/api/profile/a@b/collection', 'a@b')).toBe('/api/profile/[username]/collection')
+    expect(mask('/api/profile/%6Aean/collection', 'jean')).toBe('/api/profile/[username]/collection')
+    expect(mask('/api/profile/%E0%A4%A/collection', 'x')).toBeNull()
+    expect(mask('/api/profile/jean/collection', 'jeanne')).toBeNull()
   })
 })
 

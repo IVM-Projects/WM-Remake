@@ -71,12 +71,19 @@ export const myCollection: RouteSpec = {
       },
     },
     {
-      name: 'les 7 tris acceptés ; sort=xyz → 400 invalid_request ; rarity=X → 400',
+      name: 'les 7 tris acceptés ; name → titres croissants, atk → atk décroissante (ordre de PG) ; sort=xyz → 400 ; rarity=X → 400',
       run: async (env) => {
         const uid = mixedUser(env)
         for (const sort of ['rarity', 'obtained_at', 'added', 'name', 'atk', 'def', 'starred']) {
           assert.equal((await ok(await api(env, `/api/my-collection?sort=${sort}`, { uid }), Collection)).total, 10, sort)
         }
+        // Valeurs comparées, pas les ids : l'ordre des ex aequo ne compte pas ici.
+        const byName = await ok(await api(env, '/api/my-collection?sort=name', { uid }), Collection)
+        assert.equal(byName.collection.map((i) => i.card.wikipedia_title).join('|'),
+          sql(env, `select string_agg(snapshot_title, '|' order by snapshot_title) from public.user_cards where user_id = :'uid'`, { uid }))
+        const byAtk = await ok(await api(env, '/api/my-collection?sort=atk', { uid }), Collection)
+        assert.equal(byAtk.collection.map((i) => i.card.atk).join(','),
+          sql(env, `select string_agg(snapshot_atk::text, ',' order by snapshot_atk desc) from public.user_cards where user_id = :'uid'`, { uid }))
         await failed(await api(env, '/api/my-collection?sort=xyz', { uid }), 400, 'invalid_request')
         await failed(await api(env, '/api/my-collection?rarity=X', { uid }), 400, 'invalid_request')
       },
@@ -206,12 +213,16 @@ export const bulkDiscard: RouteSpec = {
   cases: [
     noSession('POST', '/api/user-cards/bulk-discard'),
     {
-      name: '51 ids, 0 id ou un id non uuid → 400 invalid_request',
+      name: '51 ids, 0 id ou un id non uuid → 400 invalid_request ; [id, id] → 400 « Cartes en double dans la défausse »',
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl)
         for (const card_ids of [Array.from({ length: 51 }, () => randomUUID()), [], ['abc']]) {
           await failed(await post(env, '/api/user-cards/bulk-discard', uid, { card_ids }), 400, 'invalid_request')
         }
+        const [copy] = giveCards(env.backend.databaseUrl, uid, 'C')
+        const twice = await failed(await post(env, '/api/user-cards/bulk-discard', uid, { card_ids: [copy, copy] }), 400, 'invalid_request')
+        assert.equal(twice.error, 'Cartes en double dans la défausse')
+        assert.equal(sql(env, `select count(*) from public.user_cards where id = :'id'`, { id: copy }), '1')
       },
     },
     {

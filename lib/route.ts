@@ -51,6 +51,26 @@ async function readInput(req: NextRequest): Promise<unknown> {
   return JSON.parse(text)
 }
 
+// Segments dynamiques masqués (`/api/profile/[id]`) : un id ou un pseudo dans le chemin serait de la PII.
+// Comparaison par segment entier décodé ; une valeur retrouvée nulle part (encodage inattendu) → null, jamais le chemin brut.
+export function maskPath(pathname: string, params: Record<string, string>): string | null {
+  const names = new Map(Object.entries(params).map(([k, v]) => [v, k]))
+  const found = new Set<string>()
+  const path = pathname.split('/').map((segment) => {
+    let value: string
+    try {
+      value = decodeURIComponent(segment)
+    } catch {
+      return segment
+    }
+    const name = names.get(value)
+    if (name === undefined) return segment
+    found.add(value)
+    return `[${name}]`
+  }).join('/')
+  return found.size === names.size ? path : null
+}
+
 type Outcome = { status: number; body: unknown; retryAfter?: number; pgCode?: string }
 
 export function route<I = undefined, P = Record<string, string>>(opts: {
@@ -120,8 +140,7 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
       out = fail(500, INTERNAL)
     }
     console.log(JSON.stringify({
-      // Segments dynamiques masqués (`/api/profile/[id]`) : un id ou un pseudo dans le chemin serait de la PII.
-      route: Object.entries(ctx.params).reduce((p, [k, v]) => p.replace(`/${encodeURIComponent(v)}`, `/[${k}]`), req.nextUrl.pathname),
+      route: maskPath(req.nextUrl.pathname, ctx.params),
       status: out.status,
       ms: Math.round(performance.now() - t0),
       rpc: opts.fn,

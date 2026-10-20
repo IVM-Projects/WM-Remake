@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { z } from 'zod'
 import type { RouteSpec } from '../../lib/contract.ts'
-import { api, failed, giveCards, Iso, makeUser, noSession, ok, psql, Rarity } from '../users.ts'
+import { api, failed, Iso, makeUser, noSession, ok, psql, Rarity } from '../users.ts'
 
 // Colonnes de `rest/v1/cards` lues par les clients (R§3.4) : aussi les clés de chaque carte de /api/cards.
 export const CARD_COLUMNS = 'id,atk,def,lang,rarity,q_score,category,image_url,pageviews,hide_image,nsfw_image,wikipedia_url,wikipedia_title,summary,pageviews_refreshed_at,qscore_refreshed_at'
@@ -60,14 +60,15 @@ export const cards: RouteSpec = {
       },
     },
     {
-      name: 'ownedCardIds et wishlistCardIds reflètent une copie et un souhait ; wishlist=1 ne rend que le souhait',
+      name: 'ownedCardIds et wishlistCardIds reflètent une copie et un souhait de la page ; wishlist=1 ne rend que le souhait',
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl)
-        const [copy] = giveCards(env.backend.databaseUrl, uid, 'L')
-        const owned = psql(env.backend.databaseUrl, `select card_id from public.user_cards where id = :'id'`, { id: copy })
-        const wished = psql(env.backend.databaseUrl, `insert into public.wishlist_items (user_id, card_id)
-select :'uid', id from public.cards where rarity = 'L' and id <> :'owned' limit 1 returning card_id`, { uid, owned })
-        const page = await ok(await api(env, '/api/cards?rarity=L', { uid }), Page)
+        // Cartes prises dans la page demandée : le cas tient avec n'importe quel catalogue.
+        const [owned, wished] = (await ok(await api(env, '/api/cards', { uid }), Page)).cards.map((c) => c.id)
+        psql(env.backend.databaseUrl, `insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards where id = :'owned';
+insert into public.wishlist_items (user_id, card_id) values (:'uid', :'wished')`, { uid, owned, wished })
+        const page = await ok(await api(env, '/api/cards', { uid }), Page)
         assert.deepEqual([page.ownedCardIds, page.wishlistCardIds], [[owned], [wished]])
         const wish = await ok(await api(env, '/api/cards?wishlist=1', { uid }), Filtered)
         assert.deepEqual([wish.total, wish.cards.map((c) => c.id), wish.wishlistCardIds], [1, [wished], [wished]])

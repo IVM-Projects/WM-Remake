@@ -23,5 +23,7 @@ export const CollectionFilters = z.object({
 export const CollectionQuery = CollectionFilters.extend({ page: pageParam, limit: intParam.optional(), sort: CollectionSort.optional() })
 
 export const filterArgs = (i: z.infer<typeof CollectionFilters>) => ({
-  p_q: i.q ?? i.search, p_rarity: i.rarity, p_tag_id: i.tag_id, p_untagged: i.untagged, p_wishlisted_by: i.wishlisted_by, p_owned_by: i.owned_by,
+  // || et non ?? : un q= vide ne masque pas search.
+  p_q: i.q || i.search,
+  p_rarity: i.rarity, p_tag_id: i.tag_id, p_untagged: i.untagged, p_wishlisted_by: i.wishlisted_by, p_owned_by: i.owned_by,
 })

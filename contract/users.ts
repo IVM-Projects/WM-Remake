@@ -64,9 +64,15 @@ export const Rarity = z.enum(RARITIES)
 export const Iso = z.iso.datetime({ offset: true })
 
 // Corps D§8.2 : error = message, code exact (absent si non donné) ; renvoie le corps pour ses clés en plus.
+// Statut vérifié avant JSON.parse : une page HTML (404, 500) s'affiche avec son statut.
+async function bodyOf(res: Response, status: number): Promise<unknown> {
+  const text = await res.text()
+  assert.equal(res.status, status, `${res.status} ${text.slice(0, 500)}`)
+  return JSON.parse(text)
+}
+
 export async function failed(res: Response, status: number, code?: string): Promise<Record<string, unknown>> {
-  const body = (await res.json()) as Record<string, unknown>
-  assert.equal(res.status, status, JSON.stringify(body))
+  const body = (await bodyOf(res, status)) as Record<string, unknown>
   assert.equal(typeof body.error, 'string')
   assert.equal(body.message, body.error)
   assert.equal(body.code, code)
@@ -74,9 +80,7 @@ export async function failed(res: Response, status: number, code?: string): Prom
 }
 
 export async function ok<T>(res: Response, schema: z.ZodType<T>): Promise<T> {
-  const body: unknown = await res.json()
-  assert.equal(res.status, 200, JSON.stringify(body))
-  return schema.parse(body)
+  return schema.parse(await bodyOf(res, 200))
 }
 
 // Cas commun des routes authentifiées.
