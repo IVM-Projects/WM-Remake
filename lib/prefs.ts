@@ -14,7 +14,7 @@ let gen = 0
 const listeners = new Set<() => void>()
 
 // Cache de module : une seule lecture par chargement de page, partagée par toutes les cartes.
-function subscribe(listener: () => void) {
+export function subscribePrefs(listener: () => void) {
   listeners.add(listener)
   if (!state.ready && !loading) {
     loading = true
@@ -41,5 +41,5 @@ export function setPrefs(p: Omit<Prefs, 'ready'>) {
 export const currentPrefs = (): Prefs => state
 
 export function usePrefs(): Prefs {
-  return useSyncExternalStore(subscribe, () => state, () => LOADING)
+  return useSyncExternalStore(subscribePrefs, () => state, () => LOADING)
 }

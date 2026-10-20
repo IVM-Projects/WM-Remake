@@ -10,6 +10,16 @@ const grid = (page: Page) => page.locator('main div.flex.flex-wrap.justify-cente
 const cards = (page: Page) => grid(page).locator('> div[class*="glow-"]')
 const opener = (page: Page, name: string) => cards(page).getByRole('button', { name, exact: true })
 const isCardsApi = (u: string) => new URL(u).pathname === '/api/cards'
+// Retient les lectures de /api/cards jusqu'à release() ; la route est retirée ensuite.
+function hold(page: Page): () => void {
+  let release!: () => void
+  const gate = new Promise<void>((r) => { release = r })
+  void page.route((u) => isCardsApi(u.href), async (route) => { await gate; await route.fallback() })
+  return () => {
+    release()
+    void page.unroute((u) => isCardsApi(u.href))
+  }
+}
 
 test('catalogue : en-tête, totaux par rareté, grille sans marqueur de possession, tri, recherche', async ({ page, login }) => {
   const { uid } = await login()
@@ -59,8 +69,13 @@ select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards
   await field.fill('Ar')
   await search.click()
   await expect(page.getByText('Page 1', { exact: true })).toBeVisible()
+  await expect(grid(page)).toHaveAttribute('aria-busy', 'false')
+  const firstOfPage1 = (await cards(page).first().locator('h3').textContent())!
   await page.getByRole('button', { name: 'Suivant' }).click()
   await expect(page.getByText('Page 2', { exact: true })).toBeVisible()
+  // Les données de la page 2, pas l'ancienne grille gardée pendant la relecture.
+  await expect(grid(page)).toHaveAttribute('aria-busy', 'false')
+  await expect(cards(page).first().locator('h3')).not.toHaveText(firstOfPage1)
   await expect(cards(page)).toHaveCount(50)
 
   // Champ vidé : retour au catalogue entier.
@@ -102,10 +117,16 @@ test('liste de souhaits : ajout depuis la modale, bascule, retrait, focus jamais
   await dialog.getByRole('button', { name: 'Fermer' }).click()
   await expect(page.getByText('Ta liste de souhaits est vide', { exact: true })).toBeVisible()
   await expect(cards(page)).toHaveCount(0)
-  await expect(page.locator('body')).not.toBeFocused()
+  await expect(page.locator('main .card-frame', { hasText: 'Ta liste de souhaits est vide' })).toBeFocused()
 
+  // Grille vide et périmée pendant la relecture du catalogue : le chargement, jamais un état vide qui ne vaut plus.
+  const release = hold(page)
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByRole('status').filter({ hasText: 'Chargement des cartes' })).toBeAttached()
+  await expect(page.getByText('Ta liste de souhaits est vide', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Le catalogue est vide pour l\'instant.', { exact: true })).toHaveCount(0)
+  release()
   await expect(cards(page)).toHaveCount(50)
 })
 
@@ -140,6 +161,30 @@ test('liste de souhaits : un état illisible dans la modale est dit, l\'ajout re
   await dialog.getByRole('button', { name: 'Ajouter à ma liste de souhaits' }).click()
   await expect(dialog.getByRole('button', { name: 'Retirer de ma liste de souhaits' })).toBeVisible()
   await expect(dialog.getByRole('alert')).toHaveCount(0)
+})
+
+test('recherche sur deux pages : « Précédent » garde le focus pendant la relecture', async ({ page, login }) => {
+  await login()
+  await page.goto('/global-collection')
+  await expect(cards(page)).toHaveCount(50)
+  // « n° 00 » : les n° 0001 à 0099, soit 50 puis 49 cartes, total inconnu (recherche).
+  await page.getByRole('searchbox', { name: 'Rechercher une carte' }).fill('n° 00')
+  await page.getByRole('button', { name: 'Rechercher', exact: true }).click()
+  await expect(page.getByText('Page 1', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Suivant' }).click()
+  await expect(page.getByText('Page 2', { exact: true })).toBeVisible()
+  await expect(grid(page)).toHaveAttribute('aria-busy', 'false')
+  await expect(cards(page)).toHaveCount(49)
+
+  const prev = page.getByRole('button', { name: 'Précédent' })
+  const release = hold(page)
+  await prev.click()
+  await expect(grid(page)).toHaveAttribute('aria-busy', 'true')
+  await expect(prev).toBeFocused()
+  release()
+  await expect(grid(page)).toHaveAttribute('aria-busy', 'false')
+  await expect(cards(page)).toHaveCount(50)
+  await expect(prev).toBeFocused()
 })
 
 test('erreur de chargement : message, « Réessayer », focus jamais sur body', async ({ page, login }) => {

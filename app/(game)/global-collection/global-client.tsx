@@ -4,6 +4,7 @@ import { Bookmark } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Card } from '@/components/card/Card'
 import { CardModal, type CatalogCard } from '@/components/card/CardModal'
+import { ghost as ghostBase } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { Pagination } from '@/components/ui/Pagination'
 import { RarityChips } from '@/components/ui/RarityChips'
@@ -21,7 +22,7 @@ type Query = { q?: string; rarity?: RarityCode[]; wishlist?: boolean }
 const cartes = (n: number) => `${formatInt(n)} carte${n > 1 ? 's' : ''}`
 
 const control = 'min-h-11 rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 text-sm'
-const ghost = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-foreground)]/40 px-4 text-sm font-medium transition-colors hover:bg-[var(--color-surface-light)] aria-disabled:cursor-not-allowed aria-disabled:border-[var(--color-border)] aria-disabled:text-[var(--color-foreground)]/60 aria-disabled:hover:bg-transparent'
+const ghost = `${ghostBase} justify-center gap-2`
 
 // Catalogue complet (R§2.2) : recherche serveur, raretés, liste de souhaits, 50 cartes par page.
 // shortcut: état en mémoire et non dans l'adresse ; un rechargement revient à la première page — le passer en ?page/q/rarity/wishlist si on le demande.
@@ -123,8 +124,8 @@ export function GlobalClient() {
   }
 
   function closeModal() {
-    // Grille périmée : la place de la carte dans la grille de la requête est inconnue.
-    refocus.current = Math.max(0, stale ? -1 : items.findIndex((c) => c.id === open?.id))
+    // Grille périmée : la place de la carte dans la grille de la requête est inconnue, le focus ira à la première.
+    refocus.current = stale ? 0 : Math.max(0, items.findIndex((c) => c.id === open?.id))
     if (dirty.current) {
       dirty.current = false
       setReload((r) => r + 1)
@@ -209,7 +210,8 @@ export function GlobalClient() {
               {filtered && <button type="button" onClick={() => fromPanel(clearFilters)} className={ghost}>Effacer les filtres</button>}
             </div>
           </div>
-        ) : !data ? (
+        ) : !data || (stale && !items.length) ? (
+          // Grille vide et périmée : l'état vide d'avant ne vaut plus pour la requête en cours.
           <Loading label="Chargement des cartes" />
         ) : items.length === 0 ? (
           <div ref={empty} tabIndex={-1} className="card-frame mx-auto flex max-w-md flex-col items-center gap-3 p-8 text-center outline-none">
@@ -237,7 +239,8 @@ export function GlobalClient() {
             <Pagination
               page={page}
               totalPages={data.total === null ? null : Math.ceil(data.total / LIMIT)}
-              more={data.searchHasMore}
+              // Pendant la relecture, la pagination reste montée (le bouton pressé garde le focus), même si l'ancienne page était la dernière.
+              more={stale || data.searchHasMore}
               onPage={(p) => {
                 refocus.current = 0
                 setPage(p)

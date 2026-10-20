@@ -2,6 +2,7 @@
 
 import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import { createTag } from '@/components/card/TagPicker'
+import { ghost as ghostBase } from '@/components/ui/button'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
@@ -29,7 +30,7 @@ type Action = 'apply' | 'remove' | 'discard'
 const n = (count: number, one: string, many: string) => `${formatInt(count)} ${count > 1 ? many : one}`
 const chunks = <T,>(xs: T[], size: number) => Array.from({ length: Math.ceil(xs.length / size) }, (_, i) => xs.slice(i * size, (i + 1) * size))
 
-const ghost = 'inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-[var(--color-foreground)]/40 px-4 text-sm font-medium transition-colors hover:bg-[var(--color-surface-light)] aria-disabled:cursor-not-allowed aria-disabled:border-[var(--color-border)] aria-disabled:text-[var(--color-foreground)]/60 aria-disabled:hover:bg-transparent'
+const ghost = `${ghostBase} gap-1.5`
 const primary = 'inline-flex min-h-11 items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-not-allowed aria-disabled:opacity-80'
 const field = 'w-full min-h-11 rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 text-sm'
 // Irréversible : rouge plein, distinct d'« Annuler » (texte blanc ≥ 4,5:1 au repos, au survol et en cours, lib/contrast.test.ts).

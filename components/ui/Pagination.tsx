@@ -1,8 +1,9 @@
 import { formatInt } from '@/lib/format'
+import { ghost } from './button'
 
 type Props = { page: number; totalPages: number | null; more?: boolean; onPage: (page: number) => void }
 
-const button = 'inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-[var(--color-foreground)]/40 px-4 text-sm font-medium transition-colors hover:bg-[var(--color-surface-light)] aria-disabled:cursor-not-allowed aria-disabled:border-[var(--color-border)] aria-disabled:text-[var(--color-foreground)]/60 aria-disabled:hover:bg-transparent'
+const button = `${ghost} gap-1.5`
 
 // « ← Précédent / Page n / m / Suivant → » (R§2.2) ; `page` en base 0 comme l'API. aria-disabled et non disabled :
 // le bouton qu'on vient de presser pour atteindre la dernière page garde le focus.

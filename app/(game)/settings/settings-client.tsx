@@ -1,8 +1,9 @@
 'use client'
 
 import { LogOut } from 'lucide-react'
-import { useEffect, useEffectEvent, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { Field, FormError } from '@/components/auth/Field'
+import { ghost as ghostBase } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { api, ApiError } from '@/lib/api'
 import { authErrorMessage, usernameProblem } from '@/lib/auth'
@@ -20,12 +21,15 @@ const TOGGLES: [Key, string, string][] = [
 
 // Jamais disabled sur un bouton qui peut garder le focus : aria-disabled et une garde (le navigateur poserait le focus sur body).
 const primary = 'inline-flex min-h-11 items-center justify-center self-start rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-not-allowed aria-disabled:bg-[var(--color-surface-light)] aria-disabled:text-[var(--color-foreground)]/60'
-const ghost = 'inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-xl border border-[var(--color-foreground)]/40 px-4 text-sm font-medium transition-colors hover:bg-[var(--color-surface-light)] aria-disabled:cursor-not-allowed aria-disabled:text-[var(--color-foreground)]/60'
+const ghost = `${ghostBase} justify-center gap-2 self-start`
 const hint = 'text-sm text-[var(--color-foreground)]/70'
 const ok = 'text-sm font-medium text-[var(--color-accent-light)]'
 
 const dateFr = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long' })
 const nextChange = (iso: unknown) => (typeof iso === 'string' ? ` Prochain changement possible le ${dateFr.format(new Date(iso))}.` : '')
+// false au rendu serveur et à l'hydratation, true ensuite : un envoi natif du HTML statique (GET, mot de passe dans l'adresse) est impossible.
+const noop = () => () => {}
+const useHydrated = () => useSyncExternalStore(noop, () => true, () => false)
 // Nos routes répondent en français sous 500 ; au-delà (ou hors réseau), le message de repli.
 const messageOf = (e: unknown, fallback: string) => (e instanceof ApiError && e.status < 500 ? e.message : fallback)
 
@@ -90,13 +94,16 @@ export function SettingsClient() {
       // Seule la clé envoyée : la réponse d'un autre interrupteur, partie avant, n'écrase pas une valeur plus fraîche.
       confirmed.current = { ...confirmed.current, [k]: r[k] }
       setPrefs({ sounds: confirmed.current.sounds, hideSensitive: confirmed.current.hide_sensitive })
-      setPrefsView((p) => p && { ...p, [k]: r[k] })
+      // Le serveur a gardé une autre valeur : c'est elle qui s'affiche, et ce n'est pas un succès.
+      if (r[k] !== next) throw new Error('préférence non retenue')
       setPrefSaved('Préférence enregistrée.')
     } catch {
-      const was = confirmed.current[k]
-      setPrefsView((p) => p && { ...p, [k]: was })
       setPrefError('Ta préférence n\'a pas pu être enregistrée.')
     }
+    const now = confirmed.current[k]
+    setPrefsView((p) => p && { ...p, [k]: now })
+    // Une relecture partie pendant l'enregistrement est plus vieille que lui : elle ne s'appliquera pas.
+    prefsGen.current++
     saving.current.delete(k)
   }
 
@@ -192,6 +199,7 @@ function UsernameForm({ current, onSaved }: { current: string; onSaved: (usernam
   const [pending, setPending] = useState(false)
   // Génération : une pré-vérification qui revient après une frappe ou un envoi est périmée.
   const gen = useRef(0)
+  const hydrated = useHydrated()
   const off = pending || !value || value === current
 
   // Pré-vérification au départ du champ, comme l'inscription. Sautée quand seule la casse de son propre pseudo change :
@@ -201,7 +209,8 @@ function UsernameForm({ current, onSaved }: { current: string; onSaved: (usernam
     if (!u || u.toLowerCase() === current.toLowerCase()) return
     const g = ++gen.current
     // Réseau en échec : l'enregistrement vérifie de toute façon.
-    void usernameProblem(u).catch(() => null).then((problem) => { if (g === gen.current) setError(problem) })
+    // Un pseudo libre n'efface rien : la frappe efface déjà, et un refus du serveur (409) doit rester.
+    void usernameProblem(u).catch(() => null).then((problem) => { if (problem && g === gen.current) setError(problem) })
   }
 
   async function submit(e: FormEvent) {
@@ -228,7 +237,8 @@ function UsernameForm({ current, onSaved }: { current: string; onSaved: (usernam
 
   return (
     // noValidate : le serveur dit pourquoi un pseudo est refusé, en français (« Pseudo invalide (3 à 24 caractères) »).
-    <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+    // method="post" en ceinture : même envoyé nativement, rien ne part dans l'adresse.
+    <form method="post" onSubmit={submit} noValidate className="flex flex-col gap-4">
       <Field
         id="settings-username"
         label="Pseudo"
@@ -246,7 +256,8 @@ function UsernameForm({ current, onSaved }: { current: string; onSaved: (usernam
         onBlur={onBlur}
       />
       <p id="settings-username-hint" className={hint}>3 à 24 caractères : lettres, chiffres, « _ », « . » ou « - ». Un changement tous les 30 jours.</p>
-      <button type="submit" aria-disabled={off} className={primary}>Enregistrer le pseudo</button>
+      {/* disabled jusqu'à l'hydratation seulement (aucun focus possible avant) ; ensuite aria-disabled et la garde de submit. */}
+      <button type="submit" disabled={!hydrated} aria-disabled={off} className={primary}>Enregistrer le pseudo</button>
       <p role="status" className={ok}>{done}</p>
     </form>
   )
@@ -257,6 +268,7 @@ function PasswordForm() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState('')
   const [pending, setPending] = useState(false)
+  const hydrated = useHydrated()
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -277,7 +289,8 @@ function PasswordForm() {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    // Prérendu dans le HTML statique : bouton disabled tant que React n'a pas hydraté (Entrée ne soumet rien), et method="post" en ceinture.
+    <form method="post" onSubmit={submit} className="flex flex-col gap-4">
       <Field id="settings-password" label="Nouveau mot de passe" type="password" autoComplete="new-password" minLength={6} />
       <Field
         id="settings-password-confirm"
@@ -289,7 +302,7 @@ function PasswordForm() {
         onChange={() => setMismatch(null)}
       />
       {error && <FormError>{error}</FormError>}
-      <button type="submit" aria-disabled={pending} className={primary}>Changer le mot de passe</button>
+      <button type="submit" disabled={!hydrated} aria-disabled={pending} className={primary}>Changer le mot de passe</button>
       <p role="status" className={ok}>{done}</p>
     </form>
   )

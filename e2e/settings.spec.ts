@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import type { Page } from '@playwright/test'
+import type { Page, Route } from '@playwright/test'
 import { expect, makePlayer, sql, test } from './fixtures'
 
 const fresh = (prefix: string) => `${prefix}_${randomUUID().slice(-12)}`
 const pseudo = (page: Page) => page.getByLabel('Pseudo', { exact: true })
 const savePseudo = (page: Page) => page.getByRole('button', { name: 'Enregistrer le pseudo' })
+// Laisse la page traiter une réponse déjà reçue (promesse, rendu React) avant de vérifier qu'elle n'a rien changé.
+const settle = (page: Page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 50))))
 const prefsSaved = (page: Page) =>
   page.waitForResponse((r) => new URL(r.url()).pathname === '/api/settings/preferences' && r.request().method() === 'POST')
 
@@ -29,6 +31,13 @@ test('pseudo : un changement vers un pseudo libre réussit, le second est refus�
   await savePseudo(page).click()
   await expect(page.locator('main').getByRole('alert')).toContainText('Un seul changement de pseudo tous les 30 jours.')
   await expect(pseudo(page)).toHaveAttribute('aria-invalid', 'true')
+  // Entrer puis sortir du champ sans rien taper : la pré-vérification (pseudo libre) n'efface pas le refus du serveur.
+  await pseudo(page).focus()
+  const checked = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/username-available')
+  await pseudo(page).blur()
+  expect(await (await checked).json()).toEqual({ available: true })
+  await settle(page)
+  await expect(page.locator('main').getByRole('alert')).toContainText('Un seul changement de pseudo tous les 30 jours.')
   expect(sql(`select username from public.profiles where id = :'uid'`, { uid })).toBe(next)
 })
 
@@ -93,7 +102,17 @@ test('préférences : un enregistrement refusé revient en arrière, une lecture
   await section.getByRole('button', { name: 'Réessayer' }).click()
   const sounds = page.getByRole('checkbox', { name: 'Sons', exact: true })
   await expect(sounds).toBeChecked()
-  await expect(page.locator('body')).not.toBeFocused()
+  await expect(page.getByRole('heading', { name: 'Préférences', exact: true })).toBeFocused()
+
+  // 200, mais le serveur garde l'autre valeur : pas de « Préférence enregistrée. », la case revient, l'erreur est dite.
+  await page.route('**/api/settings/preferences', (route) => (route.request().method() === 'POST'
+    ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sounds: true, hide_sensitive: true, is_public: true }) })
+    : route.fallback()))
+  await sounds.click()
+  await expect(section.getByRole('alert')).toHaveText('Ta préférence n\'a pas pu être enregistrée.')
+  await expect(sounds).toBeChecked()
+  await expect(section.getByRole('status')).toHaveText('')
+  await page.unroute('**/api/settings/preferences')
 
   await page.route('**/api/settings/preferences', (route) =>
     route.request().method() === 'POST' ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }) : route.fallback())
@@ -127,4 +146,49 @@ test('mot de passe : le nouveau permet de se reconnecter ; « Se déconnecter »
   await page.getByLabel('Mot de passe', { exact: true }).fill('nouveau-mdp-e2e')
   await page.getByRole('button', { name: 'Se connecter' }).click()
   await expect(page).toHaveURL('/pulls')
+})
+
+test('préférences : une relecture partie pendant un enregistrement ne l\'écrase pas en revenant après lui', async ({ page, login }) => {
+  await login()
+  await page.goto('/settings')
+  const sounds = page.getByRole('checkbox', { name: 'Sons', exact: true })
+  await expect(sounds).toBeChecked()
+  const held: { POST?: Route; GET?: Route } = {}
+  await page.route('**/api/settings/preferences', (route) => { held[route.request().method() as 'POST' | 'GET'] = route })
+  await sounds.click()
+  await expect.poll(() => !!held.POST).toBe(true)
+  // Page quittée puis rouverte (Activity) pendant l'enregistrement : la relecture part avant sa fin.
+  await page.locator('nav.hidden').getByRole('link', { name: 'Paquets' }).click()
+  await expect(page).toHaveURL('/pulls')
+  await page.locator('nav.hidden').getByRole('link', { name: 'Paramètres' }).click()
+  await expect(page).toHaveURL('/settings')
+  await expect.poll(() => !!held.GET).toBe(true)
+  await held.POST!.continue()
+  await expect(page.getByRole('status').filter({ hasText: 'Préférence enregistrée.' })).toBeVisible()
+  await expect(sounds).not.toBeChecked()
+  // La relecture revient ensuite avec l'ancienne valeur.
+  const stale = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/settings/preferences' && r.request().method() === 'GET')
+  await held.GET!.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sounds: true, hide_sensitive: true, is_public: true }) })
+  await (await stale).finished()
+  await settle(page)
+  await expect(sounds).not.toBeChecked()
+})
+
+test.describe('avant l\'hydratation (JavaScript coupé)', () => {
+  test.use({ javaScriptEnabled: false })
+  test('mot de passe : jamais envoyé nativement, donc jamais dans une adresse', async ({ page, login }) => {
+    await login()
+    const urls: string[] = []
+    page.on('request', (r) => urls.push(r.url()))
+    await page.goto('/settings')
+    await page.getByLabel('Nouveau mot de passe', { exact: true }).fill('fuite-mdp-e2e')
+    await page.getByLabel('Confirme le nouveau mot de passe').fill('fuite-mdp-e2e')
+    // Une absence ne se prouve qu'avec une borne : une fuite partirait aussitôt après Entrée.
+    const leak = page.waitForRequest((r) => r.url().includes('settings-password'), { timeout: 2000 }).catch(() => null)
+    await page.getByLabel('Confirme le nouveau mot de passe').press('Enter')
+    expect((await leak)?.url() ?? null).toBeNull()
+    expect(urls.filter((u) => u.includes('settings-password'))).toEqual([])
+    await expect(page.getByRole('button', { name: 'Changer le mot de passe' })).toBeDisabled()
+    await expect(page).toHaveURL('/settings')
+  })
 })
