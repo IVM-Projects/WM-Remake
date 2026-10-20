@@ -207,6 +207,37 @@ test('modale fermée pendant la relecture : le focus va à la première tuile un
   await expect(page.locator('body')).not.toBeFocused()
 })
 
+test('modale fermée pendant une relecture qui échoue : le focus va à « Réessayer »', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  const dialog = await openUr30(page)
+  let seen = 0
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route(isCollectionApi, async (r) => {
+    seen++
+    await held
+    await r.abort()
+  }, { times: 1 })
+  await page.goForward()
+  await expect.poll(() => seen).toBe(1)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  release()
+  await expect(page.getByRole('button', { name: 'Réessayer' })).toBeFocused()
+})
+
+test('tuile d\'origine remontée (Avancer puis Retour derrière la modale) : Échap rend le focus à la même copie', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  const dialog = await openThenLeave(page)
+  await page.goBack()
+  await expect(tiles(page)).toHaveCount(50)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(opener(page, 30)).toBeFocused()
+})
+
 test('échec effacé au changement de requête : pas d\'erreur pendant la relecture d\'une adresse qui avait échoué', async ({ page, login }) => {
   const { uid } = await login()
   seed60(uid)

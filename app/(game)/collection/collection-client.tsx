@@ -217,8 +217,9 @@ export function CollectionClient() {
   function closeModal() {
     // Grille périmée ou en échec : la place de la copie dans la grille de l'adresse est inconnue.
     const i = stale ? -1 : items.findIndex((x) => x.id === open?.id)
-    // Modale qui a changé la grille, ou tuile d'origine absente (copie sortie de la page, grille relue) : sans elle, la première.
-    if (dirty.current || i < 0) refocus.current = Math.max(0, i)
+    // Toujours : l'effet ne bouge le focus que s'il est tombé sur body (tuile d'origine démontée, grille relue ou en échec) ;
+    // il va alors à la tuile de même rang (le nouveau nœud de la copie si elle est revenue), sinon à la première.
+    refocus.current = Math.max(0, i)
     if (dirty.current) {
       dirty.current = false
       refresh()
