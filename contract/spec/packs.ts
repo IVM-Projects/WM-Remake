@@ -73,6 +73,7 @@ export const packsOpen: RouteSpec = {
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl)
         const denied = await failed(await post(env, '/api/packs/open', uid), 403, 'human_verification_required')
+        assert.equal(denied.error, 'Vérification anti-bot requise pour continuer à ouvrir des paquets.')
         assert.equal(denied.human_verification_required, true)
         const check = await post(env, '/api/human-check', uid, { token: 'dev-bypass' })
         assert.equal(check.status, 200)
@@ -104,14 +105,18 @@ export const packsOpen: RouteSpec = {
       },
     },
     {
-      name: 'deuxième ouverture immédiate → 429 rate_limited avec Retry-After ≥ 1',
+      name: 'deuxième ouverture immédiate → 429 « Le site demande de ralentir », rate_limited, retry_after ISO, Retry-After ≥ 1',
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl, { humanVerified: true })
         sql(env, `update public.profiles set packs_remaining = 3 where id = :'uid'`, uid)
         await ok(await post(env, '/api/packs/open', uid), Opened)
+        // Dernière ouverture dans 30 s : le 429 ne dépend plus de la vitesse du banc.
+        sql(env, `update wm.user_state set last_open_at = now() + interval '30 seconds' where user_id = :'uid'`, uid)
         const res = await post(env, '/api/packs/open', uid)
         const body = await failed(res, 429)
+        assert.equal(body.error, 'Le site demande de ralentir')
         assert.equal(body.rate_limited, true)
+        Iso.parse(body.retry_after)
         assert.ok(Number(res.headers.get('retry-after')) >= 1, `Retry-After: ${res.headers.get('retry-after')}`)
       },
     },
@@ -128,12 +133,18 @@ export const packsOpen: RouteSpec = {
       },
     },
     {
-      name: 'x-wiki-calendar-tz: ../../etc/passwd → 200, ouverture comptée au jour de Europe/Paris',
+      name: 'x-wiki-calendar-tz: ../../etc/passwd + plafond du jour de Paris atteint → 429 rate_limit_daily, retry_after = minuit de Paris',
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl, { humanVerified: true })
-        await ok(await post(env, '/api/packs/open', uid, undefined, { 'x-wiki-calendar-tz': '../../etc/passwd' }), Opened)
-        const day = `select opens_day = (now() at time zone 'Europe/Paris')::date from wm.user_state where user_id = :'uid'`
-        assert.equal(sql(env, day, uid), 't')
+        // Plafond atteint au jour de Paris ; attendu calculé par PG : prochain minuit de Paris, en secondes epoch.
+        const midnight = sql(env, `update wm.user_state set opens_day = (now() at time zone 'Europe/Paris')::date,
+  opens_day_count = (select value::int from wm.config where key = 'open_daily_cap'), last_open_at = now() - interval '1 hour'
+where user_id = :'uid';
+select extract(epoch from ((now() at time zone 'Europe/Paris')::date + 1)::timestamp at time zone 'Europe/Paris')`, uid)
+        const body = await failed(await post(env, '/api/packs/open', uid, undefined, { 'x-wiki-calendar-tz': '../../etc/passwd' }), 429)
+        assert.equal(body.error, 'Limite quotidienne de paquets atteinte')
+        assert.equal(body.rate_limit_daily, true)
+        assert.equal(Date.parse(Iso.parse(body.retry_after)), Number(midnight) * 1000)
       },
     },
   ],
