@@ -657,7 +657,7 @@ En complément, si le plan le permet : WAF Vercel par IP (`/api/*` 600 req/min, 
    - `Date` est fiable ;
    - `Retry-After` accompagne chaque 429 et 503 ;
    - les `Set-Cookie` de rafraîchissement de session sont ceux de `@supabase/ssr` ;
-   - le cookie s'appelle `sb-<ref>-auth-token` (découpé en `.0`, `.1`…), et en option B il est forcé à `sb-cyrxjeppjqsxxjayfrur-auth-token` par `AUTH_COOKIE_NAME`.
+   - le cookie s'appelle `sb-<ref>-auth-token` (découpé en `.0`, `.1`…), et en option B il est forcé à `sb-cyrxjeppjqsxxjayfrur-auth-token` par `NEXT_PUBLIC_AUTH_COOKIE_NAME`.
 6. **Session** : 401 sans session, 403 si le compte est restreint (§3.0).
 7. **DOM** : chaque sélecteur du §6.8 existe sur sa page. Un test Playwright (`e2e/selectors.spec.ts`) le prouve : c'est la garantie de compatibilité avec les extensions.
 
@@ -959,7 +959,7 @@ Dès réception du DUMP-S, appliquer la porte de fidélité du §6.1 et corriger
 ### 11.3 Option B : restaurer son `pg_dump` dans notre projet
 1. Projet **Pro** (ses données dépassent largement 500 Mo). Restauration selon la procédure Supabase « migrer depuis un autre projet » : rôles, puis schéma (`public` et `auth`), puis données avec `session_replication_role = replica` et `--no-owner`, puis `pg_restore -j 8`. Les index sont construits après les données. `cron.job` n'est gardé que pour référence.
 2. Étapes 2 à 5 de l'option A. Les rattrapages sont **obligatoires**, puisque nos triggers ne se sont pas déclenchés pendant le chargement.
-3. **Sessions** : on restaure `auth.users` (empreintes bcrypt), `identities`, `sessions` et `refresh_tokens`, on importe le **secret JWT hérité** (à vérifier en répétition, §9.1 n° 2) et on fixe `AUTH_COOKIE_NAME`. Si l'import du secret est impossible :
+3. **Sessions** : on restaure `auth.users` (empreintes bcrypt), `identities`, `sessions` et `refresh_tokens`, on importe le **secret JWT hérité** (à vérifier en répétition, §9.1 n° 2) et on fixe `NEXT_PUBLIC_AUTH_COOKIE_NAME`. Si l'import du secret est impossible :
    - tout le monde se reconnecte, avec un mot de passe toujours valable ;
    - une bannière « Reconnecte-toi » s'affiche ;
    - les intégrations `rest/v1` directes cassent (nouvelle URL, nouvelle clé), tandis que `/api/*` reste identique.
@@ -1049,8 +1049,8 @@ Règles : toute fonction `wm.*` est écrite en TDD (Superpowers), et toute fonct
 - **`db.yml`** (sur `master`, la branche de production ; `develop` est l'intégration, `hotfix` porte les correctifs urgents vers `master`) : `supabase db push` vers `iggurckxmoagsajzrnwd` **avant** la promotion Vercel (sans approbation pendant la construction, C24 ; approbation manuelle activée pour la bascule de production). Les migrations sont expand-only, donc l'ancien build continue de marcher pendant ce temps.
 - **Vercel** (équipe IVM, projet `wmr`, intégration Git) : une preview par PR et la production (démo privée), toutes **derrière la porte**. Région `dub1`, Fluid compute.
 - **Variables d'environnement** :
-  - Supabase : `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` (service role), `AUTH_COOKIE_NAME` (option B) ;
-  - services : `TURNSTILE_SITEKEY` et `TURNSTILE_SECRET`, `STRIPE_SECRET_KEY` et `STRIPE_WEBHOOK_SECRET` (test), `VAPID_PUBLIC` et `VAPID_PRIVATE`, `CRON_SECRET` (aussi dans Supabase Vault) ;
+  - Supabase : `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` (service role), `NEXT_PUBLIC_AUTH_COOKIE_NAME` (option B ; le client navigateur le lit aussi) ;
+  - services : `NEXT_PUBLIC_TURNSTILE_SITE_KEY` et `TURNSTILE_SECRET_KEY`, `STRIPE_SECRET_KEY` et `STRIPE_WEBHOOK_SECRET` (test), `VAPID_PUBLIC` et `VAPID_PRIVATE`, `CRON_SECRET` (aussi dans Supabase Vault) ;
   - app : `NEXT_PUBLIC_BRAND_NAME`, `DEMO_GATE_PASSWORD`, `GATE_COOKIE_SECRET`, `DEMO_MODE`.
 - **Secrets GitHub** : jeton d'accès Supabase, URL du pooler en mode session (catalogue), clés des fournisseurs OmniRoute, clés de test Stripe, comptes de parité.
 

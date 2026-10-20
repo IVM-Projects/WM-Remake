@@ -1,7 +1,5 @@
 import { expect, test } from './fixtures'
 
-const UID = '00000000-0000-0000-0000-0000000000a1'
-
 // [href, libellé, icône lucide, h1] dans l'ordre de R§2.2.
 const NAV = [
   ['/pulls', 'Paquets', 'puzzle', 'Paquets'],
@@ -20,7 +18,7 @@ const NAV = [
 ] as const
 
 test('barre latérale : 13 entrées dans l\'ordre', async ({ page, login }) => {
-  await login(UID); await page.setViewportSize({ width: 1280, height: 800 })
+  await login(); await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/pulls')
   const links = page.locator('nav.hidden a[href^="/"]').filter({ hasNotText: /^$/ })
   await expect(links).toHaveText(['Paquets','Collection','Échanges','Marché','Profil','Toutes les cartes','Guilde','Amis','Messages','Bataille','Succès','Classement','Paramètres'])
@@ -39,7 +37,7 @@ test('barre latérale : 13 entrées dans l\'ordre', async ({ page, login }) => {
 })
 
 test('mobile : 4 entrées + Plus', async ({ page, login }) => {
-  await login(UID); await page.setViewportSize({ width: 390, height: 844 })
+  await login(); await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/pulls')
   const bar = page.locator('nav.order-last')
   await expect(bar).toHaveClass(/pb-\[calc\(6px\+env\(safe-area-inset-bottom,0px\)\)\]/)
@@ -89,11 +87,11 @@ test('mobile : 4 entrées + Plus', async ({ page, login }) => {
 test.describe('chaque page a son h1', () => {
   for (const [href, , , title] of NAV) {
     test(href, async ({ page, login }) => {
-      await login(UID)
+      await login()
       await page.goto(href)
       await expect(page.locator('main h1')).toHaveText(title)
       await expect(page).toHaveTitle(new RegExp(`^${title} — `))
-      await expect(page.locator('main')).toContainText('Cette section arrive bientôt.')
+      if (!['/pulls', '/collection', '/global-collection', '/settings'].includes(href)) await expect(page.locator('main')).toContainText('Cette section arrive bientôt.')
     })
   }
 })

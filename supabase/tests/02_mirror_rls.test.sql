@@ -17,7 +17,7 @@ do $$ begin
           where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity) = 0, 'table de public sans RLS';
 end $$;
 
--- Droits exacts : rien pour anon ni PUBLIC (grantee 0) ; en écriture, seuls starred, tags.name/color et les insert/delete listés.
+-- Droits exacts : anon lit le catalogue seul (0003), rien pour PUBLIC (grantee 0) ; en écriture, seuls starred, tags.name/color et les insert/delete listés.
 do $$ declare got text; begin
   select string_agg(g, ', ' order by g) into got from (
     select format('%s %s %s', coalesce(nullif(a.grantee, 0)::regrole::text, 'public'), c.relname, a.privilege_type) g
@@ -30,7 +30,7 @@ do $$ declare got text; begin
     where c.relnamespace = 'public'::regnamespace and a.grantee in ('anon'::regrole::oid, 'authenticated'::regrole::oid, 0)
       and c.relname in ('profiles', 'cards', 'user_cards', 'tags', 'user_card_tags', 'wishlist_items')
   ) s;
-  assert got = 'authenticated cards SELECT, authenticated profiles SELECT, authenticated tags DELETE, '
+  assert got = 'anon cards SELECT, authenticated cards SELECT, authenticated profiles SELECT, authenticated tags DELETE, '
     'authenticated tags INSERT, authenticated tags SELECT, authenticated tags.color UPDATE, '
     'authenticated tags.name UPDATE, authenticated user_card_tags DELETE, authenticated user_card_tags INSERT, '
     'authenticated user_card_tags SELECT, authenticated user_cards SELECT, authenticated user_cards.starred UPDATE, '
@@ -120,13 +120,6 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
   get diagnostics n = row_count; assert n = 1, 'Alice ne peut pas retirer son souhait';
   insert into public.wishlist_items (user_id, card_id) values (a, c);
   begin insert into public.wishlist_items (user_id, card_id) values (b, gen_random_uuid()); assert false, 'souhait créé pour Bob';
-  exception when insufficient_privilege then null; end;
-  perform tests.reset_role();
-end $$;
-
-do $$ begin
-  perform tests.logout();
-  begin perform from public.cards; assert false, 'anon lit le catalogue';
   exception when insufficient_privilege then null; end;
   perform tests.reset_role();
 end $$;

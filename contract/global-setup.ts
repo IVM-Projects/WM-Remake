@@ -10,7 +10,7 @@ declare module 'vitest' {
 
 export default async function setup({ provide }: TestProject) {
   const { backend, plain, gated, stop } = await startStack()
-  const { supabaseUrl, databaseUrl, privateJwk } = backend
-  provide('contract', { plain, gated, backend: { supabaseUrl, databaseUrl, privateJwk } })
+  const { supabaseUrl, databaseUrl, mailpitUrl, privateJwk } = backend
+  provide('contract', { plain, gated, backend: { supabaseUrl, databaseUrl, mailpitUrl, privateJwk } })
   return stop
 }

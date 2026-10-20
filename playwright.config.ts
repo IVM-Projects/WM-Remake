@@ -4,12 +4,15 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: 'e2e',
   forbidOnly: !!process.env.CI,
-  // CI : rapport HTML dans playwright-report/, téléversé en artefact si le job échoue.
+  // CI : rapport HTML dans playwright-report/, téléversé en artefact si le job échoue (avec test-results/ et .cache/logs/).
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: 'http://127.0.0.1:3100',
     // Bac à sable : chromium préinstallé (/opt/pw-browsers/chromium-*/chrome-linux/chrome) ; CI : `npx playwright install chromium`.
     launchOptions: { executablePath: process.env.PW_CHROMIUM_PATH },
+    // Échec seulement : trace et capture dans test-results/ (téléversé par la CI).
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   webServer: {
     command: 'node contract/serve.ts',
