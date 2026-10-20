@@ -87,7 +87,9 @@ test('pseudo déjà pris → message avant envoi', async ({ page }) => {
   await field.blur()
   await expect(form.getByRole('alert')).toHaveText('Ce pseudo est réservé')
   await field.fill(fresh().username)
-  await field.blur()
+  // La réponse du pseudo libre ne change rien à l'écran : on l'attend avant de vérifier qu'il n'y a plus d'erreur.
+  const [res] = await Promise.all([page.waitForResponse((r) => r.url().includes('/api/username-available?')), field.blur()])
+  expect(await res.json()).toEqual({ available: true })
   await expect(submit).toBeEnabled()
   await expect(form.getByRole('alert')).toHaveCount(0)
 })
@@ -177,6 +179,10 @@ test('lien de réinitialisation invalide → « Lien invalide ou expiré »', as
   await page.goto('/reset-password')
   await expect(page.getByRole('main').getByRole('alert')).toHaveText('Lien invalide ou expiré')
   await expect(page.getByLabel('Nouveau mot de passe')).toHaveCount(0)
+  // Autre lien refusé : retour à la connexion avec le même message.
+  await page.goto('/callback?code=faux&next=/collection')
+  await expect(page).toHaveURL('/login?error=invalid')
+  await expect(page.getByRole('main').getByRole('alert')).toHaveText('Lien invalide ou expiré')
 })
 
 test('compte non confirmé → /verify-email, renvoi du code', async ({ page }) => {

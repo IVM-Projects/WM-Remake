@@ -1,14 +1,21 @@
 'use client'
 
 import Script from 'next/script'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { FormError } from './Field'
 
 const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
 
 declare global {
   interface Window {
     turnstile?: {
-      render(el: HTMLElement, opts: { sitekey: string; theme: 'dark'; callback(t: string): void; 'expired-callback'(): void }): string
+      render(el: HTMLElement, opts: {
+        sitekey: string
+        theme: 'dark'
+        callback(t: string): void
+        'expired-callback'(): void
+        'error-callback'(): void
+      }): string
       remove(id: string): void
     }
   }
@@ -18,25 +25,50 @@ declare global {
 export function Turnstile({ onToken }: { onToken: (t: string) => void }) {
   const box = useRef<HTMLDivElement>(null)
   const widget = useRef<string | null>(null)
+  // Dernier onToken sans relancer l'effet : un rappel en ligne ne doit pas recréer le widget.
+  const onTokenRef = useRef(onToken)
+  const [failed, setFailed] = useState(false)
   useEffect(() => {
-    if (!SITE_KEY) onToken('dev-bypass')
-    return () => {
-      if (widget.current) window.turnstile?.remove(widget.current)
+    onTokenRef.current = onToken
+  })
+
+  // Une seule fois par affichage : depuis l'effet si api.js est déjà là, sinon depuis onLoad (chaîné même pendant le chargement).
+  const render = useCallback(() => {
+    if (!SITE_KEY || widget.current !== null || !box.current || !window.turnstile) return
+    widget.current = window.turnstile.render(box.current, {
+      sitekey: SITE_KEY,
+      theme: 'dark',
+      callback: (t) => {
+        setFailed(false)
+        onTokenRef.current(t)
+      },
+      'expired-callback': () => onTokenRef.current(''),
+      'error-callback': () => {
+        setFailed(true)
+        onTokenRef.current('')
+      },
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!SITE_KEY) {
+      onTokenRef.current('dev-bypass')
+      return
     }
-  }, [onToken])
+    render()
+    // Remis à null : une page gardée cachée par Cache Components puis réaffichée rend un nouveau widget.
+    return () => {
+      if (widget.current !== null) window.turnstile?.remove(widget.current)
+      widget.current = null
+    }
+  }, [render])
+
   if (!SITE_KEY) return null
   return (
     <>
-      <Script
-        src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
-        // onReady : aussi à chaque remontage, le script déjà chargé.
-        onReady={() => {
-          if (box.current && window.turnstile) {
-            widget.current = window.turnstile.render(box.current, { sitekey: SITE_KEY, theme: 'dark', callback: onToken, 'expired-callback': () => onToken('') })
-          }
-        }}
-      />
+      <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" onLoad={render} onError={() => setFailed(true)} />
       <div ref={box} />
+      {failed && <FormError>La vérification anti-bot n&apos;a pas pu se charger, recharge la page.</FormError>}
     </>
   )
 }
@@ -48,11 +80,10 @@ export function useCaptcha() {
   return {
     token,
     widget: <Turnstile key={round} onToken={setToken} />,
-    take(): string | undefined {
+    take(): string {
       setToken('')
       setRound((r) => r + 1)
-      // Sans clé de site, le captcha de GoTrue est désactivé : aucun jeton à lui envoyer.
-      return token === 'dev-bypass' ? undefined : token
+      return token
     },
   }
 }

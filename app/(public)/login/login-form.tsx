@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
 import { Field, FormError, Submit, linkClass } from '@/components/auth/Field'
 import { useCaptcha } from '@/components/auth/Turnstile'
@@ -48,4 +48,9 @@ export function LoginForm() {
       </p>
     </form>
   )
+}
+
+// ?error=invalid : lien d'e-mail refusé par /callback. Rendu au client sous Suspense, le formulaire reste statique.
+export function CallbackError() {
+  return useSearchParams().has('error') ? <FormError>Lien invalide ou expiré</FormError> : null
 }

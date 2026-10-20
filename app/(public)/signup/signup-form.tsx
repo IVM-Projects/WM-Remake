@@ -9,6 +9,9 @@ import { useCaptcha } from '@/components/auth/Turnstile'
 import { TERMS_VERSION, authErrorMessage } from '@/lib/auth'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 
+// supabase-js envoie X-Supabase-Api-Version : GoTrue masque alors le refus du trigger sous ce message (500, sans code côté client).
+const MASKED_TRIGGER = 'Database error saving new user'
+
 // Message de refus du pseudo (réservé, pris, invalide), ou null s'il est libre.
 async function usernameProblem(u: string): Promise<string | null> {
   const body = (await (await fetch(`/api/username-available?u=${encodeURIComponent(u)}`)).json()) as { available?: boolean; error?: string }
@@ -56,8 +59,8 @@ export function SignupForm() {
       },
     })
     if (!error) return setEmail(address)
-    // supabase-js envoie X-Supabase-Api-Version, donc GoTrue masque le refus du trigger : consentement garanti, on redemande le pseudo.
-    const problem = await usernameProblem(username).catch(() => null)
+    // Refus masqué du trigger : le consentement étant garanti par le formulaire, seul le pseudo peut en être la cause.
+    const problem = error.message === MASKED_TRIGGER ? await usernameProblem(username).catch(() => null) : null
     setPending(false)
     if (problem) setUsernameError(problem)
     else setError(authErrorMessage(error))
