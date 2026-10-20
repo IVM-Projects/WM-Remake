@@ -146,4 +146,11 @@ describe('page de la collection', () => {
   it('contour d\'une pastille pressée (sa couleur) ≥ 3:1 sur le graphite', () => {
     for (const r of RARITIES) expect(contrast(resolve(`--color-rarity-${r}`), resolve('--color-background'))).toBeGreaterThanOrEqual(3)
   })
+  // Confirmation de la défausse en masse (SelectionBar) : blanc sur red-700, red-800 au survol, opacité 80 % en cours, sur le panneau.
+  it('« Défausser » de la confirmation, blanc sur rouge ≥ 4,5:1 au repos, au survol et en cours', () => {
+    const surface = resolve('--color-surface')
+    expect(contrast('#ffffff', '#c10007')).toBeGreaterThanOrEqual(4.5)
+    expect(contrast('#ffffff', '#9f0712')).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(over('#ffffff', 0.8, surface), over('#c10007', 0.8, surface))).toBeGreaterThanOrEqual(4.5)
+  })
 })

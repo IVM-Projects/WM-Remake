@@ -13,6 +13,7 @@ type Props = {
   tagId: string
   onTag: (tagId: string) => void
   tags: TagCount[]
+  tagsFailed: boolean
   sort: string
   onSort: (sort: string) => void
   rarity: RarityCode[]
@@ -24,7 +25,7 @@ type Props = {
 const control = 'min-h-11 rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 text-sm'
 
 // Recherche (autofocus, R§2.2), étiquettes avec leur nombre de copies, tri, raretés et mode sélection.
-export function CollectionToolbar({ text, onText, tagId, onTag, tags, sort, onSort, rarity, onRarity, selecting, onSelecting }: Props) {
+export function CollectionToolbar({ text, onText, tagId, onTag, tags, tagsFailed, sort, onSort, rarity, onRarity, selecting, onSelecting }: Props) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -42,6 +43,7 @@ export function CollectionToolbar({ text, onText, tagId, onTag, tags, sort, onSo
           <option value="">Toutes les étiquettes</option>
           {tags.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.count})</option>)}
         </select>
+        {tagsFailed && <p role="alert" className="text-sm font-medium text-red-400">Étiquettes indisponibles</p>}
         <select aria-label="Trier les cartes" value={sort} onChange={(e) => onSort(e.target.value)} className={control}>
           {SORTS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
         </select>

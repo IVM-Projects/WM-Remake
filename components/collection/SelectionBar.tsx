@@ -12,8 +12,11 @@ import type { TagCount } from './CollectionToolbar'
 
 type Props = {
   ids: string[]
+  // Grille en relecture (aria-busy) : ses copies sont celles de la requête d'avant, rien ne s'y applique.
+  loading: boolean
   onSelectAll: () => void
   tags: TagCount[]
+  tagsFailed: boolean
   // Étiquettes posées ou retirées : la page relit la grille et les nombres de copies.
   onTagged: () => void
   // Défausse finie (même en partie) : la page vide la sélection et relit grille, étiquettes et solde.
@@ -29,9 +32,12 @@ const chunks = <T,>(xs: T[], size: number) => Array.from({ length: Math.ceil(xs.
 const ghost = 'inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-[var(--color-foreground)]/40 px-4 text-sm font-medium transition-colors hover:bg-[var(--color-surface-light)] aria-disabled:cursor-not-allowed aria-disabled:border-[var(--color-border)] aria-disabled:text-[var(--color-foreground)]/60 aria-disabled:hover:bg-transparent'
 const primary = 'inline-flex min-h-11 items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-not-allowed aria-disabled:opacity-80'
 const field = 'w-full min-h-11 rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 text-sm'
+// Irréversible : rouge plein, distinct d'« Annuler » (texte blanc ≥ 4,5:1 au repos, au survol et en cours, lib/contrast.test.ts).
+const danger = 'inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-red-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-red-800 aria-disabled:cursor-not-allowed aria-disabled:opacity-80'
+const tagsError = <p role="alert" className="text-sm text-red-400">Tes étiquettes n&apos;ont pas pu être chargées.</p>
 
 // Multi-sélection (R§2.2) : étiquette appliquée ou retirée en direct par PostgREST (lots de 100, R§3.3), défausse en masse par lots de 50.
-export function SelectionBar({ ids, onSelectAll, tags, onTagged, onDiscarded }: Props) {
+export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTagged, onDiscarded }: Props) {
   const id = useId()
   const [action, setAction] = useState<Action | null>(null)
   const [name, setName] = useState('')
@@ -39,11 +45,14 @@ export function SelectionBar({ ids, onSelectAll, tags, onTagged, onDiscarded }: 
   // Jamais disabled sur le bouton pressé (le focus tomberait sur body) : aria-disabled et une garde.
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [blank, setBlank] = useState(false)
   const none = ids.length === 0
+  const off = none || loading
 
   const open = (a: Action) => {
-    if (none) return
+    if (off) return
     setError(null)
+    setBlank(false)
     setAction(a)
   }
 
@@ -60,9 +69,16 @@ export function SelectionBar({ ids, onSelectAll, tags, onTagged, onDiscarded }: 
     }
   }
 
-  const apply = () => run(async () => {
+  const apply = () => {
+    // Que des espaces : la modale reste ouverte et le dit.
+    if (!name.trim()) {
+      setBlank(true)
+      return Promise.resolve()
+    }
+    return applyNamed()
+  }
+  const applyNamed = () => run(async () => {
     const label = name.trim()
-    if (!label) return
     const sb = createBrowserSupabase()
     try {
       const tag = tags.find((t) => t.name.toLowerCase() === label.toLowerCase()) ?? await createTag(label)
@@ -122,10 +138,10 @@ export function SelectionBar({ ids, onSelectAll, tags, onTagged, onDiscarded }: 
         <p aria-live="polite" className="text-sm font-medium tabular-nums">
           {none ? 'Aucune carte sélectionnée' : n(ids.length, 'carte sélectionnée', 'cartes sélectionnées')}
         </p>
-        <button type="button" onClick={onSelectAll} className={ghost}>Tout sélectionner</button>
-        <button type="button" aria-disabled={none} onClick={() => open('apply')} className={ghost}>Appliquer une étiquette</button>
-        <button type="button" aria-disabled={none} onClick={() => open('remove')} className={ghost}>Retirer l&apos;étiquette</button>
-        <button type="button" aria-disabled={none} onClick={() => open('discard')} className={ghost}>Défausser</button>
+        <button type="button" aria-disabled={loading} onClick={() => { if (!loading) onSelectAll() }} className={ghost}>Tout sélectionner</button>
+        <button type="button" aria-disabled={off} onClick={() => open('apply')} className={ghost}>Appliquer une étiquette</button>
+        <button type="button" aria-disabled={off} onClick={() => open('remove')} className={ghost}>Retirer l&apos;étiquette</button>
+        <button type="button" aria-disabled={off} onClick={() => open('discard')} className={ghost}>Défausser</button>
       </div>
       {error && <p role="alert" className="text-sm font-medium text-red-400">{error}</p>}
 
@@ -135,9 +151,24 @@ export function SelectionBar({ ids, onSelectAll, tags, onTagged, onDiscarded }: 
             <p className="text-sm text-[var(--color-foreground)]/70">À {n(ids.length, 'carte sélectionnée', 'cartes sélectionnées')}.</p>
             <div className="space-y-1.5">
               <label htmlFor={`${id}-name`} className="text-sm font-medium">Étiquette</label>
-              <input id={`${id}-name`} list={`${id}-tags`} required maxLength={48} value={name} onChange={(e) => setName(e.target.value)} className={field} />
+              <input
+                id={`${id}-name`}
+                list={`${id}-tags`}
+                required
+                maxLength={48}
+                value={name}
+                aria-invalid={blank}
+                aria-describedby={blank ? `${id}-blank` : undefined}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  setBlank(false)
+                }}
+                className={field}
+              />
               <datalist id={`${id}-tags`}>{tags.map((t) => <option key={t.id} value={t.name} />)}</datalist>
+              {blank && <p id={`${id}-blank`} role="alert" className="text-sm text-red-400">Le nom de l&apos;étiquette ne peut pas être vide.</p>}
             </div>
+            {tagsFailed && tagsError}
             <Actions busy={busy} onCancel={() => setAction(null)}>Appliquer</Actions>
           </form>
         </Dialog>
@@ -147,7 +178,7 @@ export function SelectionBar({ ids, onSelectAll, tags, onTagged, onDiscarded }: 
         <Dialog id={id} title="Retirer l'étiquette" onClose={() => setAction(null)}>
           <form onSubmit={(e) => submit(e, remove)} className="space-y-4">
             <p className="text-sm text-[var(--color-foreground)]/70">Des {n(ids.length, 'carte sélectionnée', 'cartes sélectionnées')}.</p>
-            {tags.length ? (
+            {tagsFailed ? tagsError : tags.length ? (
               <div className="space-y-1.5">
                 <label htmlFor={`${id}-tag`} className="text-sm font-medium">Étiquette</label>
                 <select id={`${id}-tag`} required value={tagId} onChange={(e) => setTagId(e.target.value)} className={field}>
@@ -168,7 +199,7 @@ export function SelectionBar({ ids, onSelectAll, tags, onTagged, onDiscarded }: 
           <p className="text-sm">Tu gagneras {n(ids.length, 'wikibidou', 'wikibidous')}. Action irréversible.</p>
           <div className="flex flex-wrap justify-end gap-3">
             <button type="button" onClick={() => setAction(null)} className={ghost}>Annuler</button>
-            <button type="button" aria-disabled={busy} onClick={() => void discard()} className={ghost}>
+            <button type="button" aria-disabled={busy} onClick={() => void discard()} className={danger}>
               Défausser
               <WCoin />
             </button>

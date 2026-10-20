@@ -98,9 +98,10 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
     starring.current = true
     const next = !starred
     setStarred(next)
-    const { error } = await createBrowserSupabase().from('user_cards').update({ starred: next }).eq('id', owned.id)
+    // select('id') : une ligne que la RLS écarte n'est pas modifiée et ne revient pas, ce n'est pas un succès.
+    const { data: rows, error } = await createBrowserSupabase().from('user_cards').update({ starred: next }).eq('id', owned.id).select('id')
     starring.current = false
-    if (error) {
+    if (error || !rows?.length) {
       setStarred(!next)
       setError('Le favori n\'a pas pu être enregistré.')
     } else onChanged?.({ starred: next })
