@@ -29,15 +29,40 @@ do $$ declare a uuid := tests.make_user('Regen3'); b uuid := tests.make_user('Re
   end loop;
 end $$;
 
--- Rien ne change, et la ligne n'est pas réécrite (même ctid) : stock plein, donnée migrée sans date, moins d'une période, plein daté.
+-- Rien ne change, et la ligne n'est pas réécrite (même ctid) : stock plein, moins d'une période, plein daté, date future.
 do $$ declare u uuid := tests.make_user('Regen5'); v record; c tid; p public.profiles; begin
-  for v in select * from (values (10, null::timestamptz, null::timestamptz), (3, null, null),
-                                 (0, now() - interval '5 minutes', now() + interval '5 minutes'), (10, now() - interval '1 hour', null)) x (n, t, nxt) loop
+  for v in select * from (values (10, null::timestamptz, null::timestamptz), (0, now() - interval '5 minutes', now() + interval '5 minutes'),
+                                 (10, now() - interval '1 hour', null), (0, now() + interval '1 hour', now() + interval '70 minutes')) x (n, t, nxt) loop
     update public.profiles set packs_remaining = v.n, packs_last_regen_at = v.t where id = u returning ctid into c;
     p := wm.apply_regen(u);
     assert (select ctid from public.profiles where id = u) = c and p.packs_remaining = v.n and p.packs_last_regen_at is not distinct from v.t
       and wm.next_regen_at(p) is not distinct from v.nxt, format('%s %s : %s %s %s', v.n, v.t, p.packs_remaining, p.packs_last_regen_at, wm.next_regen_at(p));
   end loop;
+end $$;
+
+-- Stock incomplet sans date (donnée migrée) : l'horloge démarre à now(), sans crédit, et n'est écrite qu'une fois.
+do $$ declare u uuid := tests.make_user('Regen6'); c tid; p public.profiles; begin
+  update public.profiles set packs_remaining = 3, packs_last_regen_at = null where id = u;
+  p := wm.apply_regen(u);
+  assert p.packs_remaining = 3 and p.packs_last_regen_at = now() and wm.next_regen_at(p) = now() + interval '600 seconds',
+    format('%s %s', p.packs_remaining, p.packs_last_regen_at);
+  c := (select ctid from public.profiles where id = u);
+  p := wm.apply_regen(u);
+  assert (select ctid from public.profiles where id = u) = c and p.packs_remaining = 3 and p.packs_last_regen_at = now(), 'horloge réécrite';
+end $$;
+
+-- Nouveau compte (trigger : 1/10, sans date) : la première synchro démarre l'horloge ; une période plus tard, 2 paquets.
+do $$ declare u uuid := tests.make_user('Newbie'); r record; begin
+  assert (select packs_remaining = 1 and packs_last_regen_at is null from public.profiles where id = u), 'état de départ inattendu';
+  perform tests.login(u);
+  select * into strict r from public.sync_profile_packs(u);
+  assert r.packs_remaining = 1 and r.packs_last_regen_at = now() and r.next_regen_at = now() + interval '600 seconds', r::text;
+  perform tests.reset_role();
+  update public.profiles set packs_last_regen_at = packs_last_regen_at - interval '600 seconds' where id = u;
+  perform tests.login(u);
+  select * into strict r from public.sync_profile_packs(u);
+  assert r.packs_remaining = 2 and r.packs_last_regen_at = now() and r.next_regen_at = now() + interval '600 seconds', r::text;
+  perform tests.reset_role();
 end $$;
 
 -- RPC du miroir : security definer, search_path vide, EXECUTE à authenticated et pas à anon (ni PUBLIC).
@@ -79,8 +104,9 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
   assert (select count(*) from public.cards where id = c) = 1, 'anon ne lit pas le catalogue';
   begin assert (select count(*) from public.user_cards) = 0, 'anon lit user_cards';
   exception when insufficient_privilege then null; end;
+  -- Le refus doit venir du droit EXECUTE, pas du contrôle d'uid (qui lève aussi 42501).
   begin perform public.sync_profile_packs(a); assert false, 'anon appelle sync_profile_packs';
-  exception when insufficient_privilege then null; end;
+  exception when insufficient_privilege then assert sqlerrm like 'permission denied for function%', 'anon : ' || sqlerrm; end;
   begin perform public.get_my_profile(); assert false, 'anon appelle get_my_profile';
   exception when insufficient_privilege then null; end;
   perform tests.reset_role();

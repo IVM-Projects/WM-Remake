@@ -5,7 +5,7 @@ insert into wm.config (key, value, note) values
    'Pseudos refusés aux nouveaux noms, comparés en minuscules (C28)'),
   ('username_change_days', '30', 'Jours minimum entre deux changements de pseudo (D§7.1)'),
   ('human_check_ttl_h', '12', 'Validité de la vérification humaine, en heures (D§7.0, R§5.1)'),
-  ('pack_period_s', '{"free":600,"pro":180}', 'Secondes par paquet régénéré ; is_pro ou is_vip → pro (R§5.1, D§7.2)')
+  ('pack_period_s', '{"free":600,"pro":180}', 'Secondes par paquet régénéré ; is_pro ou is_vip → pro. free 600 conf., pro 180 prob. (R§5.1, D§7.2)')
 on conflict do nothing;
 
 create table if not exists wm.user_state (
@@ -167,7 +167,7 @@ begin
   return '{"ok": true}';
 end $$;
 
--- Régénération paresseuse (D§7.2) ; l'appelant tient le verrou du profil. N'écrit que si au moins un paquet revient.
+-- Régénération paresseuse (D§7.2). N'écrit que si un paquet revient ou si l'horloge démarre.
 create or replace function wm.apply_regen(p_uid uuid)
 returns public.profiles language plpgsql security definer set search_path = '' as $$
 declare
@@ -175,8 +175,14 @@ declare
   v_period int;
   n int;
 begin
-  select * into p from public.profiles where id = p_uid;
-  if p.packs_remaining >= p.pack_cap or p.packs_last_regen_at is null then
+  -- Verrou du profil (déjà tenu par l'appelant, ordre C4) : n n'est jamais calculé sur une ligne périmée.
+  select * into p from public.profiles where id = p_uid for update;
+  if p.packs_remaining >= p.pack_cap then
+    return p;
+  end if;
+  -- Stock incomplet sans date (nouveau compte à 1/10, donnée migrée) : l'horloge démarre ici, sans crédit.
+  if p.packs_last_regen_at is null then
+    update public.profiles set packs_last_regen_at = now() where id = p_uid returning * into p;
     return p;
   end if;
   v_period := (select (value ->> case when p.is_pro or p.is_vip then 'pro' else 'free' end)::int from wm.config where key = 'pack_period_s');
