@@ -41,7 +41,7 @@ export function GlobalClient() {
   const query = sp.toString()
   const key = `${query}#${reload}`
 
-  const [data, setData] = useState<(CardsPage & { key: string }) | null>(null)
+  const [data, setData] = useState<(CardsPage & { key: string; page: number }) | null>(null)
   const [failedKey, setFailedKey] = useState<string | null>(null)
   const [open, setOpen] = useState<CatalogCard | null>(null)
   // La modale a changé la liste de souhaits affichée : relecture à sa fermeture.
@@ -67,7 +67,7 @@ export function GlobalClient() {
   useEffect(() => {
     let live = true
     api<CardsPage>(`/api/cards?${query}`)
-      .then((r) => { if (live) setData({ ...r, key }) })
+      .then((r) => { if (live) setData({ ...r, key, page }) })
       .catch(() => { if (live) setFailedKey(key) })
     // Nouvelle requête : l'échec d'avant s'efface.
     return () => {
@@ -239,8 +239,9 @@ export function GlobalClient() {
             <Pagination
               page={page}
               totalPages={data.total === null ? null : Math.ceil(data.total / LIMIT)}
-              // Pendant la relecture, la pagination reste montée (le bouton pressé garde le focus), même si l'ancienne page était la dernière.
-              more={stale || data.searchHasMore}
+              // « Précédent » pressé : la pagination reste montée pendant la relecture (le bouton garde le focus) ; pas d'apparition
+              // pour une recherche d'une seule page relue.
+              more={(stale && page < data.page) || data.searchHasMore}
               onPage={(p) => {
                 refocus.current = 0
                 setPage(p)

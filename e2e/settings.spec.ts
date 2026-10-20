@@ -183,10 +183,11 @@ test.describe('avant l\'hydratation (JavaScript coupé)', () => {
     await page.goto('/settings')
     await page.getByLabel('Nouveau mot de passe', { exact: true }).fill('fuite-mdp-e2e')
     await page.getByLabel('Confirme le nouveau mot de passe').fill('fuite-mdp-e2e')
-    // Une absence ne se prouve qu'avec une borne : une fuite partirait aussitôt après Entrée.
-    const leak = page.waitForRequest((r) => r.url().includes('settings-password'), { timeout: 2000 }).catch(() => null)
+    // Une absence ne se prouve qu'avec une borne : un envoi natif (GET ou POST, mot de passe dans l'adresse ou le corps)
+    // partirait aussitôt après Entrée ; JavaScript coupé, aucune autre requête n'est attendue.
+    const sent = page.waitForRequest(() => true, { timeout: 2000 }).catch(() => null)
     await page.getByLabel('Confirme le nouveau mot de passe').press('Enter')
-    expect((await leak)?.url() ?? null).toBeNull()
+    expect((await sent)?.url() ?? null).toBeNull()
     expect(urls.filter((u) => u.includes('settings-password'))).toEqual([])
     await expect(page.getByRole('button', { name: 'Changer le mot de passe' })).toBeDisabled()
     await expect(page).toHaveURL('/settings')

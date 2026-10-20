@@ -10,14 +10,15 @@ const grid = (page: Page) => page.locator('main div.flex.flex-wrap.justify-cente
 const cards = (page: Page) => grid(page).locator('> div[class*="glow-"]')
 const opener = (page: Page, name: string) => cards(page).getByRole('button', { name, exact: true })
 const isCardsApi = (u: string) => new URL(u).pathname === '/api/cards'
-// Retient les lectures de /api/cards jusqu'à release() ; la route est retirée ensuite.
-function hold(page: Page): () => void {
+// Retient les lectures de /api/cards jusqu'à release() ; la route est retirée ensuite (unroute compare le prédicat par référence).
+async function hold(page: Page): Promise<() => Promise<void>> {
   let release!: () => void
   const gate = new Promise<void>((r) => { release = r })
-  void page.route((u) => isCardsApi(u.href), async (route) => { await gate; await route.fallback() })
-  return () => {
+  const match = (u: URL) => isCardsApi(u.href)
+  await page.route(match, async (route) => { await gate; await route.fallback() })
+  return async () => {
     release()
-    void page.unroute((u) => isCardsApi(u.href))
+    await page.unroute(match)
   }
 }
 
@@ -120,13 +121,13 @@ test('liste de souhaits : ajout depuis la modale, bascule, retrait, focus jamais
   await expect(page.locator('main .card-frame', { hasText: 'Ta liste de souhaits est vide' })).toBeFocused()
 
   // Grille vide et périmée pendant la relecture du catalogue : le chargement, jamais un état vide qui ne vaut plus.
-  const release = hold(page)
+  const release = await hold(page)
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
   await expect(page.getByRole('status').filter({ hasText: 'Chargement des cartes' })).toBeAttached()
   await expect(page.getByText('Ta liste de souhaits est vide', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Le catalogue est vide pour l\'instant.', { exact: true })).toHaveCount(0)
-  release()
+  await release()
   await expect(cards(page)).toHaveCount(50)
 })
 
@@ -177,11 +178,11 @@ test('recherche sur deux pages : « Précédent » garde le focus pendant la rel
   await expect(cards(page)).toHaveCount(49)
 
   const prev = page.getByRole('button', { name: 'Précédent' })
-  const release = hold(page)
+  const release = await hold(page)
   await prev.click()
   await expect(grid(page)).toHaveAttribute('aria-busy', 'true')
   await expect(prev).toBeFocused()
-  release()
+  await release()
   await expect(grid(page)).toHaveAttribute('aria-busy', 'false')
   await expect(cards(page)).toHaveCount(50)
   await expect(prev).toBeFocused()
@@ -208,4 +209,22 @@ test('erreur de chargement : message, « Réessayer », focus jamais sur body', 
   // Pendant la relecture, l'ancienne grille reste affichée (aria-busy) : attendre la page 2.
   await expect(grid(page)).toHaveAttribute('aria-busy', 'false')
   await expect(opener(page, (await cards(page).first().locator('h3').textContent())!)).toBeFocused()
+})
+
+test('recherche d\'une seule page relue : la pagination n\'apparaît pas pendant la relecture', async ({ page, login }) => {
+  await login()
+  await page.goto('/global-collection')
+  await expect(cards(page)).toHaveCount(50)
+  await page.getByRole('searchbox', { name: 'Rechercher une carte' }).fill('0002')
+  await page.getByRole('button', { name: 'Rechercher', exact: true }).click()
+  await expect(cards(page)).toHaveCount(1)
+  const nav = page.getByRole('navigation', { name: 'Pagination' })
+  await expect(nav).toHaveCount(0)
+  const release = await hold(page)
+  await page.getByRole('button', { name: 'L', exact: true }).click()
+  await expect(grid(page)).toHaveAttribute('aria-busy', 'true')
+  await expect(nav).toHaveCount(0)
+  await release()
+  await expect(grid(page)).toHaveAttribute('aria-busy', 'false')
+  await expect(nav).toHaveCount(0)
 })

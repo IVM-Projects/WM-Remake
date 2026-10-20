@@ -20,7 +20,7 @@ const TOGGLES: [Key, string, string][] = [
 ]
 
 // Jamais disabled sur un bouton qui peut garder le focus : aria-disabled et une garde (le navigateur poserait le focus sur body).
-const primary = 'inline-flex min-h-11 items-center justify-center self-start rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-not-allowed aria-disabled:bg-[var(--color-surface-light)] aria-disabled:text-[var(--color-foreground)]/60'
+const primary = 'inline-flex min-h-11 items-center justify-center self-start rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-not-allowed aria-disabled:bg-[var(--color-surface-light)] aria-disabled:text-[var(--color-foreground)]/60 disabled:cursor-wait'
 const ghost = `${ghostBase} justify-center gap-2 self-start`
 const hint = 'text-sm text-[var(--color-foreground)]/70'
 const ok = 'text-sm font-medium text-[var(--color-accent-light)]'
