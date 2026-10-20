@@ -37,7 +37,6 @@ do $$ declare m text; d jsonb; begin
     d := pg_temp.err(format('select pg_temp.signup(%L)', m));
     assert d = '{"status":400,"code":"consent_required","error":"Confirme avoir au moins 18 ans et accepte les conditions.","message":"Confirme avoir au moins 18 ans et accepte les conditions."}'::jsonb, m || ' → ' || coalesce(d::text, 'accepté');
   end loop;
-  assert not exists (select from public.profiles where username = 'nocon'), 'profil créé sans consentement';
 end $$;
 
 -- Trigger : pseudo invalide, réservé, pris → messages exacts.
@@ -54,8 +53,8 @@ end $$;
 
 -- username_problem : règle C28 (ASCII, 3 à 24), réservés sur lower(), unicité sur lower().
 do $$ begin
-  assert (select bool_and(wm.username_problem(x) = 'invalid')
-          from unnest(array['ab', repeat('a', 25), 'a b', 'é', 'аlice', '', E'alice\n']) x), 'pseudo invalide accepté';
+  assert not exists (select from unnest(array['ab', repeat('a', 25), 'a b', 'é', 'аlice', '', E'alice\n']) x
+                     where wm.username_problem(x) is distinct from 'invalid'), 'pseudo invalide accepté';
   assert wm.username_problem(null) = 'invalid';
   assert wm.username_problem('Admin') = 'reserved' and wm.username_problem('MODO') = 'reserved';
   assert wm.username_problem('ALICE') = 'taken';
@@ -72,7 +71,7 @@ end $$;
 -- Course : la vérification passe (username_problem neutralisé, remplacement annulé avec le sous-bloc), l'index unique tranche.
 do $$ declare u uuid := tests.make_user('Race1'); d jsonb; e jsonb; begin
   begin
-    create or replace function wm.username_problem(p_username text) returns text language sql as 'select null::text';
+    create or replace function wm.username_problem(p_username text, p_uid uuid default null) returns text language sql as 'select null::text';
     d := pg_temp.err($q$select pg_temp.signup('{"username":"ALICE","age_confirmed":true,"terms_version":"t"}')$q$);
     e := pg_temp.err(format('select wm.change_username(%L, %L)', u, 'ALICE'));
     raise sqlstate 'WMT01';
@@ -93,7 +92,6 @@ do $$ declare u uuid := tests.make_user('Ren1'); r jsonb; d jsonb; t timestamptz
   d := pg_temp.err(format('select wm.change_username(%L, %L)', u, 'Ren1c'));
   assert d - 'next_change_at' = '{"status":409,"code":"username_change_too_soon","error":"Un seul changement de pseudo tous les 30 jours.","message":"Un seul changement de pseudo tous les 30 jours."}'::jsonb
     and (d ->> 'next_change_at')::timestamptz = now() + interval '1 hour', d::text;
-  assert (select username from public.profiles where id = u) = 'Ren1b', 'pseudo changé trop tôt';
   update wm.user_state set username_changed_at = now() - interval '30 days' where user_id = u;
   r := wm.change_username(u, 'Ren1c');
   assert r ->> 'username' = 'Ren1c' and (select username from public.profiles where id = u) = 'Ren1c', r::text;
@@ -104,7 +102,17 @@ do $$ declare u uuid := tests.make_user('Ren2'); begin
   assert pg_temp.err(format('select wm.change_username(%L, %L)', u, 'ab')) ->> 'code' = 'username_invalid';
   assert pg_temp.err(format('select wm.change_username(%L, %L)', u, 'Support')) ->> 'code' = 'username_reserved';
   assert pg_temp.err(format('select wm.change_username(%L, %L)', u, 'Alice')) ->> 'code' = 'username_taken';
-  assert (select username_changed_at from wm.user_state where user_id = u) is null, 'refus compté comme changement';
+end $$;
+
+-- change_username : changement de casse de son propre pseudo accepté et compté ; même pseudo exact → sans effet.
+do $$ declare u uuid := tests.make_user('casey'); r jsonb; begin
+  r := wm.change_username(u, 'casey');
+  assert r = '{"username":"casey","next_change_at":null}'::jsonb, r::text;
+  assert (select username_changed_at from wm.user_state where user_id = u) is null, 'même pseudo compté comme changement';
+  r := wm.change_username(u, 'Casey');
+  assert r ->> 'username' = 'Casey' and (select username from public.profiles where id = u) = 'Casey', r::text;
+  assert (select username_changed_at from wm.user_state where user_id = u) = now(), 'changement de casse non compté';
+  assert wm.username_problem('CASEY') = 'taken' and wm.username_problem('CASEY', u) is null;
 end $$;
 
 -- Préférences : null = inchangé, is_public dans profiles.

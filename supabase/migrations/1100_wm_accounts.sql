@@ -48,13 +48,13 @@ begin
   return p;
 end $$;
 
--- Règle des nouveaux pseudos (C28) ; les pseudos existants ne sont jamais revérifiés.
-create or replace function wm.username_problem(p_username text)
+-- Règle des nouveaux pseudos (C28) ; les pseudos existants ne sont jamais revérifiés. p_uid : son propre pseudo n'est pas « pris ».
+create or replace function wm.username_problem(p_username text, p_uid uuid default null)
 returns text language sql security definer set search_path = '' as $$
   select case
     when p_username is null or p_username !~ '^[A-Za-z0-9_.-]{3,24}$' then 'invalid'
     when lower(p_username) in (select jsonb_array_elements_text(value) from wm.config where key = 'reserved_usernames') then 'reserved'
-    when exists (select from public.profiles where lower(username) = lower(p_username)) then 'taken'
+    when exists (select from public.profiles where lower(username) = lower(p_username) and id is distinct from p_uid) then 'taken'
   end
 $$;
 
@@ -107,15 +107,19 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_days int := (select value::int from wm.config where key = 'username_change_days');
   v_next timestamptz;
+  p public.profiles;
 begin
   perform wm.actor(p_uid);
-  perform wm.lock_user(p_uid);
+  p := wm.lock_user(p_uid);
   select username_changed_at + make_interval(days => v_days) into v_next from wm.user_state where user_id = p_uid;
+  if p.username = p_username then  -- même pseudo exact : rien à changer, le délai n'est pas consommé
+    return jsonb_build_object('username', p_username, 'next_change_at', v_next);
+  end if;
   if v_next > now() then
     perform wm.raise_err(409, 'username_change_too_soon', format('Un seul changement de pseudo tous les %s jours.', v_days),
       jsonb_build_object('next_change_at', v_next));
   end if;
-  perform wm.raise_username(wm.username_problem(p_username));
+  perform wm.raise_username(wm.username_problem(p_username, p_uid));
   begin
     update public.profiles set username = p_username where id = p_uid;
   exception when unique_violation then  -- même course que l'inscription
