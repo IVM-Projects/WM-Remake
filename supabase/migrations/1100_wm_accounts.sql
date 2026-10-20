@@ -1,10 +1,11 @@
--- ADDITIVE : comptes (D§7.0, D§7.1, C4, C28) — état joueur, trigger d'inscription, pseudos, préférences, vérification humaine. Idempotente.
+-- ADDITIVE : comptes (D§7.0, D§7.1, C4, C28) — état joueur, trigger d'inscription, pseudos, préférences, vérification humaine, régénération des paquets (D§7.2). Idempotente.
 
 insert into wm.config (key, value, note) values
   ('reserved_usernames', '["admin","administrateur","administrator","staff","moderateur","moderator","modo","support","wikimasters","wikicartes","system","systeme"]',
    'Pseudos refusés aux nouveaux noms, comparés en minuscules (C28)'),
   ('username_change_days', '30', 'Jours minimum entre deux changements de pseudo (D§7.1)'),
-  ('human_check_ttl_h', '12', 'Validité de la vérification humaine, en heures (D§7.0, R§5.1)')
+  ('human_check_ttl_h', '12', 'Validité de la vérification humaine, en heures (D§7.0, R§5.1)'),
+  ('pack_period_s', '{"free":600,"pro":180}', 'Secondes par paquet régénéré ; is_pro ou is_vip → pro (R§5.1, D§7.2)')
 on conflict do nothing;
 
 create table if not exists wm.user_state (
@@ -165,6 +166,36 @@ begin
   where user_id = p_uid;
   return '{"ok": true}';
 end $$;
+
+-- Régénération paresseuse (D§7.2) ; l'appelant tient le verrou du profil. N'écrit que si au moins un paquet revient.
+create or replace function wm.apply_regen(p_uid uuid)
+returns public.profiles language plpgsql security definer set search_path = '' as $$
+declare
+  p public.profiles;
+  v_period int;
+  n int;
+begin
+  select * into p from public.profiles where id = p_uid;
+  if p.packs_remaining >= p.pack_cap or p.packs_last_regen_at is null then
+    return p;
+  end if;
+  v_period := (select (value ->> case when p.is_pro or p.is_vip then 'pro' else 'free' end)::int from wm.config where key = 'pack_period_s');
+  n := floor(extract(epoch from now() - p.packs_last_regen_at) / v_period);
+  if n > 0 then
+    update public.profiles set packs_remaining = least(pack_cap, packs_remaining + n),
+      packs_last_regen_at = case when packs_remaining + n < pack_cap then packs_last_regen_at + make_interval(secs => n * v_period) end
+    where id = p_uid
+    returning * into p;
+  end if;
+  return p;
+end $$;
+
+-- Stock plein : null, pas de compte à rebours vers un paquet qui ne viendra pas.
+create or replace function wm.next_regen_at(p public.profiles)
+returns timestamptz language sql security definer set search_path = '' as $$
+  select p.packs_last_regen_at + make_interval(secs => (value ->> case when p.is_pro or p.is_vip then 'pro' else 'free' end)::int)
+  from wm.config where key = 'pack_period_s' and p.packs_remaining < p.pack_cap
+$$;
 
 revoke all on schema wm from public, anon, authenticated;
 grant usage on schema wm to service_role;
