@@ -30,6 +30,8 @@
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --animate-fade-in-up: fade-in-up 0.45s var(--ease-out-expo);
   --animate-card-flip: card-flip 0.6s var(--ease-out-expo) both;
+  --animate-reveal-glow: reveal-glow 0.9s var(--ease-out-expo) both;
+  --animate-pack-shake: pack-shake 0.35s ease-in-out infinite;
 
   @keyframes fade-in-up {
     from {
@@ -43,6 +45,24 @@
     from {
       opacity: 0;
       transform: perspective(60rem) rotateY(var(--card-flip-turn, 90deg));
+    }
+  }
+
+  /* Lumière d'une SR, UR ou L : elle naît petite et s'étend (simple fondu sans mouvement). */
+  @keyframes reveal-glow {
+    from {
+      opacity: 0;
+      scale: var(--reveal-glow-from, 0.55);
+    }
+  }
+
+  /* Paquet en cours d'ouverture : il tremble dans la main. */
+  @keyframes pack-shake {
+    25% {
+      rotate: -2.5deg;
+    }
+    75% {
+      rotate: 2.5deg;
     }
   }
 }
@@ -75,6 +95,7 @@
   :root {
     --fade-in-up-shift: 0;
     --card-flip-turn: 0deg;
+    --reveal-glow-from: 1;
   }
 }
 
@@ -140,6 +161,119 @@
     .legendary-shimmer-sheen {
       animation: legendary-sheen 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
     }
+  }
+}
+
+@layer components {
+  /* Paquet : notre visuel (D§8.5), jamais l'art d'origine. Feuille nacrée teintée des six raretés, sertissages, mot-marque. */
+  .pack-foil {
+    background:
+      linear-gradient(115deg, transparent 32%, rgb(255 255 255 / 0.7) 46%, transparent 60%) 100% 0 / 260% 100% no-repeat,
+      linear-gradient(
+        165deg,
+        white,
+        color-mix(in oklab, var(--color-rarity-pc) 32%, white) 26%,
+        color-mix(in oklab, var(--color-rarity-r) 28%, white) 50%,
+        color-mix(in oklab, var(--color-rarity-c) 34%, white) 74%,
+        color-mix(in oklab, var(--color-rarity-l) 26%, white)
+      );
+    transition: background-position 0.9s var(--ease-out-expo), rotate 0.3s var(--ease-out-expo), scale 0.3s var(--ease-out-expo);
+  }
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .pack-foil:where(:hover) {
+      background-position: 0 0, 0 0;
+    }
+  }
+  .pack-crimp {
+    background: repeating-linear-gradient(90deg, rgb(0 0 0 / 0.1) 0 2px, transparent 2px 5px), rgb(255 255 255 / 0.5);
+  }
+  /* La bande des six raretés, de C à L. */
+  .pack-band {
+    background: linear-gradient(
+      90deg,
+      var(--color-rarity-c) 0 16.66%,
+      var(--color-rarity-pc) 0 33.33%,
+      var(--color-rarity-r) 0 50%,
+      var(--color-rarity-sr) 0 66.66%,
+      var(--color-rarity-ur) 0 83.33%,
+      var(--color-rarity-l) 0
+    );
+  }
+  /* Lueur nacrée sous le paquet : lavande et bleu pâle, jamais un mélange boueux des six teintes. */
+  .pack-halo {
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklab, var(--color-rarity-r) 34%, transparent),
+      color-mix(in oklab, var(--color-rarity-pc) 16%, transparent) 55%,
+      transparent
+    );
+    filter: blur(24px);
+  }
+
+  /* Paliers de révélation (R§6.6) : la carte éclaire plus large et plus fort de SR à L ; dès UR, deux faisceaux doux la balaient, seulement avec mouvement. */
+  .reveal-glow {
+    position: absolute;
+    inset: var(--glow-inset);
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(closest-side, color-mix(in oklab, var(--aura) var(--aura-a), transparent), transparent);
+  }
+  .reveal-glow-sr { --aura: var(--color-rarity-sr); --aura-a: 40%; --glow-inset: -10% -30%; }
+  .reveal-glow-ur { --aura: var(--color-rarity-ur); --aura-a: 50%; --glow-inset: -16% -42%; }
+  .reveal-glow-l { --aura: var(--color-rarity-l); --aura-a: 62%; --glow-inset: -24% -56%; }
+  :is(.reveal-glow-ur, .reveal-glow-l)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+      transparent 0 6%,
+      color-mix(in oklab, var(--aura) 55%, transparent) 15%,
+      transparent 26% 56%,
+      color-mix(in oklab, var(--aura) 45%, transparent) 65%,
+      transparent 76%
+    );
+    filter: blur(22px);
+    mask: radial-gradient(closest-side, black 30%, transparent 85%);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    :is(.reveal-glow-ur, .reveal-glow-l)::after {
+      animation: reveal-sweep 16s linear infinite;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :is(.reveal-glow-ur, .reveal-glow-l)::after {
+      content: none;
+    }
+  }
+  /* Cinématique L : un éclair doré sur tout l'écran, avant que la carte pivote. Rendue seulement avec mouvement (PackOpening). */
+  .legendary-cinematic {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    pointer-events: none;
+    background: radial-gradient(circle at 50% 45%, color-mix(in oklab, var(--color-rarity-l) 55%, transparent), transparent 62%);
+    animation: legendary-flash 1.6s var(--ease-out-expo) both;
+  }
+}
+
+@keyframes reveal-sweep {
+  to {
+    rotate: 1turn;
+  }
+}
+
+@keyframes legendary-flash {
+  0% {
+    opacity: 0;
+    scale: 0.4;
+  }
+  18% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 1.3;
   }
 }
 

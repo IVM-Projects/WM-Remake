@@ -1,14 +1,16 @@
 import type { LucideIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { NavEntry } from './nav'
 
-// En-tête de page d'origine (R§6.3) : classes du contrat, ne pas renommer.
-export function PageHeader({ title, icon: Icon }: { title: string; icon: LucideIcon }) {
+// En-tête de page d'origine (R§6.3) : classes du contrat, ne pas renommer. `children` : les actions, à droite.
+export function PageHeader({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children?: ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 animate-fade-in-up">
       <h1 className="text-2xl md:text-3xl font-bold inline-flex items-center gap-2">
         <Icon className="size-6 shrink-0 text-[var(--color-accent)]" />
         {title}
       </h1>
+      {children}
     </div>
   )
 }

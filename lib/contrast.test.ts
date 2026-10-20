@@ -100,3 +100,23 @@ describe('jetons de design', () => {
       .toEqual(['#2b7d58', '#2c5c99', '#6439b8', '#a8235b', '#9a4f05', '#fa9931'])
   })
 })
+
+// /pulls (PackStock, PackOpening, ProDailyBlock) : textes et repères sur la page (graphite) ou le panneau.
+const fg = (a: number, bg: string) => over(resolve('--color-foreground'), a, resolve(bg))
+const pullsPairs: [label: string, fg: string, bg: string, min: number][] = [
+  ['compteur « Carte » et libellés, /70 sur la page', fg(0.7, '--color-background'), '--color-background', 4.5],
+  ['« paquets disponibles », /70 sur le panneau', fg(0.7, '--color-surface'), '--color-surface', 4.5],
+  ['bouton désactivé (Ouvrir, Encore N cartes), /60 sur surface claire', fg(0.6, '--color-surface-light'), '--color-surface-light', 4.5],
+  ['« Nouvelle », émeraude clair sur émeraude à 15 %', '--color-accent-light', over(resolve('--color-accent'), 0.15, resolve('--color-background')), 4.5],
+  ['« Brillante », amber-200 sur amber-300 à 15 %', '#fee685', over('#ffd236', 0.15, resolve('--color-background')), 4.5],
+  ['« Réservé aux membres Pro », violet-300 sur le panneau', '#c4b4ff', '--color-surface', 4.5],
+  ['« Récupérer », violet-200 sur violet-500 à 20 %', '#ddd6ff', over('#8e51ff', 0.2, resolve('--color-surface')), 4.5],
+  ['erreur, red-400 sur la page', '#ff6467', '--color-background', 4.5],
+  // Repères non textuels (WCAG 1.4.11) : contour des boutons ronds et points des cartes vues.
+  ['contour des boutons ronds, /40', fg(0.4, '--color-background'), '--color-background', 3],
+  ['point d\'une carte vue, /40', fg(0.4, '--color-background'), '--color-background', 3],
+]
+
+describe('page des paquets', () => {
+  it.each(pullsPairs)('%s', (_label, a, b, min) => expect(contrast(resolve(a), resolve(b))).toBeGreaterThanOrEqual(min))
+})

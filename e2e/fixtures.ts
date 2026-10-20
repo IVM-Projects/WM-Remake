@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { test as base, expect } from '@playwright/test'
 import type { Backend } from '../contract/harness.ts'
-import { authCookie, makeUser } from '../contract/users.ts'
+import { authCookie, makeUser, psql } from '../contract/users.ts'
 
 type User = ReturnType<typeof makeUser>
 
@@ -10,6 +10,9 @@ const backend = () => JSON.parse(readFileSync(new URL('../.cache/backend.json', 
 
 // Joueur neuf, confirmé et sans mot de passe, sans session dans le navigateur.
 export const makePlayer = (opts?: Parameters<typeof makeUser>[1]): User => makeUser(backend().databaseUrl, opts)
+
+// psql sur la base du banc (variables :'nom', jamais de concaténation).
+export const sql = (query: string, vars?: Record<string, string>): string => psql(backend().databaseUrl, query, vars)
 
 // login() crée un joueur neuf (makeUser) et pose son cookie de session : aucun état partagé entre tests ni workers.
 export const test = base.extend<{ login: (opts?: Parameters<typeof makeUser>[1]) => Promise<User> }>({

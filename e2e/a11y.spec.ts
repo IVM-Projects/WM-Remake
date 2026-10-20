@@ -10,7 +10,14 @@ async function expectNoSeriousViolations(page: Page) {
 }
 
 // Contenu rendu après l'hydratation (useSearchParams, session lue par le client) : attendu avant l'analyse.
-const READY: Record<string, string> = { '/reset-password': 'main [role=alert]', '/verify-email?email=a11y%40test.local': '#signup-otp-code' }
+const READY: Record<string, string> = {
+  '/reset-password': 'main [role=alert]', '/verify-email?email=a11y%40test.local': '#signup-otp-code', '/pulls': '[data-stock-bar]',
+}
+
+// Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations()
+  .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+  .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email?email=a11y%40test.local', '/terms', '/rules',
   'http://127.0.0.1:3101/gate', '/pulls', '/collection']) {
@@ -18,6 +25,7 @@ for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-passwo
     if (path === '/pulls' || path === '/collection') await login()
     await page.goto(path)
     if (READY[path]) await page.locator(READY[path]).waitFor()
+    await settled(page)
     await expectNoSeriousViolations(page)
   })
 }
@@ -27,5 +35,14 @@ test('axe /pulls mobile, feuille « Plus » ouverte', async ({ page, login }) =>
   await page.goto('/pulls')
   await page.getByRole('button', { name: 'Plus' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /pulls en révélation', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await page.goto('/pulls')
+  await page.getByRole('button', { name: 'Ouvrir', exact: true }).click()
+  await expect(page.getByText('Carte 1 / 5', { exact: true })).toBeVisible()
+  await settled(page)
   await expectNoSeriousViolations(page)
 })

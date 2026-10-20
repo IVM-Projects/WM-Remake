@@ -28,6 +28,9 @@ function subscribe(listener: () => void) {
   return () => { listeners.delete(listener) }
 }
 
+// Hors React (lib/sounds.ts) : l'état courant, prudent tant que la lecture n'est pas finie.
+export const currentPrefs = (): Prefs => state
+
 export function usePrefs(): Prefs {
   return useSyncExternalStore(subscribe, () => state, () => LOADING)
 }
