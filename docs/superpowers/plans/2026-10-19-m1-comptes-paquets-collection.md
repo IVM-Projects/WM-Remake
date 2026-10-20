@@ -165,7 +165,7 @@
 
 - [ ] **Step 8: `contract/users.ts`, `contract/mail.ts`, fixture E2E**
   - `makeUser` : insère dans `auth.users` (`id`, `email` `<uid>@test.local`, `raw_user_meta_data` complet), puis fait l'upsert de `public.profiles` (`username`, `wikibidous_balance`, `is_pro`), comme `tests.make_user`.
-  - `e2e/fixtures.ts` réutilise `makeUser` et `authCookie`, ce qui règle le point « e2e fixture should reuse … » de `docs/m0-suivi.md`.
+  - `e2e/fixtures.ts` réutilise `makeUser` et `authCookie`, ce qui règle le point « e2e fixture should reuse … » de `docs/suivi.md`.
 
 - [ ] **Step 9: Spec de contrat `contract/spec/auth.ts`** (`source: 'R§3.11'`, `confidence: 'conf.'`), cas :
   - `GET /auth/v1/health via la passerelle → 200 et version v2.197.0`.

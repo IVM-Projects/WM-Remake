@@ -74,7 +74,7 @@ export function GlobalClient() {
       live = false
       setFailedKey(null)
     }
-  }, [key, query])
+  }, [key, query, page])
 
   useEffect(() => {
     if (!failed && stale) return

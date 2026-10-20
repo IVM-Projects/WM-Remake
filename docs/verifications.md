@@ -1,6 +1,6 @@
 # Journal des vérifications
 
-Projet Supabase de démo « WMR » (`iggurckxmoagsajzrnwd`, org « WM Prod », eu-west-1, Postgres 17.11). Vérifications faites via le MCP Supabase (`execute_sql`, `apply_migration`, `get_advisors`) et, pour PostgREST, par `curl` avec la clé publiable (rôle `anon`). Complété à la Task 14.
+Projet Supabase de démo « WMR » (`iggurckxmoagsajzrnwd`, org « WM Prod », eu-west-1, Postgres 17.11). Vérifications faites via le MCP Supabase (`execute_sql`, `apply_migration`, `get_advisors`) et, pour PostgREST, par `curl` avec la clé publiable (rôle `anon`). Complété aux Tasks 14 (M0) et 16 (M1).
 
 ## M0 — Task 12 : migrations, schéma exposé, conseillers
 
@@ -75,3 +75,38 @@ Lectures dans `node_modules/` (versions installées par `npm ci`), MCP Vercel `s
 | TypeScript 5.9.3 avec `next build` | `node_modules/typescript/package.json` ; CI run 39309760344 (`typecheck`, `build:test`) ; build Vercel de la preview (Task 13) | `5.9.3` installé (le plan est passé de 6.0.3 à la version du create-next-app). `next build` passe en CI (Node 24) et sur Vercel (`dpl_Eqffw7yBCPWvwRsvvUQKjNCAkFRL` READY). Seul garde-fou de version de Next : avertissement sous 5.1.0 (`dist/lib/verify-typescript-setup.js:191`) | 2026-10-19 |
 | Statut de TypeScript 7 pour Next | guides `05-config/02-typescript.md` (§ Using TypeScript 7) et `05-config/01-next-config-js/useTypeScriptCli.md` ; `dist/server/config-shared.js:263` | **Contredit la note du plan** : Next 16.4.2 prend en charge TS 7 dans `next build`. Par défaut (`experimental.useTypeScriptCli: true`), il lance le `tsc` local au lieu de l'API JS absente de TS 7. Limites : diagnostics `tsc` bruts (sans les cadres de code de Next), option expérimentale. Non testé ici ; on garde 5.9.3 au M0, le `shortcut:` des contraintes globales est à réviser | 2026-10-19 |
 | Graphify : espace de travail | MCP `list_workspaces`, `list_repositories` | Espace actif « Moi » (`moi-30e114`, plan Free, rôle owner, choisi par `token_claim`). Un seul dépôt : `XBZ-E-Sport/xbz-web`, un autre projet. `remember` rattache chaque note à un dépôt : **aucune note écrite** (elle aurait atterri sur `xbz-web`). Notes prêtes dans `docs/decisions-graphify.md`. Étape humaine : ajouter le dépôt de ce projet à un espace Graphify (aucun outil MCP ne l'enregistre), puis rejouer les notes avec `remember` | 2026-10-19 |
+
+## M1 — Task 16 : suite locale
+
+Bac à sable, 2026-10-20, branche `claude/clever-cannon-59x0dj` (arbre du commit de passation, sur 5153b0f). Banc : PG16 jetable (`.cache/pg`), PostgREST v12.2.3, GoTrue v2.197.0 et Mailpit v1.31.0 de `scripts/get-tools.sh`, Chromium préinstallé (`PW_CHROMIUM_PATH=/opt/pw-browsers/chromium`).
+
+| Élément | Méthode | Résultat | Date |
+|---|---|---|---|
+| Lint | `npm run lint` | 0 erreur, 0 avertissement (l'avertissement `react-hooks/exhaustive-deps` de `global-client.tsx` est levé : `page` ajouté aux dépendances, sans effet puisque `query` contient déjà la page) | 2026-10-20 |
+| Types | `npm run typecheck` | OK | 2026-10-20 |
+| Tests unitaires | `npm test` | 21 fichiers, 236 tests | 2026-10-20 |
+| Tests SQL | `npm run test:db` | 13 fichiers `ok` : 9 `.test.sql` (`00` à `24`) et 4 `.test.sh` (droits hérités, concurrence du portefeuille, des paquets et de la défausse) | 2026-10-20 |
+| Build du banc | `npm run build:test` | OK | 2026-10-20 |
+| Contrat HTTP | `npm run test:contract` | 82 cas | 2026-10-20 |
+| E2E et axe | `npm run test:e2e` | 102 tests (2 workers, aucune relance) ; 20 passes axe sans violation *serious* ni *critical*, une seule exception connue (`nested-interactive` sur `[role=listbox] li[role=option]`, R21) ; animation réduite testée activée et désactivée | 2026-10-20 |
+| Parcours complet | `e2e/journey.spec.ts` | Vert du premier coup (tout existait) ; `--repeat-each=5` : 5/5, ~4 s par passe. Inscription par le formulaire, code lu dans Mailpit, vérification anti-bot automatique du banc, 5 cartes, 5 tuiles, étiquette « départ » puis filtre : 1 tuile, défausse : solde 1 et 4 tuiles | 2026-10-20 |
+| Couverture du recap | `npm run coverage:recap` | 28 routes couvertes sur 90 : toutes celles du R§3.1 au §3.4 ; les 62 manquantes relèvent du §3.5 au §3.10 (M3 à M5) | 2026-10-20 |
+
+À prévoir au conseiller sécurité de la démo : un `WARN` 0011 `function_search_path_mutable` sur `wm_index.search_text`, sans danger (corps SQL standard `RETURN`, résolu à la création, sans `security definer` ; R14).
+
+## M1 — Task 16 : démo en production
+
+*(à compléter par le contrôleur après déploiement)*
+
+| Élément | Méthode | Résultat | Date |
+|---|---|---|---|
+| CI de la branche | `ci.yml` (`workflow_dispatch`) | … | … |
+| Migrations `0003`, `1100`, `1200`, `1300`, `1400` | `apply_migration` | … | … |
+| Catalogue d'essai | `execute_sql` de `supabase/seed.sql` ; `select count(*) from public.cards` ; `select * from wm.catalog_stats` | … | … |
+| Trigger d'inscription | `select tgname from pg_trigger where tgrelid = 'auth.users'::regclass` | … | … |
+| Conseiller sécurité | `get_advisors` `security` | … | … |
+| Variables Turnstile | `create_project_env` (Production et Preview), redéploiement | … | … |
+| `/api/health` et `/signup` | `curl` | … | … |
+| Porte | Playwright sur la production, mauvais mot de passe seulement | … | … |
+| Parcours d'un étudiant, mot de passe, déconnexion | après les étapes humaines de `docs/superpowers/HANDOFF.md` | … | … |
+| Clé JWT de la démo | en-tête `alg` d'une vraie session | … | … |
