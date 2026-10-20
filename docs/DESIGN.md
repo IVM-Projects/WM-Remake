@@ -169,7 +169,9 @@ Chaque rareté a une **teinte foncée** (`--color-rarity-{x}-dark`, celle de L e
 ### Named Rules
 **La règle de la seule lumière.** La couleur saturée appartient aux cartes et à l'action. Le chrome (navigation, panneaux, en-têtes) reste graphite et blanc cassé ; une rareté n'en sort que pour qualifier une carte (badge, libellé, halo).
 
-**La règle du plancher à 60 %.** Le texte secondaire s'obtient par opacité du blanc cassé, jamais en dessous de `/60` (≥ 6:1 sur les trois plans). L'original utilisait `/30` pour le bloc méta de la modale (2,5:1) : on le remonte à `/60` (D§8.6).
+**La règle du plancher à 60 %.** Le texte secondaire s'obtient par opacité du blanc cassé, jamais en dessous de `/60` (≥ 6:1 sur les trois plans). L'original utilisait `/30` pour le bloc méta de la modale (2,5:1) : on le remonte à `/60` (D§8.6). Même logique pour deux autres couleurs relevées dans la modale d'origine : les valeurs ATK et DEF passent de `text-red-700` / `text-blue-700` (2,7 et 2,6:1 sur le panneau) à `text-red-400` / `text-blue-400` (6,1 et 6,7:1), et l'extrait de la grande carte passe de `text-neutral-800/88` (4,45:1 sur le rose SR) au `text-neutral-900/90` de la description (≥ 4,6:1 sur les six fonds).
+
+**La règle de l'encre automatique.** Une étiquette a la couleur choisie par le joueur (`#rrggbb` quelconque) : sa puce prend en texte le noir ou le blanc, celui qui contraste le plus (`inkOn`, `TagPicker.tsx`). Le meilleur des deux dépasse toujours 4,58:1, quelle que soit la couleur. Une étiquette sans couleur prend la surface claire et le blanc cassé.
 
 **La règle des teintes foncées.** Les teintes foncées de C, PC, R, SR et UR ne servent jamais de texte sur le graphite (2,6 à 3,9:1) ni de fond sous un texte noir (2,5 à 3,8:1). Elles servent de trait, de remplissage décoratif, ou de fond sous un texte blanc (5,0 à 7,5:1). **Exception L :** sa teinte foncée est l'orange UR (`#fa9931`), une couleur claire. Le texte blanc y échoue (2,2:1) : elle prend l'encre de badge (8,7:1) ou aucun texte. Ces couples sont vérifiés par `lib/contrast.test.ts`.
 
@@ -205,7 +207,7 @@ La profondeur vient d'abord des plans tonals : graphite, surface, surface claire
 
 ### Shadow Vocabulary
 - **Halo de rareté** (`box-shadow: 0 0 0 1px <rareté 60 %>, 0 8px 28px -6px <rareté 30 à 60 %>`) : racine de la carte, classes `glow-c` à `glow-l`.
-- **Lueur du badge** (`box-shadow: 0 0 10px <rareté>99`) : badge de rareté, valeur d'origine (R§6.4).
+- **Lueur du badge** (`box-shadow: 0 0 10px var(--color-rarity-x)99`) : chaîne d'origine (R§6.4), gardée telle quelle pour le contrat. Elle est **inerte**, sur l'original comme ici : une fois `var()` substitué, `#ffe14499` ne se reforme pas (deux jetons, `#ffe144` puis `99`), la déclaration devient invalide et le badge n'a pas de lueur.
 
 ### Named Rules
 **La règle de la lumière méritée.** Seule une carte émet de la lumière. Un panneau, un bouton ou une modale n'a jamais de halo coloré.
@@ -235,6 +237,10 @@ Le DOM est un contrat. Il est repris tel quel, sauf le premier enfant, qui devie
   6. zone texte `top-[45%] … p-3 z-20` : `h3` (Rubik, noir), `p` de description, `div.mt-auto` avec la ligne de stats (épées `text-red-800`, bouclier `text-blue-800`) ;
   7. L seulement : `div.absolute.inset-0.z-40.overflow-hidden.pointer-events-none > div.legendary-shimmer-sheen[aria-hidden]`.
 - **Sélecteurs à préserver** (R§6.8) : `div[class*="glow-"]` contenant un `h3`, `[style*="--color-rarity"]`, `div.mt-auto`, `top-[N%]`, `.card-frame`.
+- **Clavier** : une carte cliquable reçoit dans son `h3`, après le titre, un `button[aria-label=<titre>]` sans texte, étendu sur la zone texte (`h3.textContent` reste le titre). Son focus dessine l'anneau émeraude autour de toute la carte, sans fondu (règle hors calque de `globals.css`). Une carte non cliquable (modale, révélation) garde ses classes mais perd l'invitation au clic : curseur normal, pas d'agrandissement au survol.
+- **Coin haut droit** (`flex flex-col items-end gap-1`) : favori, puis `xN` si la copie est en plusieurs exemplaires (encre blanche sur noir à 65 %), puis ✨ « Brillante ». Le favori est une cible de 38 px en grille, 44 px en grand, avec un anneau de focus intérieur (`overflow-hidden` couperait l'extérieur).
+- **Emblème** (sans image, image masquée, sensible masquée, ou miniature introuvable) : plaque 4:3 blanche à 45 % au filet noir, mot-marque Rubik 800 (préfixe « Wiki » en encre d'émeraude), le tout à 70 % d'opacité ; `role="img"` et le nom de la marque. Une miniature en erreur bascule sur l'emblème plutôt que sur l'icône d'image cassée.
+- **Pastille « ami possède »** : `bg-sky-300/65`, encre noire, icône `users`, dans `div.mt-auto` au-dessus des stats.
 
 ### Panneaux (`card-frame`)
 - **Coins** : rayon panneau (16 px).
@@ -253,7 +259,16 @@ Le DOM est un contrat. Il est repris tel quel, sauf le premier enfant, qui devie
 - **Mobile** : quatre entrées et « Plus » (icône au-dessus d'un libellé de 11 px, cibles de 56 px), qui ouvre une feuille basse : `<dialog>` natif modal, Échap ou un lien la ferment et le focus revient au bouton.
 
 ### Modale de carte (R§6.5)
-Voile `fixed inset-0 z-50 bg-black/70 backdrop-blur-sm`, puis `div.card-frame.relative.w-full.animate-fade-in-up.p-6.max-w-2xl.max-h-[90vh].overflow-y-auto`. Contrairement à l'original : `role="dialog"`, piège de focus, fermeture par Échap et bouton `aria-label="Fermer"` (D§8.6). Pastille PRO : `bg-violet-500/20 text-violet-300`.
+Voile `fixed inset-0 z-50 bg-black/70 backdrop-blur-sm`, puis `div.card-frame.relative.w-full.animate-fade-in-up.p-6.pt-14.sm:pt-6.max-w-2xl.max-h-[90vh].overflow-y-auto`. Contrairement à l'original : `role="dialog"`, piège de focus, fermeture par Échap ou clic sur le voile, focus rendu à l'élément d'origine, bouton `aria-label="Fermer"` (D§8.6). Primitive : `components/ui/Modal.tsx`.
+- **Titre** `h2` (Rubik, 1,25 rem) et libellé de rareté dans la couleur de la rareté (≥ 6,2:1 sur le panneau), suivi de « · Brillante » si besoin.
+- **Onglets** `[role=tablist][aria-label="Vue de la carte"]` : contrôle segmenté sur la surface claire ; l'onglet actif est plein émeraude (encre d'émeraude). Flèches, Début et Fin changent d'onglet. Pastille PRO `bg-violet-500/20 text-violet-300` ; sur l'onglet Marché actif, son fond devient l'encre d'émeraude (le violet sur émeraude ferait 1,2:1).
+- **Étiquettes** : titre de section « ÉTIQUETTES » (`text-xs`, `/60`, espacé), puces « #nom » (règle de l'encre automatique, tronquées à la largeur de la colonne), puis le champ `combobox` au contour blanc cassé à 40 % (≥ 3:1). Sa liste s'ouvre sous le champ, sur la surface claire ; l'option active prend l'émeraude à 15 % et le texte émeraude clair.
+- **Stats** : deux `card-frame` `p-3`, libellé `/60` puis la valeur en `text-2xl` gras, `text-red-400` et `text-blue-400`.
+- **Méta** `text-xs /60` : « Q-Score : 51.24 » (deux décimales et un point, comme l'original, R19), « Exemplaires : N » (copie possédée), « Vues (30j) : 6 974 », le lien Wikipédia en émeraude clair, puis la ligne de licence.
+- **Actions** : « Défausser » bordé (contour blanc cassé à 40 %), pièce W et « +1 », dans un pied séparé par un filet. Carte du catalogue : « Ajouter à ma liste de souhaits » en accent doux, puis « Retirer de ma liste de souhaits » bordé, avec l'icône `bookmark-check` en émeraude.
+
+### Message bref (toast)
+`components/ui/toast.ts` : un panneau `card-frame` (`px-4 py-3`, `text-sm` 500) dans une région `role="status"` fixée en bas de l'écran, au-dessus de la barre basse sur mobile ; il entre en `motion-safe:animate-fade-in-up` et disparaît après 4 s. Il vit hors de React pour survivre à la modale qui l'émet (« Carte défaussée : +1 wikibidou »).
 
 ### Chargement
 Spinner `w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin`, centré dans `flex-1`.
@@ -262,8 +277,8 @@ Spinner `w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent roun
 - **`animate-fade-in-up`** : 450 ms, `--ease-out-expo` (`cubic-bezier(0.16, 1, 0.3, 1)`), montée de 0,5 rem et fondu. Sert aux en-têtes de page et à la modale ; `motion-safe:animate-fade-in-up` est disponible.
 - **Survol de carte** : `hover:scale-105` en 300 ms.
 - **`legendary-shimmer-sheen`** : bande blanche à 35 % qui balaie la carte en 3,6 s, en boucle.
-- **Révélation** (à venir) : `animate-card-flip` et paliers SR, UR et L, avec une cinématique pour L. C'est le seul moment fort de l'interface.
-- **`prefers-reduced-motion: reduce`** : `fade-in-up` devient un simple fondu (le décalage passe à 0) ; le balayage des L ne joue pas et la bande reste hors de la carte, pour que rien de statique ne voile le texte.
+- **`animate-card-flip`** : 600 ms, `--ease-out-expo`, la carte pivote depuis la tranche (`rotateY(90deg)` sous une perspective de 60 rem) en apparaissant. Sert à la révélation (paliers SR, UR et L et cinématique L à venir) : c'est le seul moment fort de l'interface.
+- **`prefers-reduced-motion: reduce`** : `fade-in-up` et `card-flip` deviennent un simple fondu (`--fade-in-up-shift: 0`, `--card-flip-turn: 0deg`) ; la carte ne grandit plus au survol (`motion-reduce:hover:scale-100`) ; le balayage des L ne joue pas et la bande reste hors de la carte, pour que rien de statique ne voile le texte.
 
 ## Do's and Don'ts
 

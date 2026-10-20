@@ -34,6 +34,56 @@ const pairs: [fg: string, bg: string, min: number][] = [
   ['#0d1117', '--color-rarity-l-dark', 4.5],
 ]
 
+// Fusion d'un texte à opacité `a` sur un fond opaque, comme le navigateur (sRGB).
+function over(fg: string, a: number, bg: string): string {
+  const ch = (h: string, i: number) => parseInt(h.slice(i, i + 2), 16)
+  return '#' + [1, 3, 5].map(i => Math.round(a * ch(fg, i) + (1 - a) * ch(bg, i)).toString(16).padStart(2, '0')).join('')
+}
+
+// Fonds recréés (D§8.5) : le texte noir de la carte (Card.tsx) doit tenir sur chacun.
+const bgRules = css.slice(css.indexOf('.rarity-bg-c,'), css.indexOf('.legendary-shimmer-sheen {'))
+const cardInk: [label: string, fg: string, a: number][] = [
+  ['titre et stats, text-black', '#000000', 1],
+  ['stats, text-black/90', '#000000', 0.9],
+  // neutral-900 de Tailwind 4 : oklch(20.5% 0 0). Sert aussi à l'extrait de la modale : le neutral-800/88 d'origine fait 4,45:1 sur SR.
+  ['description et extrait, text-neutral-900/90', '#171717', 0.9],
+]
+
+describe('fonds de rareté recréés', () => {
+  it('ne posent que des voiles blancs : leur point le plus sombre est la couleur de rareté', () => {
+    for (const r of RARITIES) expect(bgRules).toContain(`.rarity-bg-${r}`)
+    expect(bgRules).toContain('rgb(255 255 255 /')
+    expect(bgRules.match(/rgb\((?!255 255 255 )[^)]*\)/g)).toBeNull()
+    expect(bgRules.match(/stroke='(?!white')[^']*'/g)).toBeNull()
+    expect(bgRules).not.toMatch(/#[0-9a-f]{3,6}\b|black/i)
+  })
+  // Pire cas : la couleur de rareté sous le dégradé from-black/10 de la carte (il ne vaut plus que 1 % au bord de la zone texte).
+  it.each(RARITIES.flatMap(r => cardInk.map(([label, fg, a]) => [r, label, fg, a] as const)))(
+    'rarity-bg-%s : %s ≥ 4,5:1', (r, _label, fg, a) => {
+      const bg = over('#000000', 0.1, resolve(`--color-rarity-${r}`))
+      expect(contrast(over(fg, a, bg), bg)).toBeGreaterThanOrEqual(4.5)
+    })
+})
+
+// Textes colorés de la modale de carte, sur le panneau card-frame.
+const modalPairs: [fg: string, bg: string, min: number][] = [
+  ...RARITIES.map(r => [`--color-rarity-${r}`, '--color-surface', 4.5] as [string, string, number]), // libellé de rareté
+  ['#ff6467', '--color-surface', 4.5], // ATK, red-400 de Tailwind 4 (le red-700 d'origine fait 2,7:1)
+  ['#51a2ff', '--color-surface', 4.5], // DEF, blue-400 (le blue-700 d'origine fait 2,6:1)
+  ['#c4b4ff', over('#8e51ff', 0.2, resolve('--color-surface-light')), 4.5], // PRO : violet-300 sur violet-500/20
+  ['#c4b4ff', '--color-accent-foreground', 4.5], // PRO, onglet Marché actif
+  ['--color-accent', over(resolve('--color-accent'), 0.1, resolve('--color-surface')), 4.5], // « Ajouter à ma liste de souhaits », accent doux
+  ['--color-accent-light', over(resolve('--color-accent'), 0.15, resolve('--color-surface-light')), 4.5], // option active de la liste d'étiquettes
+  // Contours seuls repères (WCAG 1.4.11) : champ d'étiquette et bouton « Défausser », blanc cassé à 40 %.
+  [over(resolve('--color-foreground'), 0.4, resolve('--color-surface-light')), '--color-surface-light', 3],
+  [over(resolve('--color-foreground'), 0.4, resolve('--color-surface')), '--color-surface', 3],
+]
+
+describe('modale de carte', () => {
+  it.each(modalPairs)('%s sur %s ≥ %s:1', (fg, bg, min) =>
+    expect(contrast(resolve(fg), resolve(bg))).toBeGreaterThanOrEqual(min))
+})
+
 describe('jetons de design', () => {
   it('le calcul de contraste suit WCAG', () => {
     expect(contrast('#000000', '#ffffff')).toBeCloseTo(21, 5)
