@@ -24,9 +24,9 @@ async function expectNoSeriousViolations(page: Page, known?: Known) {
 // fait lever nested-interactive à axe tant que la liste est ouverte (boutons hors tabulation, clavier par aria-activedescendant).
 const TAG_OPTION: Known = { rule: 'nested-interactive', selector: '[role=listbox] li[role=option]' }
 
-// Contenu rendu après l'hydratation (useSearchParams, session lue par le client) : attendu avant l'analyse.
+// Contenu rendu après l'hydratation (sessionStorage, session lue par le client) : attendu avant l'analyse.
 const READY: Record<string, string> = {
-  '/reset-password': 'main [role=alert]', '/verify-email?email=a11y%40test.local': '#signup-otp-code', '/pulls': '[data-stock-bar]',
+  '/reset-password': 'main [role=alert]', '/verify-email': '#signup-otp-code', '/pulls': '[data-stock-bar]',
   '/collection': 'main a[href="/pulls"]', '/global-collection': 'main nav[aria-label="Pagination"]',
   // Les deux lectures de /settings finies : pseudo et préférences.
   '/settings': 'main:has(#settings-username) input[name="sounds"]',
@@ -37,10 +37,12 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
   .map((a) => a.finished.catch(() => null))))
 
-for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email?email=a11y%40test.local', '/terms', '/rules',
+for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules',
   'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/settings']) {
   test(`axe ${path}`, async ({ page, login }) => {
     if (['/pulls', '/collection', '/global-collection', '/settings'].includes(path)) await login()
+    // Adresse posée par /login (compte non confirmé) dans sessionStorage, jamais dans l'URL.
+    if (path === '/verify-email') await page.addInitScript(() => sessionStorage.setItem('wm.verifyEmail', 'a11y@test.local'))
     await page.goto(path)
     if (READY[path]) await page.locator(READY[path]).waitFor()
     await settled(page)

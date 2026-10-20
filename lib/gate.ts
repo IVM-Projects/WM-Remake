@@ -40,6 +40,7 @@ const ORIGIN = 'http://gate.invalid'
 // Résout comme le navigateur (`\` = `/`, tabulations retirées) : seule une cible de même origine est gardée,
 // et jamais un chemin `//…` (protocole relatif) que la résolution des `.`/`..` peut produire (`/.//evil`).
 export function safeNext(next: string | null | undefined): string {
-  const url = next ? URL.parse(next, ORIGIN) : null
+  // canParse et non URL.parse (importé par le client) : Next ne polyfille que canParse, URL.parse manque sous Safari < 18 et Chrome < 126.
+  const url = next && URL.canParse(next, ORIGIN) ? new URL(next, ORIGIN) : null
   return url?.origin === ORIGIN && !url.pathname.startsWith('//') ? url.pathname + url.search + url.hash : '/pulls'
 }

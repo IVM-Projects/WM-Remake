@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { test as base, expect } from '@playwright/test'
+import { test as base, expect, type Page } from '@playwright/test'
 import type { Backend } from '../contract/harness.ts'
 import { authCookie, makeUser, psql } from '../contract/users.ts'
 
@@ -28,5 +29,19 @@ export const test = base.extend<{ login: (opts?: Parameters<typeof makeUser>[1])
     })
   },
 })
+
+export type Account = { username: string; email: string; password: string }
+
+// Compte neuf par test : aucun état partagé entre workers.
+export function fresh(): Account {
+  const id = randomUUID().slice(-12)
+  return { username: `e2e_${id}`, email: `e2e_${id}@test.local`, password: 'mot-de-passe-e2e' }
+}
+
+export async function logIn(page: Page, email: string, password: string) {
+  await page.getByLabel('Adresse courriel').fill(email)
+  await page.getByLabel('Mot de passe', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Se connecter' }).click()
+}
 
 export { expect }

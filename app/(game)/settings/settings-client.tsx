@@ -1,8 +1,9 @@
 'use client'
 
 import { LogOut } from 'lucide-react'
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Field, FormError } from '@/components/auth/Field'
+import { useHydrated } from '@/components/auth/Submit'
 import { ghost as ghostBase } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { api, ApiError } from '@/lib/api'
@@ -27,9 +28,6 @@ const ok = 'text-sm font-medium text-[var(--color-accent-light)]'
 
 const dateFr = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long' })
 const nextChange = (iso: unknown) => (typeof iso === 'string' ? ` Prochain changement possible le ${dateFr.format(new Date(iso))}.` : '')
-// false au rendu serveur et à l'hydratation, true ensuite : un envoi natif du HTML statique (GET, mot de passe dans l'adresse) est impossible.
-const noop = () => () => {}
-const useHydrated = () => useSyncExternalStore(noop, () => true, () => false)
 // Nos routes répondent en français sous 500 ; au-delà (ou hors réseau), le message de repli.
 const messageOf = (e: unknown, fallback: string) => (e instanceof ApiError && e.status < 500 ? e.message : fallback)
 

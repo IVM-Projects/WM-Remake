@@ -16,8 +16,15 @@ const BY_CODE = new Map([
   ['otp_expired', 'Code invalide ou expiré.'],
   ['weak_password', 'Mot de passe trop faible.'],
   ['same_password', 'Choisis un mot de passe différent de l\'ancien.'],
-  ['over_email_send_rate_limit', 'Trop d\'e-mails envoyés, réessaie dans une minute.'],
+  // Aussi le plafond horaire du projet (SMTP personnalisé) : pas « dans une minute ».
+  ['over_email_send_rate_limit', 'Trop d\'e-mails envoyés, réessaie un peu plus tard.'],
+  // Projet hébergé : clés Turnstile dépareillées ou jeton déjà servi ; SMTP pas encore configuré (l'expéditeur intégré ne sert que l'organisation).
+  ['captcha_failed', 'La vérification anti-bot a échoué, réessaie.'],
+  ['email_address_not_authorized', 'L\'envoi d\'e-mails n\'est pas encore configuré, réessaie plus tard.'],
 ])
+
+// sessionStorage et non l'URL (/verify-email?email=…) : l'adresse resterait dans les journaux de requêtes et l'historique.
+export const VERIFY_EMAIL_KEY = 'wm.verifyEmail'
 
 export function authErrorMessage(err: { message?: string; code?: string } | null): string {
   if (err?.message && KNOWN.has(err.message)) return err.message

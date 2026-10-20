@@ -1,10 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useRef, useState, type FocusEvent, type FormEvent } from 'react'
-import { Field, FormError, Submit, linkClass } from '@/components/auth/Field'
+import { Field, FormError, linkClass } from '@/components/auth/Field'
 import { OtpForm } from '@/components/auth/OtpForm'
+import { Submit } from '@/components/auth/Submit'
 import { useCaptcha } from '@/components/auth/Turnstile'
 import { TERMS_VERSION, authErrorMessage, usernameProblem } from '@/lib/auth'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -16,13 +16,13 @@ const checkbox = 'flex min-h-11 items-start gap-3 text-sm'
 const box = 'mt-0.5 size-5 shrink-0 accent-[var(--color-accent)]'
 
 export function SignupForm() {
-  const router = useRouter()
   const captcha = useCaptcha()
   const [usernameError, setUsernameError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [email, setEmail] = useState<string | null>(null)
   const check = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const off = !captcha.token || pending || !!usernameError
 
   // Vérification préalable du pseudo ; la réponse d'une ancienne valeur est ignorée.
   function checkUsername(e: FocusEvent<HTMLInputElement>) {
@@ -39,6 +39,7 @@ export function SignupForm() {
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (off) return
     const f = new FormData(e.currentTarget)
     const [username, address, password] = ['username', 'email', 'password'].map((k) => String(f.get(k)))
     setPending(true)
@@ -60,7 +61,8 @@ export function SignupForm() {
     else setError(authErrorMessage(error))
   }
 
-  if (email) return <OtpForm email={email} onVerified={() => router.replace('/pulls')} />
+  // Chargement complet (voir LoginForm) : un /pulls préchargé sans session rendrait /login depuis le cache du routeur.
+  if (email) return <OtpForm email={email} onVerified={() => window.location.replace('/pulls')} />
 
   return (
     <form id="signup-form" onSubmit={submit} className="flex flex-col gap-4">
@@ -89,7 +91,7 @@ export function SignupForm() {
       </label>
       {captcha.widget}
       {error && <FormError>{error}</FormError>}
-      <Submit disabled={!captcha.token || pending || !!usernameError}>Créer mon compte</Submit>
+      <Submit off={off}>Créer mon compte</Submit>
       <p className="text-sm text-foreground/70">
         Déjà inscrit ? <Link href="/login" className={linkClass}>Se connecter</Link>
       </p>

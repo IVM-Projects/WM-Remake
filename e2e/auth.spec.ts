@@ -1,20 +1,11 @@
-import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 import { latestLink, latestOtp } from '../contract/mail.ts'
 import { pageTitle } from '../lib/brand.ts'
-import { expect, makePlayer, test } from './fixtures'
+import { type Account, expect, fresh, logIn, makePlayer, test } from './fixtures'
 
 // Textes exacts des deux cases (R§2.1).
 const AGE = 'Je confirme avoir au moins 18 ans et je comprends que les cartes proviennent de Wikipédia et peuvent inclure du contenu sensible.'
 const TERMS = 'J\'accepte les Conditions d\'utilisation et les Règles de la communauté.'
-
-type Account = { username: string; email: string; password: string }
-
-// Compte neuf par test : aucun état partagé entre workers.
-function fresh(): Account {
-  const id = randomUUID().slice(-12)
-  return { username: `e2e_${id}`, email: `e2e_${id}@test.local`, password: 'mot-de-passe-e2e' }
-}
 
 async function fillSignup(page: Page, a: Account) {
   await page.goto('/signup')
@@ -40,12 +31,6 @@ async function enterCode(page: Page, code: string) {
   await page.locator('#signup-otp-code').fill(code)
   await page.getByRole('button', { name: 'Valider le code' }).click()
   await expect(page).toHaveURL('/pulls')
-}
-
-async function logIn(page: Page, email: string, password: string) {
-  await page.getByLabel('Adresse courriel').fill(email)
-  await page.getByLabel('Mot de passe', { exact: true }).fill(password)
-  await page.getByRole('button', { name: 'Se connecter' }).click()
 }
 
 test('inscription → code par courriel → /pulls', async ({ page }) => {
@@ -185,12 +170,18 @@ test('lien de réinitialisation invalide → « Lien invalide ou expiré »', as
   await expect(page.getByRole('main').getByRole('alert')).toHaveText('Lien invalide ou expiré')
 })
 
-test('compte non confirmé → /verify-email, renvoi du code', async ({ page }) => {
+test('compte non confirmé → /verify-email (adresse hors de l\'URL), renvoi du code', async ({ page }) => {
   const a = await signUp(page)
   const first = await latestOtp(a.email)
-  await page.goto('/login')
+  // Aucune PII dans les journaux de requêtes ni l'historique : l'adresse ne figure dans aucune URL demandée.
+  const urls: string[] = []
+  page.on('request', (r) => urls.push(decodeURIComponent(r.url())))
+  // D'abord sans adresse : la page gardée en mémoire (Activity) puis réaffichée doit relire l'adresse posée par /login.
+  await page.goto('/verify-email')
+  await page.getByRole('main').getByRole('link', { name: 'Se connecter' }).click()
+  await expect(page).toHaveURL('/login')
   await logIn(page, a.email, a.password)
-  await expect(page).toHaveURL(`/verify-email?email=${encodeURIComponent(a.email)}`)
+  await expect(page).toHaveURL('/verify-email')
   await expect(page).toHaveTitle(pageTitle('Vérifier l\'e-mail'))
   await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toHaveText('Vérifier l\'e-mail')
   await expect(page.locator('#signup-otp-code')).toBeVisible()
@@ -202,6 +193,8 @@ test('compte non confirmé → /verify-email, renvoi du code', async ({ page }) 
   let code = first
   await expect.poll(async () => (code = await latestOtp(a.email))).not.toBe(first)
   await enterCode(page, code)
+  expect(urls.filter((u) => u.includes(a.email))).toEqual([])
+  expect(await page.evaluate(() => sessionStorage.getItem('wm.verifyEmail'))).toBeNull()
 })
 
 test('/verify-email sans adresse → liens vers connexion et inscription', async ({ page }) => {

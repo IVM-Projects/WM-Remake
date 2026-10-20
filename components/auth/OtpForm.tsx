@@ -3,7 +3,8 @@
 import { useState, type FormEvent } from 'react'
 import { authErrorMessage } from '@/lib/auth'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
-import { Field, FormError, Submit } from './Field'
+import { Field, FormError } from './Field'
+import { Submit } from './Submit'
 import { useCaptcha } from './Turnstile'
 
 // Code à 6 chiffres de la config Auth ; le champ en accepte 6 à 12 (R§2.1).
@@ -15,6 +16,7 @@ export function OtpForm({ email, onVerified }: { email: string; onVerified: () =
 
   async function verify(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (pending) return
     const token = String(new FormData(e.currentTarget).get('otp'))
     setPending(true)
     setError(null)
@@ -25,6 +27,7 @@ export function OtpForm({ email, onVerified }: { email: string; onVerified: () =
   }
 
   async function resend() {
+    if (pending || !captcha.token) return
     setPending(true)
     setError(null)
     setSent(false)
@@ -47,13 +50,13 @@ export function OtpForm({ email, onVerified }: { email: string; onVerified: () =
         maxLength={12}
       />
       {error && <FormError>{error}</FormError>}
-      <Submit disabled={pending}>Valider le code</Submit>
+      <Submit off={pending}>Valider le code</Submit>
       {captcha.widget}
       <button
         type="button"
         onClick={resend}
-        disabled={pending || !captcha.token}
-        className="rounded-xl bg-accent/10 px-4 py-3 text-sm font-semibold text-accent transition-colors hover:bg-accent/20 disabled:opacity-45"
+        aria-disabled={pending || !captcha.token}
+        className="rounded-xl bg-accent/10 px-4 py-3 text-sm font-semibold text-accent transition-colors hover:bg-accent/20 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
       >
         Renvoyer le code
       </button>

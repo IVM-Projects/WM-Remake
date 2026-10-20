@@ -1,14 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useEffect, useState, type FormEvent } from 'react'
-import { Field, FormError, Submit, linkClass } from '@/components/auth/Field'
+import { Field, FormError, linkClass } from '@/components/auth/Field'
+import { Submit } from '@/components/auth/Submit'
 import { authErrorMessage } from '@/lib/auth'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 
 export function ResetForm() {
-  const router = useRouter()
   const [state, setState] = useState<'loading' | 'invalid' | 'ready'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
@@ -21,10 +20,12 @@ export function ResetForm() {
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (pending) return
     setPending(true)
     setError(null)
     const { error } = await createBrowserSupabase().auth.updateUser({ password: String(new FormData(e.currentTarget).get('password')) })
-    if (!error) return router.replace('/pulls')
+    // Chargement complet (voir LoginForm) : ni préchargement fait sans session ni page gardée d'une autre session.
+    if (!error) return window.location.replace('/pulls')
     setPending(false)
     setError(authErrorMessage(error))
   }
@@ -44,7 +45,7 @@ export function ResetForm() {
     <form onSubmit={submit} className="flex flex-col gap-4">
       <Field id="password" label="Nouveau mot de passe" type="password" autoComplete="new-password" minLength={6} />
       {error && <FormError>{error}</FormError>}
-      <Submit disabled={pending}>Enregistrer le mot de passe</Submit>
+      <Submit off={pending}>Enregistrer le mot de passe</Submit>
     </form>
   )
 }

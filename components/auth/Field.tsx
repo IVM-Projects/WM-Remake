@@ -29,17 +29,4 @@ export function FormError({ id, children }: { id?: string; children: string }) {
   )
 }
 
-// Les formulaires du HTML statique le désactivent sans jeton Turnstile : pas d'envoi natif (GET, mot de passe dans l'URL) avant l'hydratation.
-export function Submit({ children, disabled }: { children: string; disabled: boolean }) {
-  return (
-    <button
-      type="submit"
-      disabled={disabled}
-      className="rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground transition-colors hover:bg-accent-light disabled:opacity-45"
-    >
-      {children}
-    </button>
-  )
-}
-
 export const linkClass = 'inline-flex min-h-11 items-center rounded-xl text-sm font-medium text-accent hover:text-accent-light'
