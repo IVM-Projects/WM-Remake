@@ -111,14 +111,13 @@ export function CollectionClient() {
   useEffect(() => {
     let live = true
     api<CollectionPage>(`/api/my-collection?${query}`)
-      // Un succès efface l'échec : revenir (Retour) sur une adresse qui avait échoué ne remontre pas l'erreur.
-      .then((r) => {
-        if (!live) return
-        setData({ ...r, key })
-        setFailedKey(null)
-      })
+      .then((r) => { if (live) setData({ ...r, key }) })
       .catch(() => { if (live) setFailedKey(key) })
-    return () => { live = false }
+    // Nouvelle requête : l'échec d'avant s'efface, une adresse qui avait échoué ne remontre pas l'erreur pendant sa relecture.
+    return () => {
+      live = false
+      setFailedKey(null)
+    }
   }, [key, query])
 
   const readBalance = () => {
@@ -180,7 +179,7 @@ export function CollectionClient() {
     const tiles = grid.current?.querySelectorAll<HTMLElement>('h3 > button')
     // Nouvel échec : le « Réessayer » du nouveau panneau d'erreur.
     ;(failed ? retry.current : tiles?.length ? tiles[Math.min(i, tiles.length - 1)] : empty.current)?.focus()
-  }, [data, failedKey, key, page])
+  }, [data, failedKey, key, page, open]) // open : fermer la modale sur une grille déjà en échec ou relue rend aussi le focus.
 
   // Recherche serveur après un temps de frappe ; replaceState : une entrée d'historique par recherche, pas par touche.
   function onText(value: string) {
@@ -216,11 +215,12 @@ export function CollectionClient() {
   }
 
   function closeModal() {
-    const i = items.findIndex((x) => x.id === open?.id)
-    // Modale qui a changé la grille, ou copie sortie de la page pendant la modale (recherche, Avancer) : sans tuile d'origine, la première.
-    if (dirty.current || i < 0) {
+    // Grille périmée ou en échec : la place de la copie dans la grille de l'adresse est inconnue.
+    const i = stale ? -1 : items.findIndex((x) => x.id === open?.id)
+    // Modale qui a changé la grille, ou tuile d'origine absente (copie sortie de la page, grille relue) : sans elle, la première.
+    if (dirty.current || i < 0) refocus.current = Math.max(0, i)
+    if (dirty.current) {
       dirty.current = false
-      refocus.current = Math.max(0, i)
       refresh()
     }
     setOpen(null)

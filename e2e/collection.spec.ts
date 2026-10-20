@@ -133,8 +133,8 @@ test('étiquette depuis la modale, Échap et retour du focus, filtre, retrait', 
   await expect(opener(page, 6)).toBeFocused()
 })
 
-// Ouvre n° 0030 (UR), puis Avancer vers ?rarity=L derrière la modale : la copie ouverte n'est plus dans la grille relue.
-async function openThenLeave(page: Page) {
+// Ouvre n° 0030 (UR) ; Avancer mènera ensuite à ?rarity=L derrière la modale, où la copie ouverte n'est plus.
+async function openUr30(page: Page) {
   await page.goto('/collection')
   await expect(tiles(page)).toHaveCount(50)
   await page.getByRole('button', { name: 'L', exact: true }).click()
@@ -144,7 +144,12 @@ async function openThenLeave(page: Page) {
   await opener(page, 30).click()
   const dialog = page.getByRole('dialog', { name: title(30) })
   await expect(dialog).toBeVisible()
-  // Avancer derrière la modale : la grille relue ne garde que les L, la copie ouverte (UR) n'y est plus.
+  return dialog
+}
+
+// Avancer derrière la modale : la grille relue ne garde que les L, la copie ouverte (UR) n'y est plus.
+async function openThenLeave(page: Page) {
+  const dialog = await openUr30(page)
   await page.goForward()
   await expect(tiles(page)).toHaveCount(6)
   return dialog
@@ -166,6 +171,64 @@ test('copie sortie de la page, modale fermée par Échap sans rien changer : le 
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(opener(page, 6)).toBeFocused()
+})
+
+test('modale fermée sur une grille en échec : le focus va à « Réessayer »', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  const dialog = await openUr30(page)
+  await page.route(isCollectionApi, (r) => r.abort(), { times: 1 })
+  await page.goForward()
+  await expect(page.getByText('Ta collection n\'a pas pu être chargée.')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Réessayer' })).toBeFocused()
+})
+
+test('modale fermée pendant la relecture : le focus va à la première tuile une fois la grille arrivée', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  const dialog = await openUr30(page)
+  let seen = 0
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route(isCollectionApi, async (r) => {
+    seen++
+    await held
+    await r.continue()
+  }, { times: 1 })
+  await page.goForward()
+  await expect.poll(() => seen).toBe(1)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  release()
+  await expect(tiles(page)).toHaveCount(6)
+  await expect(opener(page, 6)).toBeFocused()
+  await expect(page.locator('body')).not.toBeFocused()
+})
+
+test('échec effacé au changement de requête : pas d\'erreur pendant la relecture d\'une adresse qui avait échoué', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  let calls = 0
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route(isCollectionApi, async (r) => {
+    if (++calls === 1) return r.abort()
+    await held
+    await r.continue()
+  })
+  await page.goto('/collection?rarity=L')
+  const failed = page.getByText('Ta collection n\'a pas pu être chargée.')
+  await expect(failed).toBeVisible()
+  // L+UR puis L à nouveau, avant toute réponse : la requête de ?rarity=L repart, son échec d'avant ne s'affiche pas.
+  await page.getByRole('button', { name: 'UR', exact: true }).click()
+  await page.getByRole('button', { name: 'UR', exact: true }).click()
+  await expect.poll(() => calls).toBe(3)
+  await expect(failed).toHaveCount(0)
+  release()
+  await expect(tiles(page)).toHaveCount(6)
+  await expect(failed).toHaveCount(0)
 })
 
 test('erreur de chargement : « Réessayer » qui échoue encore garde le focus, « Effacer les filtres » en sort', async ({ page, login }) => {
