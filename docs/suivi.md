@@ -85,6 +85,9 @@ Relevés par les revues des tâches et des branches du M0 et du M1, triés par j
 - Aucune garde automatique contre un `DELETE`/`UPDATE` sans `WHERE` dans une fonction appelable par PostgREST (pg-safeupdate n'existe ni au banc ni en CI) : un grep dans `test:db` suffirait (R33).
 - Ops : le MCP Supabase demande une confirmation pour tout SQL contenant `DELETE`, même dans le corps d'une fonction ; sans elle, l'appel expire à 60 s. Les migrations concernées passent par le SQL Editor, avec la ligne d'historique ajoutée à la main (M1, `1200` à `1400`).
 
+- Ops : un compte Auth sans profil (créé avant le trigger, ou par un outil qui contourne `/signup`) reste bloqué, `wm.lock_user` ne crée jamais un profil manquant. Rattrapage utilisé au M1 :
+  `insert into public.profiles (id, username) select u.id, u.raw_user_meta_data ->> 'username' from auth.users u where not exists (select from public.profiles p where p.id = u.id) and u.raw_user_meta_data -> 'age_confirmed' = 'true'::jsonb and coalesce(btrim(u.raw_user_meta_data ->> 'terms_version'), '') <> '' and wm.username_problem(u.raw_user_meta_data ->> 'username') is null`, puis `select wm.lock_user(id)` pour chacun. Les préversions visent la base de démo : une migration qui touche l'inscription s'applique avant de pousser la branche.
+
 ## En attente d'étapes humaines
 
 - **Graphify** : indexation du dépôt et notes de `docs/decisions-graphify.md`, en attente de l'étape humaine de `docs/superpowers/HANDOFF.md`.
