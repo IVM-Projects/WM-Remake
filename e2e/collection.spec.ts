@@ -50,10 +50,12 @@ test('recherche : focus au chargement, filtrage serveur avec délai', async ({ p
   const qs: (string | null)[] = []
   page.on('request', (r) => { if (isCollectionApi(new URL(r.url()))) qs.push(new URL(r.url()).searchParams.get('q')) })
   await search.pressSequentially('n° 0001')
-  // Rien avant 300 ms après la dernière touche, puis une seule requête, avec le texte entier.
+  // Rien avant 300 ms après la dernière touche (replaceState part dans le minuteur), puis une seule requête, avec le texte entier.
+  const urlQ = () => page.evaluate(() => new URLSearchParams(location.search).get('q'))
   await page.clock.runFor(299)
-  expect(qs).toEqual([])
+  expect(await urlQ()).toBeNull()
   await page.clock.runFor(1)
+  expect(await urlQ()).toBe('n° 0001')
   await expect(tiles(page)).toHaveCount(1)
   expect(qs).toEqual(['n° 0001'])
   await expect(tiles(page).locator('h3')).toHaveText(title(1))
@@ -131,9 +133,8 @@ test('étiquette depuis la modale, Échap et retour du focus, filtre, retrait', 
   await expect(opener(page, 6)).toBeFocused()
 })
 
-test('copie sortie de la page pendant la modale : le focus va à la première tuile', async ({ page, login }) => {
-  const { uid } = await login()
-  seed60(uid)
+// Ouvre n° 0030 (UR), puis Avancer vers ?rarity=L derrière la modale : la copie ouverte n'est plus dans la grille relue.
+async function openThenLeave(page: Page) {
   await page.goto('/collection')
   await expect(tiles(page)).toHaveCount(50)
   await page.getByRole('button', { name: 'L', exact: true }).click()
@@ -146,7 +147,23 @@ test('copie sortie de la page pendant la modale : le focus va à la première tu
   // Avancer derrière la modale : la grille relue ne garde que les L, la copie ouverte (UR) n'y est plus.
   await page.goForward()
   await expect(tiles(page)).toHaveCount(6)
+  return dialog
+}
+
+test('copie sortie de la page pendant la modale : le focus va à la première tuile', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  const dialog = await openThenLeave(page)
   await dialog.getByRole('button', { name: /^Défausser/ }).click()
+  await expect(dialog).toBeHidden()
+  await expect(opener(page, 6)).toBeFocused()
+})
+
+test('copie sortie de la page, modale fermée par Échap sans rien changer : le focus va à la première tuile', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  const dialog = await openThenLeave(page)
+  await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(opener(page, 6)).toBeFocused()
 })
@@ -173,6 +190,39 @@ test('erreur de chargement : « Réessayer » qui échoue encore garde le focus,
   await expect(tiles(page)).toHaveCount(50)
   await expect(page).toHaveURL(/\/collection$/)
   await expect(opener(page, 6)).toBeFocused()
+})
+
+test('grille en échec : aucune sélection sur les copies de la requête d\'avant', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  await page.goto('/collection')
+  await expect(tiles(page)).toHaveCount(50)
+  await page.getByRole('button', { name: 'Sélectionner', exact: true }).click()
+  await page.route(isCollectionApi, (r) => r.abort(), { times: 1 })
+  await page.getByRole('button', { name: 'L', exact: true }).click()
+  await expect(page.getByText('Ta collection n\'a pas pu être chargée.')).toBeVisible()
+  // Les 50 copies d'avant restent en mémoire : ni « Tout sélectionner » ni « Défausser » ne s'y appliquent.
+  const all = page.getByRole('button', { name: 'Tout sélectionner' })
+  await expect(all).toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('button', { name: 'Défausser', exact: true })).toHaveAttribute('aria-disabled', 'true')
+  await all.click({ force: true })
+  await expect(page.getByText('Aucune carte sélectionnée')).toBeVisible()
+})
+
+test('erreur effacée par un succès : Retour sur l\'adresse qui avait échoué', async ({ page, login }) => {
+  const { uid } = await login()
+  seed60(uid)
+  let fail = true
+  await page.route((u) => isCollectionApi(u) && u.searchParams.get('rarity') === 'L', (r) => (fail ? r.abort() : r.continue()))
+  await page.goto('/collection?rarity=L')
+  const failed = page.getByText('Ta collection n\'a pas pu être chargée.')
+  await expect(failed).toBeVisible()
+  await page.getByRole('button', { name: 'Effacer les filtres' }).click()
+  await expect(tiles(page)).toHaveCount(50)
+  fail = false
+  await page.goBack()
+  await expect(tiles(page)).toHaveCount(6)
+  await expect(failed).toHaveCount(0)
 })
 
 test('adresse périmée : valeurs refusées par l\'API ignorées, seules les cinq clés partent', async ({ page, login }) => {
@@ -312,6 +362,14 @@ test('étiquette en masse : appliquer « lot » à 3 tuiles, filtrer, retirer', 
   await page.getByRole('button', { name: 'Sélectionner', exact: true }).click()
   for (const n of [6, 5, 4]) await tile(page, n).getByRole('checkbox').check()
   await expect(page.getByText('3 cartes sélectionnées')).toBeVisible()
+  // Pas encore d'étiquette : « Retirer » est inactif.
+  await page.getByRole('button', { name: 'Retirer l\'étiquette', exact: true }).click()
+  const none = page.getByRole('dialog', { name: 'Retirer l\'étiquette' })
+  await expect(none.getByText('Tu n\'as encore aucune étiquette.')).toBeVisible()
+  await none.getByRole('button', { name: 'Retirer', exact: true }).click({ force: true })
+  await expect(none).toBeVisible()
+  await expect(none.getByRole('button', { name: 'Retirer', exact: true })).toHaveAttribute('aria-disabled', 'true')
+  await none.getByRole('button', { name: 'Annuler' }).click()
   await page.getByRole('button', { name: 'Appliquer une étiquette' }).click()
   const apply = page.getByRole('dialog', { name: 'Appliquer une étiquette' })
   await apply.getByLabel('Étiquette').fill('lot')
@@ -348,6 +406,11 @@ test('étiquettes illisibles signalées, nom fait d\'espaces refusé', async ({ 
   const remove = page.getByRole('dialog', { name: 'Retirer l\'étiquette' })
   await expect(remove.getByText('Tes étiquettes n\'ont pas pu être chargées.')).toBeVisible()
   await expect(remove.getByText('Tu n\'as encore aucune étiquette.')).toHaveCount(0)
+  // Rien à retirer : « Retirer » est inactif et ne ferme pas la modale.
+  const confirmRemove = remove.getByRole('button', { name: 'Retirer', exact: true })
+  await expect(confirmRemove).toHaveAttribute('aria-disabled', 'true')
+  await confirmRemove.click({ force: true })
+  await expect(remove).toBeVisible()
   await remove.getByRole('button', { name: 'Annuler' }).click()
 
   await page.getByRole('button', { name: 'Appliquer une étiquette' }).click()

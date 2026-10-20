@@ -12,7 +12,7 @@ import type { TagCount } from './CollectionToolbar'
 
 type Props = {
   ids: string[]
-  // Grille en relecture (aria-busy) : ses copies sont celles de la requête d'avant, rien ne s'y applique.
+  // Grille en relecture ou en échec : ses copies sont celles de la requête d'avant, rien ne s'y applique.
   loading: boolean
   onSelectAll: () => void
   tags: TagCount[]
@@ -48,6 +48,7 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
   const [blank, setBlank] = useState(false)
   const none = ids.length === 0
   const off = none || loading
+  const noTags = tagsFailed || !tags.length
 
   const open = (a: Action) => {
     if (off) return
@@ -127,9 +128,9 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
     }
   }, 'La défausse s\'est arrêtée en cours de route.')
 
-  const submit = (e: FormEvent, go: () => Promise<void>) => {
+  const submit = (e: FormEvent, go: () => Promise<void>, off = false) => {
     e.preventDefault()
-    void go()
+    if (!off) void go()
   }
 
   return (
@@ -169,14 +170,14 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
               {blank && <p id={`${id}-blank`} role="alert" className="text-sm text-red-400">Le nom de l&apos;étiquette ne peut pas être vide.</p>}
             </div>
             {tagsFailed && tagsError}
-            <Actions busy={busy} onCancel={() => setAction(null)}>Appliquer</Actions>
+            <Actions off={busy} onCancel={() => setAction(null)}>Appliquer</Actions>
           </form>
         </Dialog>
       )}
 
       {action === 'remove' && (
         <Dialog id={id} title="Retirer l'étiquette" onClose={() => setAction(null)}>
-          <form onSubmit={(e) => submit(e, remove)} className="space-y-4">
+          <form onSubmit={(e) => submit(e, remove, noTags)} className="space-y-4">
             <p className="text-sm text-[var(--color-foreground)]/70">Des {n(ids.length, 'carte sélectionnée', 'cartes sélectionnées')}.</p>
             {tagsFailed ? tagsError : tags.length ? (
               <div className="space-y-1.5">
@@ -189,7 +190,8 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
             ) : (
               <p className="text-sm">Tu n&apos;as encore aucune étiquette.</p>
             )}
-            <Actions busy={busy} onCancel={() => setAction(null)}>Retirer</Actions>
+            {/* Aucune étiquette à retirer (ou illisibles) : « Retirer » ne fermerait la modale sur rien. */}
+            <Actions off={busy || noTags} onCancel={() => setAction(null)}>Retirer</Actions>
           </form>
         </Dialog>
       )}
@@ -219,11 +221,11 @@ function Dialog({ id, title, onClose, children }: { id: string; title: string; o
   )
 }
 
-function Actions({ busy, onCancel, children }: { busy: boolean; onCancel: () => void; children: ReactNode }) {
+function Actions({ off, onCancel, children }: { off: boolean; onCancel: () => void; children: ReactNode }) {
   return (
     <div className="flex flex-wrap justify-end gap-3">
       <button type="button" onClick={onCancel} className={ghost}>Annuler</button>
-      <button type="submit" aria-disabled={busy} className={primary}>{children}</button>
+      <button type="submit" aria-disabled={off} className={primary}>{children}</button>
     </div>
   )
 }

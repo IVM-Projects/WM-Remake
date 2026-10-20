@@ -103,13 +103,20 @@ export function CollectionClient() {
   const retry = useRef<HTMLButtonElement>(null)
 
   const items = data?.collection ?? []
-  const loading = data?.key !== key && failedKey !== key
+  // stale : la grille affichée n'est pas celle de l'adresse (relecture en cours ou en échec) ; aucune sélection ne s'y fait.
+  const stale = data?.key !== key
+  const loading = stale && failedKey !== key
   const totalPages = Math.ceil((data?.total ?? 0) / LIMIT)
 
   useEffect(() => {
     let live = true
     api<CollectionPage>(`/api/my-collection?${query}`)
-      .then((r) => { if (live) setData({ ...r, key }) })
+      // Un succès efface l'échec : revenir (Retour) sur une adresse qui avait échoué ne remontre pas l'erreur.
+      .then((r) => {
+        if (!live) return
+        setData({ ...r, key })
+        setFailedKey(null)
+      })
       .catch(() => { if (live) setFailedKey(key) })
     return () => { live = false }
   }, [key, query])
@@ -209,10 +216,11 @@ export function CollectionClient() {
   }
 
   function closeModal() {
-    if (dirty.current) {
+    const i = items.findIndex((x) => x.id === open?.id)
+    // Modale qui a changé la grille, ou copie sortie de la page pendant la modale (recherche, Avancer) : sans tuile d'origine, la première.
+    if (dirty.current || i < 0) {
       dirty.current = false
-      // Copie sortie de la page pendant la modale (recherche, Retour) : la première tuile.
-      refocus.current = Math.max(0, items.findIndex((x) => x.id === open?.id))
+      refocus.current = Math.max(0, i)
       refresh()
     }
     setOpen(null)
@@ -273,7 +281,7 @@ export function CollectionClient() {
       {selecting && (
         <SelectionBar
           ids={selected}
-          loading={loading}
+          loading={stale}
           onSelectAll={() => setSelected((s) => [...new Set([...s, ...items.map((x) => x.id)])])}
           tags={tags}
           tagsFailed={tagsFailed}
@@ -371,8 +379,8 @@ export function CollectionClient() {
                           type="checkbox"
                           checked={checked}
                           // Grille périmée pendant une relecture : ses copies ne se sélectionnent pas.
-                          aria-disabled={loading}
-                          onChange={() => { if (!loading) setSelected((s) => (s.includes(item.id) ? s.filter((x) => x !== item.id) : [...s, item.id])) }}
+                          aria-disabled={stale}
+                          onChange={() => { if (!stale) setSelected((s) => (s.includes(item.id) ? s.filter((x) => x !== item.id) : [...s, item.id])) }}
                           aria-label={face.wikipedia_title}
                           className="size-5 cursor-pointer accent-[var(--color-accent)]"
                         />

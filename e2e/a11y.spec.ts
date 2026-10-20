@@ -84,6 +84,11 @@ test('axe /collection : grille, pastille de rareté active, sélection', async (
   await page.getByRole('button', { name: 'Sélectionner', exact: true }).click()
   await page.getByRole('button', { name: 'Tout sélectionner' }).click()
   await expectNoSeriousViolations(page)
+  // Confirmation de la défausse en masse ouverte (bouton rouge, D§8.6).
+  await page.getByRole('button', { name: 'Défausser', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Défausser 1 carte ?' })).toBeVisible()
+  await settled(page)
+  await expectNoSeriousViolations(page)
 })
 
 test('axe /collection, modale de carte ouverte', async ({ page, login }) => {
