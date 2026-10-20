@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import type { RouteSpec } from '../../lib/contract.ts'
 import { latestMail, latestOtp } from '../mail.ts'
-import { authCookie, makeUser } from '../users.ts'
+import { authCookie, makeUser, psql } from '../users.ts'
 
 const KEY = 'sb_publishable_test'
 
@@ -15,12 +15,14 @@ function gotrue(supabaseUrl: string, path: string, body?: unknown): Promise<Resp
   })
 }
 
+const signupBody = (username: string) =>
+  ({ email: `${randomUUID()}@test.local`, password: 'mot-de-passe-de-test', data: { username, age_confirmed: true, terms_version: 'test' } })
+
 // Inscription confirmée par le code reçu dans Mailpit : session GoTrue du nouveau joueur.
-async function signUp(supabaseUrl: string): Promise<{ email: string; password: string; accessToken: string }> {
-  const email = `${randomUUID()}@test.local`
-  const password = 'mot-de-passe-de-test'
-  const data = { username: `a_${randomUUID().slice(-12)}`, age_confirmed: true, terms_version: 'test' }
-  const signup = await gotrue(supabaseUrl, '/signup', { email, password, data })
+async function signUp(supabaseUrl: string): Promise<{ email: string; password: string; username: string; accessToken: string }> {
+  const body = signupBody(`a_${randomUUID().slice(-12)}`)
+  const { email, password, data: { username } } = body
+  const signup = await gotrue(supabaseUrl, '/signup', body)
   assert.equal(signup.status, 200, await signup.text())
   // Modèle FR servi par la passerelle : GoTrue retombe en silence sur le sien s'il ne le lit pas.
   const mail = await latestMail(email)
@@ -29,7 +31,7 @@ async function signUp(supabaseUrl: string): Promise<{ email: string; password: s
   const verify = await gotrue(supabaseUrl, '/verify', { type: 'signup', email, token: await latestOtp(email) })
   assert.equal(verify.status, 200)
   const { access_token: accessToken } = (await verify.json()) as { access_token: string }
-  return { email, password, accessToken }
+  return { email, password, username, accessToken }
 }
 
 // GoTrue lui-même (R§3.11) : seules les routes qu'emprunte l'app, hors recap des routes /api.
@@ -48,15 +50,39 @@ export const auth: RouteSpec = {
       },
     },
     {
-      name: 'inscription → code à 6 chiffres reçu dans Mailpit → verify → JWT ES256 du kid du banc, accepté par PostgREST',
+      name: 'inscription → code à 6 chiffres reçu dans Mailpit → verify → JWT ES256 du kid du banc, accepté par PostgREST : profiles = le pseudo choisi',
       run: async ({ backend }) => {
-        const { accessToken } = await signUp(backend.supabaseUrl)
+        const { username, accessToken } = await signUp(backend.supabaseUrl)
         const { alg, kid } = JSON.parse(Buffer.from(accessToken.split('.')[0], 'base64url').toString()) as { alg: string; kid: string }
         assert.deepEqual({ alg, kid }, { alg: 'ES256', kid: 'wm-test-es256' })
-        const res = await fetch(`${backend.supabaseUrl}/rest/v1/cards?select=id&limit=1`, {
+        const res = await fetch(`${backend.supabaseUrl}/rest/v1/profiles?select=username`, {
           headers: { apikey: KEY, authorization: `Bearer ${accessToken}` },
         })
-        assert.equal(res.status, 200, await res.text())
+        assert.equal(res.status, 200)
+        assert.deepEqual(await res.json(), [{ username }]) // profil créé par le trigger d'inscription
+      },
+    },
+    {
+      name: 'pseudo pris (autre casse) → statut ≥ 400, « Ce pseudo est déjà pris » dans le corps',
+      run: async ({ backend }) => {
+        const { username } = makeUser(backend.databaseUrl)
+        const res = await gotrue(backend.supabaseUrl, '/signup', signupBody(username.toUpperCase()))
+        const text = await res.text()
+        assert.ok(res.status >= 400, `${res.status} ${text}`)
+        assert.match(text, /Ce pseudo est déjà pris/)
+      },
+    },
+    {
+      name: 'deux inscriptions simultanées du même pseudo → une seule réussit, un seul profil',
+      run: async ({ backend }) => {
+        const username = `s_${randomUUID().slice(-12)}`
+        const results = await Promise.all([0, 1].map(async () => {
+          const res = await gotrue(backend.supabaseUrl, '/signup', signupBody(username))
+          return { status: res.status, text: await res.text() }
+        }))
+        assert.deepEqual(results.map((r) => r.status >= 400).sort(), [false, true], JSON.stringify(results))
+        assert.match(results.find((r) => r.status >= 400)!.text, /Ce pseudo est déjà pris/)
+        assert.equal(psql(backend.databaseUrl, `select count(*) from public.profiles where lower(username) = lower(:'u')`, { u: username }), '1')
       },
     },
     {

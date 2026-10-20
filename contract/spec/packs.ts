@@ -2,11 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
-import { api, makeUser, psql } from '../users.ts'
-
-const RARITIES = ['C', 'PC', 'R', 'SR', 'UR', 'L'] as const
-const Rarity = z.enum(RARITIES)
-const Iso = z.iso.datetime({ offset: true })
+import { api, failed, Iso, makeUser, ok, psql, RARITIES, Rarity } from '../users.ts'
 
 // Union des variantes du R§3.1 : toutes les clés présentes (les nullables aussi).
 const CardInPack = z.object({
@@ -37,22 +33,6 @@ const Opened = Cards.extend({
   owned_copies: z.array(z.object({ card_id: z.uuid(), is_shiny: z.boolean(), count: z.int() })),
 })
 const HUMAN_FAILED = 'Vérification anti-bot échouée, réessaie.'
-
-// Corps D§8.2 : error = message, code exact (absent si non donné) ; renvoie le corps pour ses clés en plus.
-async function failed(res: Response, status: number, code?: string): Promise<Record<string, unknown>> {
-  const body = (await res.json()) as Record<string, unknown>
-  assert.equal(res.status, status, JSON.stringify(body))
-  assert.equal(typeof body.error, 'string')
-  assert.equal(body.message, body.error)
-  assert.equal(body.code, code)
-  return body
-}
-
-async function ok<T>(res: Response, schema: z.ZodType<T>): Promise<T> {
-  const body: unknown = await res.json()
-  assert.equal(res.status, 200, JSON.stringify(body))
-  return schema.parse(body)
-}
 
 const sql = (env: ContractEnv, query: string, uid: string) => psql(env.backend.databaseUrl, query, { uid })
 const post = (env: ContractEnv, path: string, uid?: string, body?: unknown, headers?: Record<string, string>) =>
