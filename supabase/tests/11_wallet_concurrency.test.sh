@@ -4,7 +4,7 @@
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 tmp="$(mktemp -d)"
-uid="$(q -c "select tests.make_user('conc_' || gen_random_uuid(), 100)")"
+uid="$(q -c "select tests.make_user('conc_' || left(gen_random_uuid()::text, 8), 100)")"
 trap 'q -c "delete from auth.users where id = '\''$uid'\''" >/dev/null; rm -rf "$tmp"' EXIT
 
 # Le profil est verrouillé le temps de lancer les 40 appels : ils se disputent tous le même verrou à sa libération.

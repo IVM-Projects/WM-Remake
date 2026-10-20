@@ -2,8 +2,9 @@
 
 do $$ begin assert enum_range(null::public.rarity)::text = '{C,PC,R,SR,UR,L}'; end $$;
 
-do $$ declare a uuid := tests.make_user('Alice'); begin
-  begin perform tests.make_user('alice'); assert false, 'pseudo en double accepté';
+-- L'index lui-même (le trigger d'inscription refuse avant lui, 20_accounts) : un renommage direct bute dessus.
+do $$ declare a uuid := tests.make_user('Alice'); m uuid := tests.make_user('Mallory'); begin
+  begin update public.profiles set username = 'alice' where id = m; assert false, 'pseudo en double accepté';
   exception when unique_violation then null; end;
 end $$;
 
