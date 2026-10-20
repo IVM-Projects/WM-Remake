@@ -98,7 +98,8 @@ do $$ declare u uuid := pg_temp.uid('Coll1'); s record; a uuid[]; b uuid[]; d js
     execute format('select array_agg(id order by %s obtained_at desc, id) from public.user_cards where user_id = $1', s.k) into b using u;
     assert cardinality(a) = 120 and (select count(distinct x) from unnest(a) x) = 120 and a = b, s.sort || ' : ' || a::text;
   end loop;
-  assert pg_temp.ids(wm.my_collection(u)) = (pg_temp.pages(u, 'rarity'))[1:50], 'tri par défaut';
+  assert pg_temp.ids(wm.my_collection(u)) = (pg_temp.pages(u, 'rarity'))[1:50]
+    and pg_temp.ids(wm.my_collection(u, p_sort => null)) = (pg_temp.pages(u, 'rarity'))[1:50], 'tri par défaut ou null';
   d := pg_temp.err(format('select wm.my_collection(%L, p_sort => %L)', u, 'xyz'));
   assert d = '{"status":400,"code":"invalid_request","error":"Tri inconnu","message":"Tri inconnu"}'::jsonb, coalesce(d::text, 'accepté');
 end $$;
@@ -158,6 +159,11 @@ do $$ declare u uuid := pg_temp.uid('Coll1'); v uuid := pg_temp.uid('Coll2'); r 
   r := wm.my_collection(u, p_owned_by => v);
   assert pg_temp.exactly(r, v, 'true') and r -> 'total' = '5' and not exists (select from jsonb_array_elements(r -> 'collection') e
     where e ->> 'user_id' <> v::text or e -> 'tags' <> '[]'), r::text;
+  -- Ses étiquettes (privées) ne filtrent rien pour moi : sans étiquette = ses 5 copies, son étiquette = aucune, page comme stats.
+  assert pg_temp.exactly(wm.my_collection(u, p_owned_by => v, p_untagged => true), v, 'true')
+    and wm.my_collection_stats(u, p_owned_by => v, p_untagged => true) -> 'total' = '5', 'sans étiquette chez un autre';
+  assert pg_temp.exactly(wm.my_collection(u, p_owned_by => v, p_tag_id => pg_temp.tag('secret')), v, 'false')
+    and wm.my_collection_stats(u, p_owned_by => v, p_tag_id => pg_temp.tag('secret')) -> 'total' = '0', 'étiquette d''un autre';
   foreach o in array array[pg_temp.uid('Coll3'), gen_random_uuid()] loop
     d := pg_temp.err(format('select wm.my_collection(%L, p_owned_by => %L)', u, o));
     assert d = '{"status":403,"code":"FORBIDDEN","error":"Cette collection est privée","message":"Cette collection est privée"}'::jsonb,
@@ -211,9 +217,10 @@ do $$ declare u uuid := pg_temp.uid('Coll1'); v uuid := pg_temp.uid('Coll2'); w 
 end $$;
 
 -- Triggers : insertion (grant_copy), count, cession (user_id), rareté et brillance, suppression, compte supprimé → invariants vides ;
--- starred seul ne réécrit pas les compteurs ; un écart est signalé.
+-- starred seul ne réécrit pas les compteurs ; un écart est signalé. Tout ça avec une colonne ajoutée aux compteurs (la table peut grandir).
 do $$ declare u uuid := pg_temp.uid('Coll1'); v uuid := pg_temp.uid('Coll2'); c uuid := pg_temp.card(7); k text; d jsonb; begin
   perform pg_temp.inv('insertion en masse');
+  alter table wm.user_rarity_counts add column extra text;
   perform wm.grant_copy(u, c, false);
   perform wm.grant_copy(u, c, true);
   perform pg_temp.inv('grant_copy');

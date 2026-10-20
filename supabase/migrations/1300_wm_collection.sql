@@ -18,17 +18,24 @@ create table if not exists wm.user_rarity_counts (
   primary key (user_id, snapshot_rarity, is_shiny)
 );
 
+-- Delta d'une clé, type propre au trigger : user_rarity_counts peut gagner des colonnes sans casser les écritures de user_cards.
+do $$ begin
+  if to_regtype('wm.rarity_delta') is null then
+    create type wm.rarity_delta as (user_id uuid, snapshot_rarity public.rarity, is_shiny boolean, rows int, copies int);
+  end if;
+end $$;
+
 -- Deltas groupés par clé (+ nouvelles lignes, − anciennes), puis un seul upsert ; une mise à jour qui ne touche pas les clés (starred) n'écrit rien.
 create or replace function wm.sync_rarity_counts()
 returns trigger language plpgsql security definer set search_path = '' as $$
-declare d wm.user_rarity_counts[] := '{}';
+declare d wm.rarity_delta[] := '{}';
 begin
   if tg_op <> 'DELETE' then
-    d := array(select (n.user_id, n.snapshot_rarity, n.is_shiny, count(*), sum(n.count))::wm.user_rarity_counts
+    d := array(select (n.user_id, n.snapshot_rarity, n.is_shiny, count(*), sum(n.count))::wm.rarity_delta
                from new_t n group by n.user_id, n.snapshot_rarity, n.is_shiny);
   end if;
   if tg_op <> 'INSERT' then
-    d := d || array(select (o.user_id, o.snapshot_rarity, o.is_shiny, -count(*), -sum(o.count))::wm.user_rarity_counts
+    d := d || array(select (o.user_id, o.snapshot_rarity, o.is_shiny, -count(*), -sum(o.count))::wm.rarity_delta
                     from old_t o group by o.user_id, o.snapshot_rarity, o.is_shiny);
   end if;
   -- Clés triées : deux instructions concurrentes verrouillent les compteurs dans le même ordre. Profil supprimé (cascade) : plus rien à tenir.
@@ -48,12 +55,14 @@ create or replace trigger user_cards_rarity_counts_upd after update on public.us
 create or replace trigger user_cards_rarity_counts_del after delete on public.user_cards
   referencing old table as old_t for each statement execute function wm.sync_rarity_counts();
 
--- Remplissage initial sous verrou (triggers déjà posés) : aucune écriture ne se glisse entre la lecture et l'upsert.
+-- Remplissage initial sous verrou (triggers déjà posés) : on vide puis on recalcule, car un trigger a pu écrire avant le verrou.
+-- lock_timeout : échouer plutôt que bloquer toutes les écritures en file derrière le verrou.
 do $$ begin
+  set local lock_timeout = '5s';
   lock table public.user_cards in share mode;
+  truncate wm.user_rarity_counts;
   insert into wm.user_rarity_counts (user_id, snapshot_rarity, is_shiny, rows, copies)
-  select user_id, snapshot_rarity, is_shiny, count(*), sum(count) from public.user_cards group by 1, 2, 3
-  on conflict (user_id, snapshot_rarity, is_shiny) do update set rows = excluded.rows, copies = excluded.copies;
+  select user_id, snapshot_rarity, is_shiny, count(*), sum(count) from public.user_cards group by 1, 2, 3;
 end $$;
 
 -- Titre + catégorie sans accents ni casse. immutable (unaccent n'est que stable) pour l'index trigramme du catalogue (Task 8).
@@ -79,9 +88,11 @@ begin
   return concat_ws(' and ', format('uc.user_id = %L', coalesce(p_owned_by, p_uid)),
     case when v_q is not null then format('strpos(wm.search_text(uc.snapshot_title, uc.snapshot_category), %L) > 0', v_q) end,
     case when p_rarity <> '{}' then format('uc.snapshot_rarity = any (%L)', p_rarity) end,
-    case when p_tag_id is not null
-      then format('exists (select from public.user_card_tags ut where ut.user_card_id = uc.id and ut.tag_id = %L)', p_tag_id) end,
-    case when p_untagged then 'not exists (select from public.user_card_tags ut where ut.user_card_id = uc.id)' end,
+    -- Étiquettes du lecteur seulement, comme les items : celles d'un autre joueur sont privées (RLS) et ne filtrent rien.
+    case when p_tag_id is not null then format('exists (select from public.user_card_tags ut join public.tags t on t.id = ut.tag_id
+      and t.user_id = %L where ut.user_card_id = uc.id and ut.tag_id = %L)', p_uid, p_tag_id) end,
+    case when p_untagged then format('not exists (select from public.user_card_tags ut join public.tags t on t.id = ut.tag_id
+      and t.user_id = %L where ut.user_card_id = uc.id)', p_uid) end,
     case when p_wishlisted_by is not null
       then format('uc.card_id in (select w.card_id from public.wishlist_items w where w.user_id = %L)', p_wishlisted_by) end);
 end $$;
@@ -115,7 +126,7 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_limit int := least(greatest(coalesce(p_limit, 50), 1), 50);
   -- Ordre stable : clé de tri, puis obtained_at desc, id ; rarity et obtained_at suivent leur index.
-  v_order text := case p_sort when 'rarity' then 'uc.snapshot_rarity desc, ' when 'obtained_at' then '' when 'added' then ''
+  v_order text := case coalesce(p_sort, 'rarity') when 'rarity' then 'uc.snapshot_rarity desc, ' when 'obtained_at' then '' when 'added' then ''
     when 'name' then 'uc.snapshot_title, ' when 'atk' then 'uc.snapshot_atk desc, ' when 'def' then 'uc.snapshot_def desc, '
     when 'starred' then 'uc.starred desc, ' end || 'uc.obtained_at desc, uc.id';
   v_ids uuid[];
