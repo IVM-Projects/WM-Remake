@@ -73,6 +73,8 @@ test.describe('avant l\'hydratation (JavaScript coupé)', () => {
     for (const [path, name] of [['/login', 'Se connecter'], ['/signup', 'Créer mon compte'], ['/forgot-password', 'Envoyer le lien']]) {
       await page.goto(path)
       await expect(page.getByRole('button', { name })).toHaveAttribute('disabled', '')
+      // Firefox peut réactiver le bouton avant l'hydratation (état restauré) : un envoi natif part alors en POST, jamais en GET avec le mot de passe dans l'adresse.
+      await expect(page.locator('form').filter({ has: page.getByRole('button', { name }) })).toHaveAttribute('method', 'post')
     }
   })
 })

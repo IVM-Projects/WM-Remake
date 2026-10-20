@@ -50,6 +50,8 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
   const [blank, setBlank] = useState(false)
   // Une Idempotency-Key par lot (ses copies), gardée tant que son issue est inconnue (apiOnce).
   const keys = useRef(new Map<string, string>())
+  // Sélection laissée par la dernière défausse (onDiscarded(keep)) : ses clés ne valent que pour elle, toute autre est une nouvelle intention.
+  const kept = useRef<string[] | null>(null)
   const none = ids.length === 0
   const off = none || loading
   const noTags = tagsFailed || !tags.length
@@ -116,6 +118,8 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
   }, 'L\'étiquette n\'a pas pu être retirée de toutes les cartes.')
 
   const discard = () => run(async () => {
+    // Même référence que keep : la relance de la sélection laissée ; sinon (même contenu resélectionné compris) les clés gardées ne servent plus.
+    if (ids !== kept.current) keys.current.clear()
     let done = 0
     let failed = 0
     // Copies des lots qui ont reçu un verdict du serveur ; keep : celles qui restent sélectionnées pour la relance.
@@ -126,9 +130,10 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
         const r = await apiOnce<{ discarded_count: number; failed?: unknown[] }>(keys.current, part.join(), '/api/user-cards/bulk-discard', {
           method: 'POST', body: JSON.stringify({ card_ids: part }),
         })
-        answered += part.length
+        // Réponse lue d'abord : un corps illisible (null) échoue ici, et ce lot reste dans keep.
         done += r.discarded_count
         failed += r.failed?.length ?? 0
+        answered += part.length
       }
       if (failed) setError(`${n(failed, 'carte n\'a', 'cartes n\'ont')} pas pu être défaussée${failed > 1 ? 's' : ''}.`)
     } catch (e) {
@@ -137,6 +142,7 @@ export function SelectionBar({ ids, loading, onSelectAll, tags, tagsFailed, onTa
       throw e
     } finally {
       if (done) toast(`${n(done, 'carte défaussée', 'cartes défaussées')} : +${n(done, 'wikibidou', 'wikibidous')}`)
+      kept.current = keep
       onDiscarded(keep)
     }
   }, 'La défausse s\'est arrêtée en cours de route.', BULK_UNSURE)

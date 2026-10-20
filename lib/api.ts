@@ -33,22 +33,26 @@ export async function api<T>(path: string, init: RequestInit & { idem?: boolean 
 }
 
 // Échec sans verdict du serveur (réseau, ≥ 500, page d'erreur de la plateforme) : l'action a pu avoir lieu.
+// Nos 503 codés (BUSY…) y tombent aussi : clé gardée et relectures sans danger, le serveur a tout annulé (texte : userMessage).
 export const unsure = (e: unknown): boolean => !(e instanceof ApiError) || e.status >= 500
 
-// Texte pour l'écran : nos routes répondent en français sous 500 ; réseau, ≥ 500 ou corps non JSON → le repli.
+// Texte pour l'écran : nos routes répondent en français ; ≥ 500, seulement avec leur code (BUSY, maintenance, catalog_empty :
+// refus net, tout annulé côté serveur). Réseau, 500 interne sans code ou corps non JSON → le repli.
 export function userMessage(e: unknown, fallback: string): string {
-  const b = e instanceof ApiError && e.status < 500 ? (e.body as { error?: unknown; message?: unknown } | null) : null
-  return typeof (b?.error ?? b?.message) === 'string' ? (e as ApiError).message : fallback
+  const b = e instanceof ApiError ? (e.body as { code?: unknown; error?: unknown; message?: unknown } | null) : null
+  const ours = e instanceof ApiError && (e.status < 500 || typeof b?.code === 'string')
+  return ours && typeof (b?.error ?? b?.message) === 'string' ? (e as ApiError).message : fallback
 }
 
 // Une Idempotency-Key par intention (design C6) : gardée dans `keys` tant que l'issue est inconnue, la relance rejoue
-// la réponse stockée au lieu d'agir deux fois ; oubliée dès que le serveur a tranché (2xx ou 4xx).
+// la réponse stockée au lieu d'agir deux fois ; oubliée dès qu'une réponse du serveur est lue (2xx au corps lisible, ou 4xx).
+// Un 2xx au corps illisible (connexion coupée après les en-têtes) rend null et garde la clé : l'appelant échoue sur null, la relance rejoue.
 export async function apiOnce<T>(keys: Map<string, string>, intent: string, path: string, init: RequestInit = {}): Promise<T> {
   const idem = keys.get(intent) ?? idemKey()
   keys.set(intent, idem)
   try {
     const body = await api<T>(path, { ...init, idem })
-    keys.delete(intent)
+    if (body !== null) keys.delete(intent)
     return body
   } catch (e) {
     if (!unsure(e)) keys.delete(intent)

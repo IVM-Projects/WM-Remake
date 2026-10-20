@@ -578,9 +578,8 @@ test('réponse perdue après la défausse (504) : la relance garde la clé, un s
   await expect(balance(page)).toHaveText('101 wikibidous')
 })
 
-test('défausse en masse, réponse du second lot perdue : la sélection garde ce lot, la relance rejoue sa clé', async ({ page, login }) => {
-  const { uid } = await login({ balance: 0 })
-  seed60(uid)
+// 60 copies sélectionnées et défaussées ; le second lot se fait côté serveur mais sa réponse est perdue (504). Rend les envois (clé, taille).
+async function loseSecondChunk(page: Page) {
   const sent: { key: string; size: number }[] = []
   page.on('request', (r) => {
     if (r.url().endsWith('/api/user-cards/bulk-discard')) sent.push({ key: r.headers()['idempotency-key'] ?? '', size: r.postDataJSON().card_ids.length })
@@ -605,14 +604,43 @@ test('défausse en masse, réponse du second lot perdue : la sélection garde ce
   // Le premier lot a répondu : il sort de la sélection ; le second, à l'issue inconnue, y reste.
   await expect(page.getByText('10 cartes sélectionnées')).toBeVisible()
   await expect(balance(page)).toHaveText('60 wikibidous')
+  return sent
+}
+
+async function discard10(page: Page) {
   await page.getByRole('button', { name: 'Défausser', exact: true }).click()
   await page.getByRole('dialog', { name: 'Défausser 10 cartes ?' }).getByRole('button', { name: 'Défausser', exact: true }).click()
+}
+
+test('défausse en masse, réponse du second lot perdue : la sélection garde ce lot, la relance rejoue sa clé', async ({ page, login }) => {
+  const { uid } = await login({ balance: 0 })
+  seed60(uid)
+  const sent = await loseSecondChunk(page)
+  await discard10(page)
   await expect(page.getByText('Aucune carte sélectionnée')).toBeVisible()
   expect(sent.map((s) => s.size)).toEqual([50, 10, 10])
   expect(sent[1].key).not.toBe(sent[0].key)
   expect(sent[2].key).toBe(sent[1].key)
   expect(sql(`select wikibidous_balance from public.profiles where id = :'uid'`, { uid })).toBe('60')
   await expect(tile(page, 31)).toContainText('x2')
+})
+
+test('défausse en masse, lot perdu puis sélection refaite (même contenu) : nouvelle intention, clé neuve, rien de rejoué', async ({ page, login }) => {
+  const { uid } = await login({ balance: 0 })
+  seed60(uid)
+  const sent = await loseSecondChunk(page)
+  // Grille relue : du second lot, fait côté serveur, il ne reste que n° 0031 (x2).
+  await expect(tiles(page)).toHaveCount(1)
+  await expect(tile(page, 31)).toContainText('x2')
+  await page.getByRole('button', { name: 'Tout sélectionner' }).click()
+  await expect(page.getByText('10 cartes sélectionnées')).toBeVisible()
+  await discard10(page)
+  await expect(page.getByText('9 cartes n\'ont pas pu être défaussées.')).toBeVisible()
+  expect(sent.map((s) => s.size)).toEqual([50, 10, 10])
+  expect(sent[2].key).not.toBe(sent[1].key)
+  // Défausse réelle : n° 0031 perd un exemplaire (rejouée, l'ancienne réponse aurait annoncé 10 cartes sans rien retirer).
+  expect(sql(`select count from public.user_cards where user_id = :'uid' and snapshot_title = :'t'`, { uid, t: title(31) })).toBe('1')
+  expect(sql(`select wikibidous_balance from public.profiles where id = :'uid'`, { uid })).toBe('61')
 })
 
 // Défausse de n° 0006 retenue, sa modale fermée par Échap, puis (another) n° 0005 ouverte avant la réponse.
@@ -671,6 +699,40 @@ test('défausse en échec après la fermeture de sa modale : le message passe pa
   await expect(page.locator('#wm-toasts')).toContainText(DISCARD_UNSURE)
   await expect(second).toBeVisible()
   await expect(second.getByRole('alert')).toHaveCount(0)
+})
+
+test('défausse finie pendant que /collection est cachée (Activity) : au retour, sa modale est fermée et la grille relue', async ({ page, login }) => {
+  const { uid } = await login({ balance: 100 })
+  seed60(uid)
+  sql(`update public.user_cards set count = 3 where user_id = :'uid' and snapshot_title = :'t'`, { uid, t: title(6) })
+  let seen = 0
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route(isDiscard, async (r) => {
+    seen++
+    await held
+    await r.continue()
+  }, { times: 1 })
+  await page.goto('/collection')
+  await opener(page, 6).click()
+  const dialog = page.getByRole('dialog', { name: title(6) })
+  await expect(dialog).toContainText('Exemplaires : 3')
+  await dialog.getByRole('button', { name: /^Défausser/ }).click()
+  await expect.poll(() => seen).toBe(1)
+  // Le voile de la modale couvre la barre latérale : le clic est remis au lien lui-même (navigation du routeur, page gardée par Activity).
+  await page.locator('nav a[href="/pulls"]').first().dispatchEvent('click')
+  await expect(page).toHaveURL('/pulls')
+  await expect(page.getByRole('button', { name: 'Ouvrir', exact: true })).toBeVisible()
+  const answered = page.waitForResponse((r) => isDiscard(new URL(r.url())))
+  release()
+  await answered
+  await expect(page.locator('#wm-toasts')).toContainText('Carte défaussée : +1 wikibidou')
+  await page.locator('nav a[href="/collection"]').first().click()
+  await expect(page).toHaveURL('/collection')
+  await expect(tile(page, 6)).toContainText('x2')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(balance(page)).toHaveText('101 wikibidous')
+  await expect(page.locator('body')).not.toBeFocused()
 })
 
 test('étoile sur une grille périmée : inactive (aria-disabled) et focalisable, jamais écrasée par la relecture en cours', async ({ page, login }) => {

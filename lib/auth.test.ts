@@ -13,13 +13,15 @@ describe('authErrorMessage', () => {
     expect(authErrorMessage({ code: 'invalid_credentials', message: 'Invalid login credentials' })).toBe('Adresse courriel ou mot de passe incorrect.')
   })
 
-  it('codes du projet hébergé (captcha, SMTP non configuré, plafond horaire d\'e-mails)', () => {
+  it('codes du projet hébergé (captcha, SMTP non configuré, plafond horaire d\'e-mails, plafond par IP)', () => {
     expect(authErrorMessage({ code: 'captcha_failed', message: 'captcha protection: request disallowed' }))
       .toBe('La vérification anti-bot a échoué, réessaie.')
     expect(authErrorMessage({ code: 'email_address_not_authorized', message: 'Email address not authorized' }))
       .toBe('L\'envoi d\'e-mails n\'est pas encore configuré, réessaie plus tard.')
     expect(authErrorMessage({ code: 'over_email_send_rate_limit', message: 'email rate limit exceeded' }))
       .toBe('Trop d\'e-mails envoyés, réessaie un peu plus tard.')
+    expect(authErrorMessage({ code: 'over_request_rate_limit', message: 'Request rate limit reached' }))
+      .toBe('Trop de tentatives depuis ce réseau, réessaie dans quelques minutes.')
   })
 
   it('le reste → message générique (jamais un texte anglais ni une clé héritée)', () => {

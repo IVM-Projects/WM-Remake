@@ -334,6 +334,9 @@ test('Pro du jour : Récupérer → révélation de 15 cartes', async ({ page, l
 
 // Page d'erreur de la plateforme (délai de la fonction dépassé) : texte brut, aucun JSON.
 const PLATFORM_504 = { status: 504, contentType: 'text/plain', body: 'An error occurred with your deployment\n\nFUNCTION_INVOCATION_TIMEOUT' }
+const OPEN_UNSURE = 'L\'ouverture n\'a pas été confirmée : le paquet a peut-être été ouvert, ses cartes sont alors déjà dans ta collection. Ton stock se met à jour.'
+// Zone de repos (tabindex=-1) : elle reprend le focus quand « Ouvrir » se désactive.
+const idleZone = (page: Page) => page.locator('div[tabindex="-1"]').filter({ has: openButton(page) })
 
 test('réponse perdue après l\'ouverture (504) : message français, stock relu, la relance garde la clé et rejoue le même paquet', async ({ page, login }) => {
   const { uid } = await login({ humanVerified: true })
@@ -350,7 +353,7 @@ test('réponse perdue après l\'ouverture (504) : message français, stock relu,
   await openButton(page).click()
   // Le stock est relu : le paquet ouvert là-bas est décompté.
   await expect(stockFrame(page)).toContainText('2 / 10')
-  await expect(page.getByText('L\'ouverture n\'a pas été confirmée : le paquet a peut-être été ouvert. Ton stock se met à jour.')).toBeVisible()
+  await expect(page.getByText(OPEN_UNSURE)).toBeVisible()
   await expect(page.getByText('Erreur 504')).toHaveCount(0)
   await openButton(page).click()
   await expect(counter(page, 1)).toBeVisible()
@@ -373,4 +376,23 @@ test('stock vidé ailleurs : « Ouvrir » refusé (0 paquet) garde le focus dans
   await expect(page.getByRole('status').filter({ hasText: 'Plus de paquets disponibles' })).toBeVisible()
   await expect(page.locator('body')).not.toBeFocused()
   await expect(page.locator('main :focus')).toHaveCount(1)
+})
+
+test('dernier paquet ouvert, réponse perdue (504) : stock relu à 0, le focus passe à la zone de repos, le message est annoncé', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  // L'ouverture du dernier paquet se fait côté serveur ; sa réponse est remplacée par la page d'erreur de la plateforme.
+  await page.route('**/api/packs/open', async (route) => {
+    await route.fetch()
+    await route.fulfill(PLATFORM_504)
+  }, { times: 1 })
+  await page.goto('/pulls')
+  await expect(stockFrame(page)).toContainText('1 / 10')
+  await openButton(page).focus()
+  await page.keyboard.press('Enter')
+  // La relecture voit 0 : « Ouvrir » se désactive, le focus ne doit pas tomber sur body.
+  await expect(stockFrame(page)).toContainText('0 / 10')
+  await expect(openButton(page)).toBeDisabled()
+  await expect(page.locator('body')).not.toBeFocused()
+  await expect(idleZone(page)).toBeFocused()
+  await expect(page.getByRole('main').getByRole('alert')).toHaveText(OPEN_UNSURE)
 })

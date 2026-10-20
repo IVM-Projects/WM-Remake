@@ -21,7 +21,9 @@ export function VerifyEmail() {
     )
   }
   return (
+    // Une autre adresse (page réaffichée par Activity) : formulaire neuf, sans le code, l'erreur ni le « Nouveau code envoyé » de l'ancienne.
     <OtpForm
+      key={email}
       email={email}
       onVerified={() => {
         sessionStorage.removeItem(VERIFY_EMAIL_KEY)

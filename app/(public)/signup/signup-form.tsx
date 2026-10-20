@@ -65,7 +65,7 @@ export function SignupForm() {
   if (email) return <OtpForm email={email} onVerified={() => window.location.replace('/pulls')} />
 
   return (
-    <form id="signup-form" onSubmit={submit} className="flex flex-col gap-4">
+    <form id="signup-form" method="post" onSubmit={submit} className="flex flex-col gap-4">
       <Field
         id="username"
         label="Pseudo"

@@ -42,7 +42,7 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    <form method="post" onSubmit={submit} className="flex flex-col gap-4">
       <Field id="email" label="Adresse courriel" type="email" autoComplete="email" />
       <Field id="password" label="Mot de passe" type="password" autoComplete="current-password" />
       <Link href="/forgot-password" className={`${linkClass} self-start`}>

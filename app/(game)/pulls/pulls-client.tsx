@@ -26,7 +26,7 @@ const OPEN = '/api/packs/open'
 const PRO_DAILY = '/api/packs/pro-daily'
 // Réponse perdue ou 5xx : l'action a pu avoir lieu. La relance garde sa clé (apiOnce) et rejoue la même réponse.
 const UNSURE: Record<string, string> = {
-  [OPEN]: 'L\'ouverture n\'a pas été confirmée : le paquet a peut-être été ouvert. Ton stock se met à jour.',
+  [OPEN]: 'L\'ouverture n\'a pas été confirmée : le paquet a peut-être été ouvert, ses cartes sont alors déjà dans ta collection. Ton stock se met à jour.',
   [PRO_DAILY]: 'La récupération n\'a pas été confirmée : le paquet Pro a peut-être été reçu. Réessaie pour le voir, il ne sera pas donné deux fois.',
 }
 
@@ -65,9 +65,16 @@ export function PullsClient() {
   const openBtn = useRef<HTMLButtonElement>(null)
   const idle = useRef<HTMLDivElement>(null)
 
+  // Stock vide sous le focus : « Ouvrir » va être désactivé (body sinon) ; la zone le reprend tout de suite, avant le rendu.
+  // Tout stock reçu passe par là : refus 403, relecture après un échec sans verdict, relecture périodique.
+  const keepFocus = (remaining: number) => {
+    if (remaining < 1 && document.activeElement === openBtn.current) idle.current?.focus()
+  }
   const apply = (s: Stock | null) => {
     setFailed(!s)
-    if (s) setStock(s)
+    if (!s) return
+    keepFocus(s.remaining)
+    setStock(s)
   }
   // Résout à true si un stock lisible a été affiché.
   const read = (keep: () => boolean = () => true) => {
@@ -121,10 +128,9 @@ export function PullsClient() {
       if (body?.packs_remaining === 0) {
         gen.current++
         setFailed(false)
+        // Dernier paquet ouvert ailleurs ; PackStock annonce le stock vide dans sa région polie.
+        keepFocus(0)
         setStock((s) => s && { ...s, remaining: 0, nextAt: at(body.next_regen_at) })
-        // Dernier paquet ouvert ailleurs : « Ouvrir » va être désactivé sous le focus (body sinon), la zone le reprend dès maintenant.
-        // PackStock annonce le stock vide dans sa région polie.
-        if (document.activeElement === openBtn.current) idle.current?.focus()
       } else setError(userMessage(e, maybe ? UNSURE[path] : 'Le paquet n\'a pas pu être ouvert, réessaie.'))
       if (maybe) void read()
     } finally {

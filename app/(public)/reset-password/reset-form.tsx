@@ -42,7 +42,7 @@ export function ResetForm() {
     )
   }
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    <form method="post" onSubmit={submit} className="flex flex-col gap-4">
       <Field id="password" label="Nouveau mot de passe" type="password" autoComplete="new-password" minLength={6} />
       {error && <FormError>{error}</FormError>}
       <Submit off={pending}>Enregistrer le mot de passe</Submit>

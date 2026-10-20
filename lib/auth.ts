@@ -21,6 +21,8 @@ const BY_CODE = new Map([
   // Projet hébergé : clés Turnstile dépareillées ou jeton déjà servi ; SMTP pas encore configuré (l'expéditeur intégré ne sert que l'organisation).
   ['captcha_failed', 'La vérification anti-bot a échoué, réessaie.'],
   ['email_address_not_authorized', 'L\'envoi d\'e-mails n\'est pas encore configuré, réessaie plus tard.'],
+  // Plafond par IP du projet hébergé (/token, /signup, /verify) : toute une salle derrière un même NAT l'atteint ensemble.
+  ['over_request_rate_limit', 'Trop de tentatives depuis ce réseau, réessaie dans quelques minutes.'],
 ])
 
 // sessionStorage et non l'URL (/verify-email?email=…) : l'adresse resterait dans les journaux de requêtes et l'historique.

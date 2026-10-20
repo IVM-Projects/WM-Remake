@@ -377,7 +377,8 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
                     starOff={stale}
                     count={item.count}
                     isShiny={item.is_shiny}
-                    onClick={selecting ? undefined : () => setOpen(item)}
+                    // Un objet par ouverture : une défausse tardive ne referme que la modale qui l'a lancée (voir onDiscarded).
+                    onClick={selecting ? undefined : () => setOpen({ ...item })}
                   />
                   {selecting && (
                     // Toute la tuile coche la case ; l'anneau émeraude marque les cartes retenues.
@@ -415,15 +416,20 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
           item={open}
           onClose={closeModal}
           onDiscarded={(b, closed) => {
-            if (b === null) readBalance()
-            else freshBalance(b)
             if (!closed) {
+              if (b === null) readBalance()
+              else freshBalance(b)
               dirty.current = true
               return
             }
+            // Réponse tardive (modale fermée) : le solde est relu, une défausse plus récente a pu en poser un plus frais.
+            readBalance()
             // Défausse finie après la fermeture de sa modale : grille relue tout de suite ; si sa tuile disparaît sous le focus, la suivante le prend.
             refocus.current = Math.max(0, items.findIndex((x) => x.id === open.id))
             refresh()
+            // Page cachée par Activity, sa modale encore ouverte : fermée, elle ne reviendrait pas sur la copie d'avant la défausse.
+            // Comparée à son ouverture (un objet par clic), jamais une modale ouverte depuis, même sur la même copie.
+            setOpen((o) => (o === open ? null : o))
           }}
           onChanged={(change) => onChanged(open.id, change)}
         />

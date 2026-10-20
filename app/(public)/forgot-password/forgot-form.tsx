@@ -32,7 +32,7 @@ export function ForgotForm() {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    <form method="post" onSubmit={submit} className="flex flex-col gap-4">
       <Field id="email" label="Adresse courriel" type="email" autoComplete="email" />
       {captcha.widget}
       {error && <FormError>{error}</FormError>}

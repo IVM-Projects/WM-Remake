@@ -38,7 +38,7 @@ export function OtpForm({ email, onVerified }: { email: string; onVerified: () =
   }
 
   return (
-    <form onSubmit={verify} className="flex flex-col gap-4">
+    <form method="post" onSubmit={verify} className="flex flex-col gap-4">
       <p className="text-sm text-foreground/70">Saisis le code envoyé à {email}.</p>
       <Field
         id="signup-otp-code"
