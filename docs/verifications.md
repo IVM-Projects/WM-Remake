@@ -96,17 +96,21 @@ Bac à sable, 2026-10-20, branche `claude/clever-cannon-59x0dj` (arbre du commit
 
 ## M1 — Task 16 : démo en production
 
-*(à compléter par le contrôleur après déploiement)*
+Projet `iggurckxmoagsajzrnwd`, 2026-10-20. Ordre suivi (R32) : base, puis variables Turnstile, puis fusion dans `develop`.
 
 | Élément | Méthode | Résultat | Date |
 |---|---|---|---|
-| CI de la branche | `ci.yml` (`workflow_dispatch`) | … | … |
-| Migrations `0003`, `1100`, `1200`, `1300`, `1400` | `apply_migration` | … | … |
-| Catalogue d'essai | `execute_sql` de `supabase/seed.sql` ; `select count(*) from public.cards` ; `select * from wm.catalog_stats` | … | … |
-| Trigger d'inscription | `select tgname from pg_trigger where tgrelid = 'auth.users'::regclass` | … | … |
-| Conseiller sécurité | `get_advisors` `security` | … | … |
-| Variables Turnstile | `create_project_env` (Production et Preview), redéploiement | … | … |
-| `/api/health` et `/signup` | `curl` | … | … |
-| Porte | Playwright sur la production, mauvais mot de passe seulement | … | … |
-| Parcours d'un étudiant, mot de passe, déconnexion | après les étapes humaines de `docs/superpowers/HANDOFF.md` | … | … |
-| Clé JWT de la démo | en-tête `alg` d'une vraie session | … | … |
+| CI de la branche | `ci.yml` (`workflow_dispatch`) | Vert sur 5153b0f (run 11), 96dd8c7 (run 12), 18c4b68 (run 13) et la tête finale 3b2be6a (run 16). Le run 14 (d1f8474) était rouge sur une analyse axe faite pendant une transition de couleur : `expectNoSeriousViolations` attend désormais la fin des animations (3b2be6a) | 2026-10-20 |
+| Migrations `0003`, `1100` | `apply_migration` (MCP) | Appliquées | 2026-10-20 |
+| Migrations `1200`, `1300`, `1400` et catalogue d'essai | SQL Editor du tableau de bord (fichier unique, une transaction), « Run without RLS » | Le MCP Supabase demande une confirmation pour toute requête qui contient `DELETE` (même dans le corps d'une fonction) ; la confirmation n'arrivait pas et chaque appel expirait à 60 s sans rien appliquer. L'humain a lancé le fichier ; `rebuild_draw_pool` = 2000. Les sept tables créées sont toutes dans `wm`, schéma fermé à `anon` et `authenticated`. Historique : lignes `1200_wm_packs`, `1300_wm_collection`, `1400_wm_catalog` ajoutées à `supabase_migrations.schema_migrations` (`created_by = 'sql-editor'`) | 2026-10-20 |
+| Catalogue d'essai | `select count(*) from public.cards` ; `wm.catalog_stats` | 2 000 cartes ; L 6, UR 24, SR 90, R 280, PC 600, C 1 000 ; `wm.check_invariants()` = `[]` | 2026-10-20 |
+| Trigger d'inscription | `pg_trigger` sur `auth.users` | `wm_on_auth_user_created` | 2026-10-20 |
+| Fonctions `wm` | `pg_proc`, `has_function_privilege`, `has_schema_privilege` | 38 fonctions, toutes `security definer`, aucune exécutable par `anon` ni `authenticated`, aucun `usage` de `wm` pour eux ; `wm_index.search_text`, `cards_title_prefix_idx`, `cards_search_trgm_idx`, `pg_trgm` et `unaccent` présents | 2026-10-20 |
+| Conseiller sécurité | `get_advisors` `security` | `WARN` 0011 sur `wm_index.search_text` (prévu, R14). 0028/0029 sur `public.rls_auto_enable()` : fonction du déclencheur d'événement `ensure_rls` fourni par Supabase (RLS automatique sur `public`), elle renvoie `event_trigger` et ne peut pas être appelée en RPC ; pas la nôtre, laissée. 0029 sur `get_my_profile` et `sync_profile_packs` : les deux RPC publiques voulues (R§3.1), qui vérifient `auth.uid()`. « Leaked password protection » désactivée : réglage Auth, étape humaine facultative | 2026-10-20 |
+| Cache de schéma de PostgREST | `curl` `POST /rest/v1/rpc/cards_page`, `Content-Profile: wm`, clé publiable, corps `{"p_uid": "0000…"}` | 401 `42501` « permission denied for schema wm » : fonction trouvée, refusée à `anon`. `GET /rest/v1/cards` en `anon` : 200, `content-range 0-999/2000` | 2026-10-20 |
+| Variables Turnstile | `create_project_env` (Production et Preview), **avant** la fusion | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` = `1x00000000000000000000AA` (plain), `TURNSTILE_SECRET_KEY` = clé de test publique (encrypted) | 2026-10-20 |
+| Fusion et déploiement | `git merge --no-ff` dans `develop` (247065d), build Vercel | `dpl_EPo32jCzs9Khpx6HYeuxHyQK8upY` READY en `dub1`, alias `wmr-ivm.vercel.app` ; aucune erreur d'exécution (`get_runtime_errors`, 1 h) | 2026-10-20 |
+| `/api/health` et redirections | `curl` | `/api/health` 200 `{"db":"ok"}` ; `/signup` et `/pulls` 307 vers `/gate?next=…` ; `/api/cards` sans session 401 ; `X-Robots-Tag: noindex, nofollow, noarchive` ; `robots.txt` `Disallow: /` | 2026-10-20 |
+| Porte | Playwright (Chromium) sur la production, mauvais mot de passe seulement | Reste sur `/gate?next=%2Fsignup`, « Mot de passe incorrect. », aucun cookie, aucune erreur de page | 2026-10-20 |
+| Parcours d'un étudiant, mot de passe, déconnexion | après les étapes humaines de `docs/superpowers/HANDOFF.md` | *(à faire par un étudiant)* | … |
+| Clé JWT de la démo | en-tête `alg` d'une vraie session | *(après la première vraie inscription)* | … |

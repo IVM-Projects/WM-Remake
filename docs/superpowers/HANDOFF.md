@@ -5,32 +5,32 @@
 ## Où on en est (2026-10-20)
 
 - **M0 livré** (2026-10-19) : fondations, CI, migrations `0001`, `0002`, `1000` sur la démo, production Vercel derrière la porte. Détail : `docs/verifications.md`.
-- **M1 implémenté et relu** sur la branche `claude/clever-cannon-59x0dj` : les 16 tâches du plan `docs/superpowers/plans/2026-10-19-m1-comptes-paquets-collection.md` (plan 4a087d0 sur `develop` cb510d3). Chaque tâche a eu une revue de conformité et une revue adverse, suivies de passes de correction. Le commit de passation 96dd8c7 ajoute aussi l'E2E du parcours (`e2e/journey.spec.ts`) et une correction de lint (dépendances d'effet de `global-client.tsx`). La revue finale de la branche (R31) a été suivie de trois vagues de correction (R32) : A auth et navigation (b691c33), B interface de jeu (8691e1d), C base, tests, CI et documentation (commit suivant). Les arbitrages R1 à R32 (R30 non attribué) sont dans `docs/decisions-graphify.md`.
+- **M1 implémenté et relu** sur la branche `claude/clever-cannon-59x0dj` : les 16 tâches du plan `docs/superpowers/plans/2026-10-19-m1-comptes-paquets-collection.md` (plan 4a087d0 sur `develop` cb510d3). Chaque tâche a eu une revue de conformité et une revue adverse, suivies de passes de correction. Le commit de passation 96dd8c7 ajoute aussi l'E2E du parcours (`e2e/journey.spec.ts`) et une correction de lint (dépendances d'effet de `global-client.tsx`). La revue finale de la branche (R31) a été suivie de trois vagues de correction (R32) : A auth et navigation (b691c33), B interface de jeu (8691e1d), C base, tests, CI et documentation (18c4b68), puis un dernier tour de code (R33 : d1f8474, 9139851, 3b2be6a). Les arbitrages R1 à R33 (R30 non attribué) sont dans `docs/decisions-graphify.md`.
   - Livré : inscription (pseudo, 18+, code à 6 chiffres par e-mail), connexion, réinitialisation ; `/pulls` (vérification anti-bot, régénération, ouverture, révélation, Pro du jour) ; routes `/api/packs/special` et `/api/packs/grace` (sans UI au M1, prévue au M6 dans `docs/suivi.md`) ; `/collection` (étiquettes, favoris, liste de souhaits, défausse unitaire et en masse, solde) ; `/global-collection` ; paramètres de base. Catalogue d'essai de 2 000 cartes (`supabase/seed.sql`).
   - Banc local : vrai GoTrue v2.197.0 et Mailpit v1.31.0 (binaires épinglés par `scripts/get-tools.sh`), en plus de PostgREST.
   - Critère de fin (D§13) : `e2e/journey.spec.ts` joue inscription → code → `/pulls` → paquet → collection → étiquette → défausse en un seul test, sans aucune insertion psql.
-- **Suite locale verte** (2026-10-20, arbre de la vague C) :
+- **Suite locale verte** (2026-10-20, tête finale 3b2be6a) :
 
   | Commande | Résultat |
   |---|---|
   | `npm run lint` | 0 erreur, 0 avertissement |
   | `npm run typecheck` | OK |
-  | `npm test` | 21 fichiers, 240 tests |
+  | `npm test` | 21 fichiers, 242 tests |
   | `npm run test:db` | 14 fichiers (9 `.sql`, 5 `.sh` dont 4 de concurrence) |
   | `npm run build:test` | OK |
   | `npm run test:contract` | 82 cas |
-  | `npm run test:e2e` | 119 tests, dont 20 passes axe sans violation *serious* ni *critical* |
+  | `npm run test:e2e` | 122 tests, dont 20 passes axe sans violation *serious* ni *critical* |
   | `npm run coverage:recap` | 28 routes couvertes sur 90 : tout le R§3.1 à §3.4 ; les 62 manquantes sont du §3.5 au §3.10 |
 
-- **Ce que la CI a validé** : `ci.yml` (`workflow_dispatch`) vert sur 5153b0f (run 11), sur 96dd8c7 (run 12, parcours E2E compris) et sur 18c4b68 (run 13, après les vagues A, B et C, cache des outils et tests de concurrence 12 et 14 sur postgres:17). Le dernier tour de code (R33) et ses retouches ont leur propre run, consigné ci-dessous.
+- **Ce que la CI a validé** : `ci.yml` (`workflow_dispatch`) vert sur 5153b0f (run 11), sur 96dd8c7 (run 12, parcours E2E compris) et sur 18c4b68 (run 13, après les vagues A, B et C, cache des outils et tests de concurrence 12 et 14 sur postgres:17). Puis sur la tête finale 3b2be6a (run 16), après le dernier tour de code (R33, d1f8474) et ses retouches.
 - **Ordre du déploiement (R32)** : base de démo (Step 4 du plan) **avant** la fusion dans `develop` (Step 3). `develop` est la branche de production de Vercel : fusionner d'abord servirait `/signup` sur une base sans le trigger `wm_on_auth_user_created`, et un compte créé dans cette fenêtre resterait sans profil. Les migrations sont additives et le code du M0 n'appelle que `wm.health` ; si le Step 4 échoue, la production reste intacte.
-- **CI, base de démo, fusion, variables Vercel, vérification en production** : *(à compléter par le contrôleur, dans cet ordre)*
-  - CI `ci.yml` (`workflow_dispatch`) sur la tête finale de la branche : …
-  - Migrations `0003`, `1100`, `1200`, `1300`, `1400` et seed sur `iggurckxmoagsajzrnwd`, conseillers, contrôles (2 000 cartes, `wm.catalog_stats`, trigger `wm_on_auth_user_created`) : …
-  - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` et `TURNSTILE_SECRET_KEY` (Production et Preview), **avant** la fusion : la clé de site est figée au build (`components/auth/Turnstile.tsx`), et sans secret `lib/turnstile.ts` refuse toute vérification ; posées avant, le build de la fusion les prend sans redéploiement : …
-  - Fusion `--no-ff` dans `develop` : …
-  - `/api/health` 200, `/signup` 307 vers `/gate`, porte qui refuse un mauvais mot de passe : …
-  - Cache de schéma de PostgREST : `POST /rest/v1/rpc/cards_page` avec `Content-Profile: wm`, la clé publiable et le corps `{"p_uid":"00000000-0000-0000-0000-000000000000"}` → 401 `42501` attendu (fonction trouvée, refusée à `anon`). Sans `p_uid`, PostgREST répond toujours 404 `PGRST202` (toutes les fonctions du M1 l'exigent) : un 404 dont l'indice nomme `wm.cards_page(p_uid, …)` veut dire « mauvais arguments », pas « cache périmé ». Un 404 avec le bon corps : `notify pgrst, 'reload schema'` (leçon du M0 dans `docs/verifications.md`) : …
+- **Démo M1 en production (2026-10-20)**, dans l'ordre R32 ; détail dans `docs/verifications.md` :
+  - CI verte sur la tête finale 3b2be6a (run 16) ; le run 14 avait été rouge sur une analyse axe faite pendant une transition, corrigé.
+  - Base `iggurckxmoagsajzrnwd` : `0003` et `1100` par le MCP ; `1200`, `1300`, `1400` et le catalogue d'essai par le SQL Editor (le MCP exige une confirmation pour tout SQL contenant `DELETE`, qui n'arrivait pas). Historique des migrations complété. 2 000 cartes, `wm.catalog_stats` conforme, trigger `wm_on_auth_user_created`, invariants vides, conseillers sans nouvelle alerte à nous.
+  - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` et `TURNSTILE_SECRET_KEY` (clés de test de Cloudflare) en Production et Preview, posées avant la fusion.
+  - Fusion `--no-ff` dans `develop` : 247065d, déployée (`dpl_EPo32jCzs9Khpx6HYeuxHyQK8upY`, READY).
+  - `/api/health` 200 avec `db: ok`, `/signup` 307 vers `/gate`, porte qui refuse un mauvais mot de passe sans cookie, cache de schéma de PostgREST à jour (401 `42501` sur `wm.cards_page`), aucune erreur d'exécution.
+  - Leçon pour la suite : appliquer par le MCP les migrations sans `DELETE`, et passer celles qui en contiennent par le SQL Editor (ou approuver la confirmation du MCP si elle s'affiche), puis inscrire la ligne d'historique.
 - Comptes : org Supabase « WM Prod » `xyyxepqjbgmhyocqqcbx`, projet « WMR » `iggurckxmoagsajzrnwd` ; équipe Vercel IVM `team_nXdYy8ZVSzoNaYlzG7a1whey`, projet `wmr` (région `dub1`, branche de production `develop`) ; dépôt `IVM-Projects/wm-remake` (flux `develop` intégration, `master` production, `hotfix`).
 
 ## Étapes humaines ouvertes
@@ -45,8 +45,9 @@
       - **Authentication → Sign In / Providers → Email** : longueur de l'OTP à 6 (le formulaire attend 6 chiffres) et expiration de l'OTP à 3600 s (le gabarit dit « Il expire dans une heure »). Désactiver « Secure password change » pour la démo : l'app ne joue pas le flux de réauthentification, et GoTrue ne la demande qu'aux sessions de plus de 24 h, si bien qu'un test le jour même ne verrait rien.
    3. **Authentication → Emails → SMTP** : Brevo, avec un domaine d'expédition contrôlé (D§15 n° 2). Sans SMTP, le service intégré de Supabase n'envoie qu'aux adresses des membres de l'organisation, avec un débit très bas. Avant le pitch, relever **Authentication → Rate Limits** → e-mails par heure : plusieurs inscriptions dans la même heure atteindraient sinon le plafond (« Trop d'e-mails envoyés, réessaie un peu plus tard. »).
    4. **Authentication → Attack Protection → Captcha** : Turnstile, avec le secret de test de Cloudflare `1x0000000000000000000000000000000AA` (sa clé de site `1x00000000000000000000AA` est posée dans Vercel au déploiement du M1). Avec une vraie paire de clés, mettre à jour aussi les deux variables Vercel `NEXT_PUBLIC_TURNSTILE_SITE_KEY` et `TURNSTILE_SECRET_KEY`, puis redéployer.
-   5. Facultatif : vérifier dans **Settings → JWT Keys** que la clé de signature est asymétrique (ECC P-256), sinon `getClaims()` interroge GoTrue à chaque requête. Après la première vraie inscription, lire l'en-tête `alg` d'une session et le consigner dans `docs/verifications.md` (point reporté du M0).
-   6. **Comptes de démo** : les créer par `/signup`. « Add user » ou « Invite » du tableau de bord, comme `auth.admin.createUser` sans les métadonnées `{username, age_confirmed: true, terms_version}`, sont refusés par le trigger d'inscription (`consent_required`, affiché « Database error creating new user »).
+   5. Facultatif : **Authentication → Attack Protection → Leaked password protection** (signalé par le conseiller sécurité ; refuse les mots de passe connus de HaveIBeenPwned, selon l'offre du projet).
+   6. Facultatif : vérifier dans **Settings → JWT Keys** que la clé de signature est asymétrique (ECC P-256), sinon `getClaims()` interroge GoTrue à chaque requête. Après la première vraie inscription, lire l'en-tête `alg` d'une session et le consigner dans `docs/verifications.md` (point reporté du M0).
+   7. **Comptes de démo** : les créer par `/signup`. « Add user » ou « Invite » du tableau de bord, comme `auth.admin.createUser` sans les métadonnées `{username, age_confirmed: true, terms_version}`, sont refusés par le trigger d'inscription (`consent_required`, affiché « Database error creating new user »).
 5. **Après ces réglages** : un étudiant joue le parcours complet sur la démo (inscription avec le vrai widget Turnstile, code reçu par e-mail, premier paquet, collection, étiquette, défausse) et le résultat est consigné dans `docs/verifications.md`. Vérifier aussi, sur le projet hébergé, le changement de mot de passe et la déconnexion de `/settings` (« Secure password change » désactivé à l'étape 4.2).
 6. **Pause Supabase Free** (7 jours sans activité) : écartée tant que `health.yml` interroge la production chaque jour ; s'il échoue, il ouvre une issue.
 
