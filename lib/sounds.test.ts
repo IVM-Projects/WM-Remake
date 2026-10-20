@@ -42,10 +42,13 @@ test('sons coupés : aucun contexte audio créé', async () => {
 })
 
 test('unlockAudio crée (et reprend) le contexte sans rien jouer : le son suivant le réutilise', async () => {
-  vi.stubGlobal('AudioContext', class extends FakeAudio { state = 'suspended'; resume = async () => undefined })
+  const resume = vi.fn(async () => undefined)
+  // Contexte suspendu (politique d'autoplay) : resume() doit être appelé dans le geste.
+  vi.stubGlobal('AudioContext', class extends FakeAudio { state = 'suspended'; resume = resume })
   const { playRip, unlockAudio } = await import('./sounds')
   unlockAudio()
   expect([FakeAudio.made, FakeAudio.oscillators]).toEqual([1, 0])
+  expect(resume).toHaveBeenCalledTimes(1)
   playRip()
   expect(FakeAudio.made).toBe(1)
 })

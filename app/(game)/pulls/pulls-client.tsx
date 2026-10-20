@@ -53,7 +53,7 @@ export function PullsClient() {
   const [verify, setVerify] = useState<string | null>(null)
   const inflight = useRef(false)
   const lastSync = useRef(0)
-  // Génération du stock : une ouverture réussie l'incrémente, une relecture partie avant elle arrive périmée et est jetée.
+  // Génération du stock : une réponse qui porte un stock frais l'incrémente, une relecture partie avant elle arrive périmée et est jetée.
   const gen = useRef(0)
   const openBtn = useRef<HTMLButtonElement>(null)
   const idle = useRef<HTMLDivElement>(null)
@@ -62,17 +62,24 @@ export function PullsClient() {
     setFailed(!s)
     if (s) setStock(s)
   }
+  // Résout à true si un stock lisible a été affiché.
   const read = (keep: () => boolean = () => true) => {
     const g = gen.current
     lastSync.current = Date.now()
-    void readStock().then((s) => { if (keep() && g === gen.current) apply(s) })
+    return readStock().then((s) => {
+      if (!keep() || g !== gen.current) return false
+      apply(s)
+      return !!s
+    })
   }
+  // Cible stable après la disparition d'un bouton (récapitulatif, « Réessayer ») : « Ouvrir », ou la zone s'il est désactivé.
+  const focusIdle = () => requestAnimationFrame(() => (openBtn.current && !openBtn.current.disabled ? openBtn.current : idle.current)?.focus())
 
   // Aussi au retour sur la page gardée cachée par Activity : ses effets reprennent, le stock est relu.
   const readOnShow = useEffectEvent(read)
   useEffect(() => {
     let live = true
-    readOnShow(() => live)
+    void readOnShow(() => live)
     return () => { live = false }
   }, [])
 
@@ -89,8 +96,12 @@ export function PullsClient() {
       if (token) await api('/api/human-check', { method: 'POST', idem: true, body: JSON.stringify({ token }) })
       const res = await api<PackResponse>(path, { method: 'POST', idem: true, headers: calendarTz() })
       const left = res.packs_remaining
-      gen.current++
-      if (left !== undefined) setStock((s) => s && { ...s, remaining: left, ...timing(res.packs_last_regen_at, res.next_regen_at) })
+      // Pro du jour : { cards } seulement, aucun stock, donc la relecture en cours (parfois la toute première) reste valable.
+      if (left !== undefined) {
+        gen.current++
+        setFailed(false)
+        setStock((s) => s && { ...s, remaining: left, ...timing(res.packs_last_regen_at, res.next_regen_at) })
+      }
       playRip()
       setCards(res.cards)
     } catch (e) {
@@ -99,6 +110,7 @@ export function PullsClient() {
       if (body?.code === 'human_verification_required' && !token) setVerify(path)
       if (body?.packs_remaining === 0) {
         gen.current++
+        setFailed(false)
         setStock((s) => s && { ...s, remaining: 0, nextAt: at(body.next_regen_at) })
       } else setError(e instanceof ApiError ? e.message : 'Le paquet n\'a pas pu être ouvert, réessaie.')
     } finally {
@@ -109,8 +121,7 @@ export function PullsClient() {
 
   function done() {
     setCards(null)
-    // Le récapitulatif disparaît avec son bouton : le focus revient sur « Ouvrir », ou sur la zone s'il est désactivé.
-    requestAnimationFrame(() => (openBtn.current && !openBtn.current.disabled ? openBtn.current : idle.current)?.focus())
+    focusIdle()
   }
 
   if (cards) return <PackOpening cards={cards} onDone={done} />
@@ -124,21 +135,24 @@ export function PullsClient() {
           openRef={openBtn}
           onOpen={() => void claim(OPEN)}
           // Après un échec, plus de relecture automatique : « Réessayer » la relance (pas de requête toutes les 5 s pour rien).
-          onElapsed={() => { if (!failed && Date.now() - lastSync.current > RESYNC_MS) read() }}
+          onElapsed={() => { if (!failed && Date.now() - lastSync.current > RESYNC_MS) void read() }}
         />
       )}
-      {failed ? (
-        <div role="status" className="card-frame flex w-full max-w-sm flex-col items-center gap-3 p-6 text-center">
-          <p className="text-sm">Ton stock de paquets n&apos;a pas pu être lu.</p>
+      {/* Région polie toujours présente et vide d'abord (un message déjà là à l'insertion n'est souvent pas lu) ; le bouton hors d'elle. */}
+      <div className={failed ? 'card-frame flex w-full max-w-sm flex-col items-center gap-3 p-6 text-center' : 'contents'}>
+        <p role="status" className={failed ? 'text-sm' : 'sr-only'}>{failed && 'Ton stock de paquets n\'a pas pu être lu.'}</p>
+        {failed && (
           <button
             type="button"
-            onClick={() => read()}
+            // Réussite : la note et ce bouton disparaissent ; le focus, tombé sur body, va sur « Ouvrir ».
+            onClick={() => void read().then((ok) => { if (ok) focusIdle() })}
             className="min-h-11 rounded-xl border border-[var(--color-foreground)]/40 px-4 text-sm font-medium transition-colors hover:bg-[var(--color-surface-light)]"
           >
             Réessayer
           </button>
-        </div>
-      ) : !stock && (
+        )}
+      </div>
+      {!failed && !stock && (
         <div className="flex min-h-64 flex-1 items-center justify-center" role="status">
           <div className="w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin" />
           <span className="sr-only">Chargement du stock de paquets</span>

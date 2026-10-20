@@ -210,19 +210,63 @@ test('une relecture du stock partie avant l\'ouverture n\'écrase pas le stock q
   await expect(openButton(page)).toBeDisabled()
 })
 
-test('relecture du stock en échec : message et « Réessayer » à côté du stock affiché', async ({ page, login }) => {
-  await login()
-  await page.goto('/pulls')
+// Le retour sur la page gardée par Activity relit le stock ; cette relecture-là échoue (une fois).
+async function failNextRead(page: Page) {
   await expect(stockFrame(page)).toContainText('1 / 10')
   await page.route('**/rest/v1/rpc/sync_profile_packs', (route) => route.abort(), { times: 1 })
   await page.locator('nav a[href="/collection"]').first().click()
   await expect(page).toHaveURL('/collection')
   await page.locator('nav a[href="/pulls"]').first().click()
-  const note = page.getByText('Ton stock de paquets n\'a pas pu être lu.')
-  await expect(note).toBeVisible()
+}
+const readFailed = (page: Page) => page.getByRole('status').filter({ hasText: 'Ton stock de paquets n\'a pas pu être lu.' })
+
+test('relecture du stock en échec : message et « Réessayer » à côté du stock ; réussite → focus sur « Ouvrir »', async ({ page, login }) => {
+  await login()
+  await page.goto('/pulls')
+  await failNextRead(page)
+  await expect(readFailed(page)).toBeVisible()
+  // Le bouton vit hors de la région polie.
+  await expect(readFailed(page).getByRole('button')).toHaveCount(0)
   await expect(stockFrame(page)).toContainText('1 / 10')
   await page.getByRole('button', { name: 'Réessayer' }).click()
-  await expect(note).toBeHidden()
+  await expect(readFailed(page)).toHaveCount(0)
+  await expect(openButton(page)).toBeFocused()
+})
+
+test('relecture en échec puis ouverture réussie : le stock frais efface le message', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await page.goto('/pulls')
+  await failNextRead(page)
+  await expect(readFailed(page)).toBeVisible()
+  await openPack(page)
+  for (let k = 0; k < 4; k++) await page.keyboard.press('ArrowRight')
+  await page.getByRole('button', { name: 'Continuer' }).click()
+  await page.getByRole('button', { name: 'Retour aux paquets' }).click()
+  await expect(stockFrame(page)).toContainText('0 / 10')
+  await expect(readFailed(page)).toHaveCount(0)
+})
+
+test('Pro du jour récupéré avant la toute première lecture du stock : le stock s\'affiche quand même', async ({ page, login }) => {
+  await login({ pro: true, humanVerified: true })
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  let delivered = () => {}
+  const served = new Promise<void>((r) => { delivered = r })
+  await page.route('**/rest/v1/rpc/sync_profile_packs', async (route) => {
+    const res = await route.fetch()
+    await held
+    await route.fulfill({ response: res })
+    delivered()
+  }, { times: 1 })
+  await page.goto('/pulls')
+  await page.getByRole('region', { name: 'Paquet PRO du jour' }).getByRole('button', { name: 'Récupérer' }).click()
+  await expect(counter(page, 1, 15)).toBeVisible()
+  release()
+  await served
+  for (let k = 0; k < 14; k++) await page.keyboard.press('ArrowRight')
+  await page.getByRole('button', { name: 'Continuer' }).click()
+  await page.getByRole('button', { name: 'Retour aux paquets' }).click()
+  await expect(stockFrame(page)).toContainText('1 / 10')
 })
 
 test.describe('en cours, sans mouvement', () => {
