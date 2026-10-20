@@ -99,6 +99,16 @@ function gateway(privateJwk: JsonWebKey): Server {
         json(200, ok ? { success: true } : { success: false, 'error-codes': ['invalid-input-response'] })
       })
     }
+    // Préflight CORS du navigateur (jamais d'apikey) : la passerelle y répond, comme le plugin cors de Kong chez Supabase.
+    // GoTrue refuserait l'en-tête apikey ; ses réponses portent déjà Access-Control-Allow-Origin: *.
+    if (req.method === 'OPTIONS') {
+      return void res.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS',
+        'access-control-allow-headers': req.headers['access-control-request-headers'] ?? '',
+        'access-control-max-age': '3600',
+      }).end()
+    }
     const upstream = UPSTREAMS.find(([prefix]) => url.startsWith(`${prefix}/`))
     if (!upstream) return json(404, { message: 'no Route matched with those values' })
     const [prefix, port] = upstream
