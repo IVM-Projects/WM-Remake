@@ -14,7 +14,8 @@ export const INTERNAL = 'Erreur interne, réessaie dans un instant.'
 export type RouteCtx = { uid: string | null; tz: string; idem: string | null; params: Record<string, string> }
 export type HttpError = { status: number; body: Record<string, unknown>; retryAfter?: number }
 
-const fail = (status: number, message: string, code?: string): HttpError =>
+// Corps D§8.2 ; aussi pour les hooks `pre`.
+export const fail = (status: number, message: string, code?: string): HttpError =>
   ({ status, body: { ...(code && { code }), error: message, message } })
 
 function parseDetail(details: string | null | undefined): Record<string, unknown> | null {
@@ -43,7 +44,8 @@ async function readInput(req: NextRequest): Promise<unknown> {
   const q = req.nextUrl.searchParams
   // Une clé répétée (rarity=L&rarity=UR) devient un tableau, une clé unique reste une chaîne.
   const query = () => Object.fromEntries(Array.from(new Set(q.keys()), (k) => [k, q.getAll(k).length > 1 ? q.getAll(k) : q.get(k)]))
-  if (req.method === 'GET') return query()
+  // HEAD : Next le sert par le handler GET, donc même entrée.
+  if (req.method === 'GET' || req.method === 'HEAD') return query()
   const text = await req.text()
   if (text === '') return req.method === 'DELETE' ? query() : {}
   return JSON.parse(text)
@@ -127,7 +129,9 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
       uid_hash: ctx.uid && createHash('sha256').update(ctx.uid).digest('hex').slice(0, 12),
       vercel_id: req.headers.get('x-vercel-id'),
     }))
-    const headers = out.retryAfter ? { 'Retry-After': String(out.retryAfter) } : undefined
+    // 429/503 sans échéance connue (un `pre` compris) : Retry-After: 1 quand même, les clients l'attendent.
+    const retryAfter = out.retryAfter || (out.status === 429 || out.status === 503 ? 1 : undefined)
+    const headers = retryAfter ? { 'Retry-After': String(retryAfter) } : undefined
     return Response.json(out.body, { status: out.status, headers })
   }
 }

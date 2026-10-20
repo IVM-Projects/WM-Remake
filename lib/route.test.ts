@@ -8,7 +8,7 @@ const schema = vi.fn(() => ({ rpc }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ auth: { getClaims } }) }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => ({ schema }) }))
 
-const { route, toHttpError, UNAUTHORIZED, BUSY, INTERNAL } = await import('@/lib/route')
+const { route, toHttpError, fail, UNAUTHORIZED, BUSY, INTERNAL } = await import('@/lib/route')
 
 const ctx = { params: Promise.resolve({}) }
 const req = (init: { method?: string; body?: string; headers?: Record<string, string>; query?: string } = {}) =>
@@ -226,9 +226,31 @@ describe('route()', () => {
     expect(rpc).toHaveBeenCalledTimes(1)
   })
 
+  it.each([429, 503])('pre renvoie un %i sans retryAfter → Retry-After: 1 ; un 400 n\'en porte pas', async (status) => {
+    signedIn()
+    const res = await route({ fn: 'fn', pre: async () => fail(status, 'm') })(req(), ctx)
+    expect(res.status).toBe(status)
+    expect(res.headers.get('Retry-After')).toBe('1')
+    expect((await route({ fn: 'fn', pre: async () => fail(400, 'm') })(req(), ctx)).headers.get('Retry-After')).toBeNull()
+  })
+
+  it('HEAD : entrée lue dans la query string comme GET', async () => {
+    signedIn()
+    const args = vi.fn(() => ({}))
+    await route({ fn: 'fn', input: z.looseObject({}), args })(req({ method: 'HEAD', query: '?page=2' }), ctx)
+    expect(args).toHaveBeenCalledWith({ page: '2' }, expect.anything())
+  })
+
   it('log : segments dynamiques masqués', async () => {
     await route({ fn: 'fn', auth: false })(new NextRequest('http://localhost/api/profile/abc-1/collection'), { params: Promise.resolve({ id: 'abc-1' }) })
     expect(JSON.parse(vi.mocked(console.log).mock.calls[0][0]).route).toBe('/api/profile/[id]/collection')
+  })
+})
+
+describe('fail', () => {
+  it('corps D§8.2 : code seulement s\'il est donné', () => {
+    expect(fail(400, 'm', 'c')).toStrictEqual({ status: 400, body: { code: 'c', error: 'm', message: 'm' } })
+    expect(fail(500, 'm')).toStrictEqual({ status: 500, body: { error: 'm', message: 'm' } })
   })
 })
 
