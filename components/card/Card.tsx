@@ -102,8 +102,8 @@ export function Card({ card, size = 'lg', owned, starred, onToggleStar, count = 
                 e.stopPropagation()
                 onToggleStar?.()
               }}
-              // Anneau de focus à l'intérieur : la carte (overflow-hidden) le couperait.
-              className="-m-2 inline-flex items-center justify-center rounded-full p-2 focus-visible:-outline-offset-2 disabled:cursor-default"
+              // Anneau de focus à l'intérieur : la carte (overflow-hidden) le couperait. ::after agrandit la cible vers l'intérieur de la carte, à 44 px au moins (D§8.6).
+              className="relative -m-2 inline-flex items-center justify-center rounded-full p-2 after:absolute after:top-0 after:right-0 after:-bottom-1.5 after:-left-1.5 focus-visible:-outline-offset-2 disabled:cursor-default"
             >
               <Star
                 className={`${s.star} drop-shadow-[0_1px_2px_rgb(0_0_0/0.6)] ${starred ? 'text-amber-200' : 'text-amber-200/65'}`}
@@ -137,15 +137,16 @@ export function Card({ card, size = 'lg', owned, starred, onToggleStar, count = 
               <span className="truncate">{friendOwner}</span>
             </span>
           )}
+          {/* svg puis span.font-bold, côte à côte (R§6.4) : l'étiquette sr-only passe avant l'icône. */}
           <div className={`flex w-full items-center justify-between border-t border-black/20 pt-1 py-1 ${s.stats}`}>
             <span className="inline-flex items-center gap-1">
-              <Swords className={`${s.icon} text-red-800`} />
               <span className="sr-only">ATK</span>
+              <Swords className={`${s.icon} text-red-800`} />
               <span className="font-bold text-black/90 tabular-nums">{formatInt(card.atk ?? 0)}</span>
             </span>
             <span className="inline-flex items-center gap-1">
-              <Shield className={`${s.icon} text-blue-800`} />
               <span className="sr-only">DEF</span>
+              <Shield className={`${s.icon} text-blue-800`} />
               <span className="font-bold text-black/90 tabular-nums">{formatInt(card.def ?? 0)}</span>
             </span>
           </div>

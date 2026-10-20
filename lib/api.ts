@@ -10,11 +10,15 @@ export class ApiError extends Error {
   }
 }
 
+// randomUUID n'existe qu'en contexte sécurisé (HTTPS, localhost) : en HTTP sur le réseau local, 128 bits de getRandomValues en hex.
+export const idemKey = (): string =>
+  crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('')
+
 // Client des routes /api depuis le navigateur ; `idem` pose une Idempotency-Key neuve (rejouer = même réponse côté serveur).
 export async function api<T>(path: string, init: RequestInit & { idem?: boolean } = {}): Promise<T> {
   const { idem, ...rest } = init
   const headers = new Headers(rest.headers)
-  if (idem) headers.set('Idempotency-Key', crypto.randomUUID())
+  if (idem) headers.set('Idempotency-Key', idemKey())
   if (typeof rest.body === 'string' && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const res = await fetch(path, { ...rest, headers })
   const body: unknown = await res.json().catch(() => null)

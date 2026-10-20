@@ -16,14 +16,14 @@ function subscribe(listener: () => void) {
   listeners.add(listener)
   if (!state.ready && !loading) {
     loading = true
-    api<{ sounds: boolean; hide_sensitive: boolean }>('/api/settings/preferences').then(
-      (p) => {
+    api<{ sounds?: unknown; hide_sensitive?: unknown } | null>('/api/settings/preferences')
+      .then((p) => {
+        if (typeof p?.sounds !== 'boolean' || typeof p.hide_sensitive !== 'boolean') throw new Error('préférences illisibles')
         state = { sounds: p.sounds, hideSensitive: p.hide_sensitive, ready: true }
         listeners.forEach((l) => l())
-      },
-      // Échec : on reste en mode prudent, le prochain montage réessaie.
-      () => { loading = false },
-    )
+      })
+      // Échec ou corps inattendu : on reste en mode prudent, le prochain montage réessaie.
+      .catch(() => { loading = false })
   }
   return () => { listeners.delete(listener) }
 }

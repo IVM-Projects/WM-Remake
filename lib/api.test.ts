@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { api, ApiError } from './api'
+import { api, ApiError, idemKey } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -32,4 +32,12 @@ test('une erreur lève ApiError { status, body } avec le message du serveur', as
   const err = await api('/api/user-cards/u1/discard', { method: 'POST' }).catch((e: unknown) => e)
   expect(err).toBeInstanceOf(ApiError)
   expect(err).toMatchObject({ status: 403, body: { code: '42501' }, message: 'Vous ne possédez pas cette carte' })
+})
+
+test('hors contexte sécurisé (pas de randomUUID), la clé vient de getRandomValues', () => {
+  const real = globalThis.crypto
+  vi.stubGlobal('crypto', { getRandomValues: (a: Uint8Array) => real.getRandomValues(a) })
+  const [a, b] = [idemKey(), idemKey()]
+  expect(a).toMatch(/^[0-9a-f]{32}$/)
+  expect(b).not.toBe(a)
 })

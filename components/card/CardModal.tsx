@@ -1,7 +1,7 @@
 'use client'
 
 import { Bookmark, BookmarkCheck, Sparkles, X } from 'lucide-react'
-import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
@@ -70,7 +70,9 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   const [tags, setTags] = useState(owned?.tags ?? [])
   const [meta, setMeta] = useState<Meta>({ summary: card.summary, q_score: card.q_score, pageviews: card.pageviews })
   const [wished, setWished] = useState<boolean | null>(null)
+  // Jamais disabled sur un bouton qu'on vient de presser : le navigateur poserait le focus sur body (aria-disabled et garde à la place).
   const [busy, setBusy] = useState(false)
+  const starring = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const needMeta = card.q_score === undefined || card.pageviews === undefined
   const isOwned = !!owned
@@ -91,10 +93,13 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   }, [card.id, needMeta, isOwned])
 
   async function toggleStar() {
-    if (!owned) return
+    // Un PATCH à la fois : un double clic laisserait l'écran et la base en désaccord.
+    if (!owned || starring.current) return
+    starring.current = true
     const next = !starred
     setStarred(next)
     const { error } = await createBrowserSupabase().from('user_cards').update({ starred: next }).eq('id', owned.id)
+    starring.current = false
     if (error) {
       setStarred(!next)
       setError('Le favori n\'a pas pu être enregistré.')
@@ -102,6 +107,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   }
 
   async function toggleWish() {
+    if (busy) return
     const sb = createBrowserSupabase()
     setBusy(true)
     setError(null)
@@ -117,7 +123,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   }
 
   async function discard() {
-    if (!owned) return
+    if (!owned || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -220,9 +226,9 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
                   // État encore inconnu = absent : un ajout en double revient en 23505, traité comme réussi.
                   <button
                     type="button"
-                    disabled={busy}
+                    aria-disabled={busy}
                     onClick={() => void toggleWish()}
-                    className={`inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-xl px-4 text-sm font-medium transition-colors disabled:opacity-45 ${wished ? 'border border-[var(--color-foreground)]/40 hover:bg-[var(--color-surface-light)]' : 'bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/15'}`}
+                    className={`inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-xl px-4 text-sm font-medium transition-colors aria-disabled:cursor-not-allowed aria-disabled:opacity-45 ${wished ? 'border border-[var(--color-foreground)]/40 hover:bg-[var(--color-surface-light)]' : 'bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/15'}`}
                   >
                     {wished ? <BookmarkCheck className="size-4 text-[var(--color-accent)]" /> : <Bookmark className="size-4" />}
                     {wished ? 'Retirer de ma liste de souhaits' : 'Ajouter à ma liste de souhaits'}
@@ -259,9 +265,9 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
             <div className="mt-auto flex flex-wrap gap-3 border-t border-[var(--color-border)] pt-4">
               <button
                 type="button"
-                disabled={busy}
+                aria-disabled={busy}
                 onClick={() => void discard()}
-                className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-[var(--color-foreground)]/40 px-4 text-sm font-medium transition-colors hover:bg-[var(--color-surface-light)] disabled:opacity-45"
+                className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-[var(--color-foreground)]/40 px-4 text-sm font-medium transition-colors hover:bg-[var(--color-surface-light)] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
               >
                 Défausser
                 <WCoin />

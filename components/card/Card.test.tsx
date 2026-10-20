@@ -80,8 +80,9 @@ describe('Card (DOM de R§6.4)', () => {
   test('stats : épées et bouclier, nombres en formatInt', () => {
     const h = html(<Card card={chat} />)
     expect(h).toContain('class="flex w-full items-center justify-between border-t border-black/20 pt-1 py-1')
-    expect(h).toMatch(/lucide-swords[^"]*text-red-800[\s\S]*?<span class="font-bold text-black\/90[^"]*">9 876<\/span>/)
-    expect(h).toMatch(/lucide-shield[^"]*text-blue-800[\s\S]*?<span class="font-bold text-black\/90[^"]*">6 974<\/span>/)
+    // svg.lucide-* + span.font-bold : frères directs (une extension lit nextElementSibling).
+    expect(h).toMatch(/<svg [^>]*class="lucide lucide-swords [^"]*text-red-800"[^>]*>(?:(?!<\/svg>).)*<\/svg><span class="font-bold text-black\/90[^"]*">9\u202f876<\/span>/)
+    expect(h).toMatch(/<svg [^>]*class="lucide lucide-shield [^"]*text-blue-800"[^>]*>(?:(?!<\/svg>).)*<\/svg><span class="font-bold text-black\/90[^"]*">6\u202f974<\/span>/)
   })
 
   test('sélecteur d\'extension div[class*="glow-"] h3 : le titre, en police des titres', () => {

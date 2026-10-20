@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useRef, type FocusEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]'
@@ -13,40 +13,63 @@ export function Modal({ onClose, labelledBy, className, children }: Props) {
   const panel = useRef<HTMLDivElement>(null)
   const downOnBackdrop = useRef(false)
 
+  // Sur document : Échap et Tab marchent même si le focus est tombé sur body. Un enfant garde Échap par preventDefault (liste d'étiquettes ouverte).
+  const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    const root = panel.current
+    if (e.defaultPrevented || !root) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+      return
+    }
+    if (e.key !== 'Tab') return
+    // Tabulables seulement : un bouton en tabindex=-1 (onglet inactif, option de liste) en bout de liste laisserait filer Tab.
+    const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0)
+    const [first, last] = [items[0], items[items.length - 1]]
+    const active = document.activeElement
+    const edge = e.shiftKey ? active === first || active === root : active === last
+    if (!first || edge || !root.contains(active)) {
+      e.preventDefault()
+      ;((e.shiftKey ? last : first) ?? root).focus()
+    }
+  })
+
   // Focus sur le panneau à l'ouverture, rendu à l'élément d'origine à la fermeture.
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null
     panel.current?.focus()
-    return () => opener?.focus()
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      opener?.focus()
+    }
   }, [])
 
-  // Événements React : un enfant (liste d'étiquettes ouverte) peut garder Échap pour lui par stopPropagation.
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.stopPropagation()
-      onClose()
-      return
-    }
-    if (e.key !== 'Tab' || !panel.current) return
-    // Tabulables seulement : un bouton en tabindex=-1 (onglet inactif, option de liste) en bout de liste laisserait filer Tab.
-    const items = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0)
-    const [first, last] = [items[0], items[items.length - 1]]
-    const active = document.activeElement
-    if (!first || (e.shiftKey ? active === first || active === panel.current : active === last)) {
-      e.preventDefault()
-      ;(e.shiftKey ? last : first)?.focus()
-    }
+  // Bouton désactivé ou retiré sous le focus : le navigateur le pose sur body ; on le ramène dans la modale.
+  // Le focus parti vers une autre fenêtre reste sur l'élément (activeElement inchangé) : rien à faire alors.
+  const onBlur = (e: FocusEvent) => {
+    if (e.relatedTarget) return
+    setTimeout(() => {
+      if (document.activeElement === document.body) panel.current?.focus()
+    })
   }
 
   const overlay = (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      onKeyDown={onKeyDown}
       // Un glisser commencé dans le panneau (sélection de texte) et relâché sur le voile ne ferme pas.
       onMouseDown={(e) => { downOnBackdrop.current = e.target === e.currentTarget }}
       onClick={(e) => { if (downOnBackdrop.current && e.target === e.currentTarget) onClose() }}
     >
-      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={labelledBy} tabIndex={-1} className={`${className} outline-none`}>
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
+        onBlur={onBlur}
+        className={`${className} outline-none`}
+      >
         {children}
       </div>
     </div>

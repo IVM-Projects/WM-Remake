@@ -71,12 +71,16 @@ export function TagPicker({ userCardId, tags, onChange }: Props) {
     }
   }
 
+  // Une écriture à la fois : ajout et retrait partent de la même liste `tags`, le second effacerait le premier à l'écran.
   async function remove(tag: Tag) {
+    if (busy) return
+    setBusy(true)
     const { error } = await createBrowserSupabase().from('user_card_tags').delete().eq('user_card_id', userCardId).eq('tag_id', tag.id)
+    setBusy(false)
     if (error) return setError('L\'étiquette n\'a pas pu être retirée.')
     setError(null)
     onChange(tags.filter((t) => t.id !== tag.id))
-    // Le bouton cliqué disparaît : le focus reste dans la modale.
+    // Le bouton cliqué disparaît : le focus reste dans la modale (la liste, elle, reste fermée).
     input.current?.focus()
   }
 
@@ -89,20 +93,21 @@ export function TagPicker({ userCardId, tags, onChange }: Props) {
       e.preventDefault()
       void add(expanded ? options[active] : undefined)
     } else if (e.key === 'Escape' && expanded) {
-      // Échap ferme d'abord la liste, la modale ensuite.
-      e.stopPropagation()
+      // Échap ferme d'abord la liste ; preventDefault dit à la modale (écoute sur document) de ne pas fermer.
+      e.preventDefault()
       setOpen(false)
     }
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {tags.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5">
+        // Puces de 32 px, cibles de retrait de 44 px : 12 px entre les lignes pour que les cibles ne se chevauchent pas.
+        <ul className="flex flex-wrap gap-x-2 gap-y-3">
           {tags.map((t) => (
             <li key={t.id} className="min-w-0 max-w-full">
               <span
-                className={`inline-flex max-w-full items-center gap-1 rounded-full py-0.5 pl-2.5 pr-0.5 text-xs font-semibold ${t.color ? '' : 'border border-[var(--color-border)] bg-[var(--color-surface-light)]'}`}
+                className={`inline-flex max-w-full items-center gap-1 rounded-full py-1 pl-2.5 pr-1 text-xs font-semibold ${t.color ? '' : 'border border-[var(--color-border)] bg-[var(--color-surface-light)]'}`}
                 style={t.color ? { backgroundColor: t.color, color: inkOn(t.color) } : undefined}
               >
                 {/* 48 caractères au plus : tronqué à l'écran, entier dans le DOM. */}
@@ -111,8 +116,8 @@ export function TagPicker({ userCardId, tags, onChange }: Props) {
                   type="button"
                   aria-label={`Retirer l'étiquette ${t.name}`}
                   onClick={() => void remove(t)}
-                  // Anneau dans l'encre de la puce : l'émeraude disparaîtrait sur une étiquette émeraude.
-                  className="inline-flex size-6 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-black/15 focus-visible:outline-current focus-visible:-outline-offset-2"
+                  // Anneau dans l'encre de la puce (l'émeraude disparaîtrait sur une étiquette émeraude) ; ::after porte la cible à 44 px (D§8.6).
+                  className="relative inline-flex size-6 shrink-0 items-center justify-center rounded-full transition-colors after:absolute after:-inset-2.5 hover:bg-black/15 focus-visible:outline-current focus-visible:-outline-offset-2"
                 >
                   <X className="size-3.5" />
                 </button>
@@ -141,13 +146,12 @@ export function TagPicker({ userCardId, tags, onChange }: Props) {
             setOpen(true)
             setActive(0)
           }}
-          onFocus={() => {
-            setOpen(true)
-            void load()
-          }}
+          // Le focus seul (rendu après un retrait de puce, par exemple) n'ouvre pas la liste : la frappe, les flèches ou un clic l'ouvrent.
+          onFocus={() => void load()}
+          onClick={() => setOpen(true)}
           onBlur={() => setOpen(false)}
           onKeyDown={onKeyDown}
-          className="w-full rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm placeholder:text-[var(--color-foreground)]/60"
+          className="w-full rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] min-h-11 px-3 py-2.5 text-sm placeholder:text-[var(--color-foreground)]/60"
         />
         {expanded && (
           <ul
@@ -166,7 +170,7 @@ export function TagPicker({ userCardId, tags, onChange }: Props) {
                   tabIndex={-1}
                   onClick={() => void add(t)}
                   onMouseEnter={() => setActive(i)}
-                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${i === active ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent-light)]' : ''}`}
+                  className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${i === active ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent-light)]' : ''}`}
                 >
                   {t ? (
                     <>
