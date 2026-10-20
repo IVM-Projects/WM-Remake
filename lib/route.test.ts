@@ -154,6 +154,78 @@ describe('route()', () => {
       uid_hash: 'bb82030dbc2b', vercel_id: 'dub1::abc' })
   })
 
+  it('POST à corps vide → input {} (pas de 400)', async () => {
+    signedIn()
+    const args = vi.fn(() => ({}))
+    const res = await route({ fn: 'fn', input: z.looseObject({}), args })(req({ method: 'POST' }), ctx)
+    expect(res.status).toBe(200)
+    expect(args).toHaveBeenCalledWith({}, expect.anything())
+    expect(rpc).toHaveBeenCalledTimes(1)
+  })
+
+  it('GET a=1&rarity=L&rarity=UR → { a: "1", rarity: ["L", "UR"] }', async () => {
+    signedIn()
+    const args = vi.fn(() => ({}))
+    await route({ fn: 'fn', input: z.looseObject({}), args })(req({ query: '?a=1&rarity=L&rarity=UR' }), ctx)
+    expect(args).toHaveBeenCalledWith({ a: '1', rarity: ['L', 'UR'] }, expect.anything())
+  })
+
+  it('params invalide → 400 français, aucune RPC (avant la lecture du corps)', async () => {
+    signedIn()
+    const handler = route({ fn: 'fn', params: z.object({ userCardId: z.uuid() }), input: z.looseObject({}) })
+    const res = await handler(req({ method: 'POST', body: '{' }), { params: Promise.resolve({ userCardId: 'abc' }) })
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.code).toBe('invalid_request')
+    expect(body.message).toMatch(/UUID/)
+    expect(body.message).not.toMatch(/JSON/)
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('params valide → ctx.params passé à args', async () => {
+    signedIn()
+    const id = '0b9a7c1e-4f2d-4a6b-9c3e-1d2f3a4b5c6d'
+    const handler = route({ fn: 'fn', params: z.object({ userCardId: z.uuid() }), args: (_, c) => ({ p_user_card_id: c.params.userCardId }) })
+    await handler(req({ method: 'POST' }), { params: Promise.resolve({ userCardId: id }) })
+    expect(rpc).toHaveBeenCalledWith('fn', { p_user_card_id: id, p_uid: 'u1' })
+  })
+
+  it('idem: true → p_idem transmis (null sans en-tête), absent sans idem', async () => {
+    signedIn()
+    await route({ fn: 'fn', idem: true })(req({ headers: { 'Idempotency-Key': 'k1' } }), ctx)
+    await route({ fn: 'fn', idem: true })(req(), ctx)
+    await route({ fn: 'fn' })(req({ headers: { 'Idempotency-Key': 'k1' } }), ctx)
+    expect(rpc.mock.calls.map((c) => c[1])).toStrictEqual([{ p_idem: 'k1', p_uid: 'u1' }, { p_idem: null, p_uid: 'u1' }, { p_uid: 'u1' }])
+  })
+
+  it('retry_after ISO → Retry-After en secondes, 1 pour une date passée', async () => {
+    signedIn()
+    const at = (ms: number) => JSON.stringify({ status: 429, retry_after: new Date(Date.now() + ms).toISOString(), error: 'm', message: 'm' })
+    pgError({ code: 'P0001', details: at(30_000) })
+    const s = Number((await route({ fn: 'fn' })(req(), ctx)).headers.get('Retry-After'))
+    expect(s).toBeGreaterThanOrEqual(29)
+    expect(s).toBeLessThanOrEqual(31)
+    pgError({ code: 'P0001', details: at(-5_000) })
+    expect((await route({ fn: 'fn' })(req(), ctx)).headers.get('Retry-After')).toBe('1')
+  })
+
+  it('pre renvoie une HttpError → réponse telle quelle, aucune RPC ; rien → RPC appelée', async () => {
+    const body = { ok: false, code: 'human_check_failed', error: 'x' }
+    const pre = vi.fn(async () => ({ status: 400, body, retryAfter: 5 }))
+    const handler = route({ fn: 'fn', input: z.object({ token: z.string() }), pre })
+    expect((await handler(req({ method: 'POST', body: '{"token":"t"}' }), ctx)).status).toBe(401)
+    expect(pre).not.toHaveBeenCalled()
+    signedIn()
+    const res = await handler(req({ method: 'POST', body: '{"token":"t"}' }), ctx)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toStrictEqual(body)
+    expect(res.headers.get('Retry-After')).toBe('5')
+    expect(pre).toHaveBeenCalledWith({ token: 't' }, expect.any(NextRequest))
+    expect(rpc).not.toHaveBeenCalled()
+    await route({ fn: 'fn', pre: async () => {} })(req(), ctx)
+    expect(rpc).toHaveBeenCalledTimes(1)
+  })
+
   it('log : segments dynamiques masqués', async () => {
     await route({ fn: 'fn', auth: false })(new NextRequest('http://localhost/api/profile/abc-1/collection'), { params: Promise.resolve({ id: 'abc-1' }) })
     expect(JSON.parse(vi.mocked(console.log).mock.calls[0][0]).route).toBe('/api/profile/[id]/collection')

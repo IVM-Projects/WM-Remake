@@ -12,7 +12,7 @@ export const BUSY = 'Le site est très sollicité, réessaie dans un instant.'
 export const INTERNAL = 'Erreur interne, réessaie dans un instant.'
 
 export type RouteCtx = { uid: string | null; tz: string; idem: string | null; params: Record<string, string> }
-type HttpError = { status: number; body: Record<string, unknown>; retryAfter?: number }
+export type HttpError = { status: number; body: Record<string, unknown>; retryAfter?: number }
 
 const fail = (status: number, message: string, code?: string): HttpError =>
   ({ status, body: { ...(code && { code }), error: message, message } })
@@ -33,24 +33,32 @@ export function toHttpError(err: { code?: string; message?: string; details?: st
   const { status, ...body } = detail ?? {}
   if (typeof status !== 'number' || !Number.isInteger(status) || status < 400 || status > 599) return fail(500, INTERNAL)
   if (status !== 429 && status !== 503) return { status, body }
-  const after = Number(body.retry_after)
+  // Un retry_after non numérique est une échéance ISO (ex. next_regen_at) : on la convertit en secondes restantes.
+  const n = Number(body.retry_after)
+  const after = Number.isNaN(n) ? (Date.parse(String(body.retry_after)) - Date.now()) / 1000 : n
   return { status, body, retryAfter: Number.isFinite(after) && after > 0 ? Math.ceil(after) : 1 }
 }
 
 async function readInput(req: NextRequest): Promise<unknown> {
-  const query = () => Object.fromEntries(req.nextUrl.searchParams)
+  const q = req.nextUrl.searchParams
+  // Une clé répétée (rarity=L&rarity=UR) devient un tableau, une clé unique reste une chaîne.
+  const query = () => Object.fromEntries(Array.from(new Set(q.keys()), (k) => [k, q.getAll(k).length > 1 ? q.getAll(k) : q.get(k)]))
   if (req.method === 'GET') return query()
   const text = await req.text()
-  return req.method === 'DELETE' && text === '' ? query() : JSON.parse(text)
+  if (text === '') return req.method === 'DELETE' ? query() : {}
+  return JSON.parse(text)
 }
 
 type Outcome = { status: number; body: unknown; retryAfter?: number; pgCode?: string }
 
-export function route<I = undefined>(opts: {
+export function route<I = undefined, P = Record<string, string>>(opts: {
   fn: string
   auth?: boolean
   input?: z.ZodType<I>
-  args?: (input: I, ctx: RouteCtx) => Record<string, unknown>
+  params?: z.ZodType<P>
+  idem?: boolean
+  pre?: (input: I, req: NextRequest) => Promise<HttpError | void>
+  args?: (input: I, ctx: RouteCtx & { params: P }) => Record<string, unknown>
 }): (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response> {
   const auth = opts.auth ?? true
 
@@ -62,6 +70,12 @@ export function route<I = undefined>(opts: {
     }
     if (ctx.idem !== null && (ctx.idem.length < 1 || ctx.idem.length > 128)) {
       return fail(400, 'Idempotency-Key invalide (1 à 128 caractères).', 'invalid_request')
+    }
+    let params = ctx.params as P
+    if (opts.params) {
+      const parsed = opts.params.safeParse(ctx.params)
+      if (!parsed.success) return fail(400, parsed.error.issues[0].message, 'invalid_request')
+      params = parsed.data
     }
     let input = undefined as I
     if (opts.input) {
@@ -75,8 +89,14 @@ export function route<I = undefined>(opts: {
       if (!parsed.success) return fail(400, parsed.error.issues[0].message, 'invalid_request')
       input = parsed.data
     }
+    const denied = await opts.pre?.(input, req)
+    if (denied) return denied
     // p_uid posé en dernier : un handler ne peut pas le remplacer par un uid venu du client.
-    const args = { ...opts.args?.(input, ctx), ...(auth && { p_uid: ctx.uid }) }
+    const args = {
+      ...opts.args?.(input, { ...ctx, params } as RouteCtx & { params: P }),
+      ...(opts.idem && { p_idem: ctx.idem }),
+      ...(auth && { p_uid: ctx.uid }),
+    }
     const { data, error } = await createAdminClient().schema('wm').rpc(opts.fn, args)
     if (error) return { ...toHttpError(error), pgCode: error.code }
     return { status: 200, body: data ?? null }
