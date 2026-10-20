@@ -1,7 +1,7 @@
 -- Paquets (1200_wm_packs.sql) : pool de tirage, ouverture et ses gardes, brillantes, Pro du jour, paquets spéciaux, grâce.
 -- Mini-catalogue créé ici (le seed n'est pas chargé) ; now() est figé pour tout le fichier.
 
--- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune) ; l'effet de p_sql est annulé.
+-- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune) ; l'effet de p_sql n'est annulé que si p_sql lève.
 create function pg_temp.err(p_sql text) returns jsonb language plpgsql as $$
 declare d text; begin
   execute p_sql;
@@ -149,6 +149,20 @@ do $$ declare u uuid := pg_temp.player('Cap1', 5); w text := 'Etc/GMT+12'; dw da
   assert (select opens_day = dp and opens_day_count = 1 from wm.user_state where user_id = u), 'compteur du jour non remis à 1';
 end $$;
 
+-- Fuseau connu de PG → tel quel ; null ou inconnu de PG → Europe/Paris : le plafond suit le jour de Paris, sans erreur.
+do $$ declare u uuid := pg_temp.player('Tz1', 5); dp date := (now() at time zone 'Europe/Paris')::date; d jsonb; tz text; begin
+  assert wm.safe_tz('Etc/GMT+12') = 'Etc/GMT+12' and wm.safe_tz(null) = 'Europe/Paris' and wm.safe_tz('Mars/Olympus') = 'Europe/Paris', 'safe_tz';
+  update wm.user_state set opens_day = dp, opens_day_count = 600 where user_id = u;
+  foreach tz in array array[null, 'Mars/Olympus'] loop
+    d := pg_temp.err(format('select wm.open_pack(%L, %L)', u, tz));
+    assert d -> 'rate_limit_daily' = 'true' and (d ->> 'retry_after')::timestamptz = (dp + 1)::timestamp at time zone 'Europe/Paris',
+      coalesce(tz, 'null') || ' → ' || coalesce(d::text, 'accepté');
+  end loop;
+  update wm.user_state set opens_day = dp - 1 where user_id = u;
+  perform wm.open_pack(u, 'Mars/Olympus');
+  assert (select opens_day = dp and opens_day_count = 1 from wm.user_state where user_id = u), 'jour de Paris non utilisé';
+end $$;
+
 -- Stock vide → 403 avec next_regen_at.
 do $$ declare u uuid := pg_temp.player('Stock0', 0); d jsonb; begin
   update public.profiles set packs_last_regen_at = now() - interval '1 minute' where id = u;
@@ -239,6 +253,14 @@ do $$ declare n uuid := pg_temp.player('ProNo'); u uuid := pg_temp.player('ProYe
   assert wm.pro_daily_status(n, w) ->> 'eligible' = 'true', 'VIP non éligible';
 end $$;
 
+-- Paquet Pro du jour sans fuseau → réclamé au jour de Paris.
+do $$ declare u uuid := pg_temp.player('ProTz'); begin
+  update public.profiles set is_pro = true where id = u;
+  assert jsonb_array_length(wm.pro_daily_claim(u, null) -> 'cards') = 15, 'réclamation sans fuseau';
+  assert exists (select from wm.pro_daily_claims where user_id = u and day = (now() at time zone 'Europe/Paris')::date), 'jour de la réclamation';
+  assert wm.pro_daily_status(u, 'Mars/Olympus') ->> 'claimed_today' = 'true', wm.pro_daily_status(u, 'Mars/Olympus')::text;
+end $$;
+
 -- Paquets spéciaux : aucun actif → vide ; actif → listé, réclamé (size cartes sans les exclues, stock intact), puis 409 et retiré de la liste ;
 -- inconnu ou terminé → 404.
 do $$ declare u uuid := pg_temp.player('Spec1', 4); a uuid; r jsonb; d jsonb; begin
@@ -269,4 +291,12 @@ do $$ declare u uuid := pg_temp.player('Grace1'); g1 bigint; g2 bigint; d jsonb;
   assert (select claimed_at = now() from wm.grace_grants where id = g1) and (select claimed_at is null from wm.grace_grants where id = g2), 'claimed_at';
   assert jsonb_array_length(wm.claim_grace(u) -> 'cards') = 4, 'seconde dotation';
   assert pg_temp.err(format('select wm.claim_grace(%L)', u)) = d, 'dotation réclamée deux fois';
+end $$;
+
+-- Taille d'un paquet spécial ou d'une dotation de grâce : strictement positive.
+do $$ declare u uuid := tests.make_user('Size0'); begin
+  begin insert into wm.special_packs (name, size) values ('Vide', 0); assert false, 'paquet spécial de taille 0 accepté';
+  exception when check_violation then null; end;
+  begin insert into wm.grace_grants (user_id, size) values (u, 0); assert false, 'dotation de taille 0 acceptée';
+  exception when check_violation then null; end;
 end $$;

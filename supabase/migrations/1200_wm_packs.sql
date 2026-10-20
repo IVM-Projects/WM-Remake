@@ -36,7 +36,7 @@ create table if not exists wm.special_packs (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   description text,
-  size int not null default 5,
+  size int not null default 5 check (size > 0),
   exclude public.rarity[] not null default '{}',
   starts_at timestamptz,
   ends_at timestamptz
@@ -52,7 +52,7 @@ create table if not exists wm.special_pack_claims (
 create table if not exists wm.grace_grants (
   id bigint generated always as identity primary key,
   user_id uuid not null references public.profiles (id) on delete cascade,
-  size int not null default 5,
+  size int not null default 5 check (size > 0),
   reason text,
   created_by uuid,
   created_at timestamptz not null default now(),
@@ -148,10 +148,22 @@ begin
   end if;
 end $$;
 
+-- Fuseau que PG ne connaît pas (Intl en accepte d'autres) ou null : Europe/Paris, comme route(), au lieu d'un 500 ou d'un jour null.
+-- Sondé par `at time zone` : pg_timezone_names relit toute la base tz (10 ms mesurés) à chaque appel.
+create or replace function wm.safe_tz(p_tz text)
+returns text language plpgsql stable security definer set search_path = '' as $$
+begin
+  perform now() at time zone p_tz;
+  return coalesce(p_tz, 'Europe/Paris');
+exception when invalid_parameter_value then
+  return 'Europe/Paris';
+end $$;
+
 create or replace function wm.open_pack(p_uid uuid, p_tz text, p_idem text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
-  v_day date := (now() at time zone p_tz)::date;
+  v_tz text := wm.safe_tz(p_tz);
+  v_day date := (now() at time zone v_tz)::date;
   v_min int := (select value::int from wm.config where key = 'open_min_interval_s');
   v_cap int := (select value::int from wm.config where key = 'open_daily_cap');
   v_win interval := (select make_interval(secs => (value ->> 'window_s')::int) from wm.config where key = 'open_burst');
@@ -176,7 +188,7 @@ begin
   end if;
   if s.opens_day = v_day and s.opens_day_count >= v_cap then
     perform wm.raise_err(429, null, 'Limite quotidienne de paquets atteinte',
-      jsonb_build_object('rate_limit_daily', true, 'retry_after', (v_day + 1)::timestamp at time zone p_tz));
+      jsonb_build_object('rate_limit_daily', true, 'retry_after', (v_day + 1)::timestamp at time zone v_tz));
   end if;
   if p.packs_remaining < 1 then
     perform wm.raise_err(403, null, 'Plus de paquets disponibles',
@@ -205,7 +217,8 @@ create or replace function wm.pro_daily_status(p_uid uuid, p_tz text)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_cfg jsonb := (select value from wm.config where key = 'pro_daily');
-  v_day date := (now() at time zone p_tz)::date;
+  v_tz text := wm.safe_tz(p_tz);
+  v_day date := (now() at time zone v_tz)::date;
   v_pro boolean := (select is_pro or is_vip from public.profiles where id = p_uid);
   v_today boolean := exists (select from wm.pro_daily_claims where user_id = p_uid and day = v_day);
   v_next timestamptz;
@@ -213,7 +226,7 @@ begin
   if v_pro is null then
     perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
   end if;
-  v_next := greatest(case when v_today then (v_day + 1)::timestamp at time zone p_tz end,
+  v_next := greatest(case when v_today then (v_day + 1)::timestamp at time zone v_tz end,
     (select max(claimed_at) from wm.pro_daily_claims where user_id = p_uid) + make_interval(hours => (v_cfg ->> 'min_gap_h')::int));
   if v_next <= now() then
     v_next := null;
@@ -226,6 +239,7 @@ create or replace function wm.pro_daily_claim(p_uid uuid, p_tz text, p_idem text
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_cfg jsonb := (select value from wm.config where key = 'pro_daily');
+  v_tz text := wm.safe_tz(p_tz);
   v_resp jsonb;
 begin
   v_resp := wm.idem_claim(p_uid, p_idem);
@@ -236,7 +250,7 @@ begin
   perform wm.lock_user(p_uid);
   perform wm.apply_regen(p_uid);
   perform wm.pack_guard(p_uid);
-  v_resp := wm.pro_daily_status(p_uid, p_tz);  -- sous le verrou du profil : deux réclamations concurrentes se suivent
+  v_resp := wm.pro_daily_status(p_uid, v_tz);  -- sous le verrou du profil : deux réclamations concurrentes se suivent
   if not (v_resp ->> 'is_pro')::boolean then
     perform wm.raise_err(403, 'pro_required', 'Fonction réservée aux membres Pro');
   end if;
@@ -244,7 +258,7 @@ begin
     perform wm.raise_err(409, 'already_claimed', 'Paquet Pro du jour déjà récupéré',
       jsonb_build_object('next_claim_at', v_resp -> 'next_claim_at'));
   end if;
-  insert into wm.pro_daily_claims (user_id, day) values (p_uid, (now() at time zone p_tz)::date);
+  insert into wm.pro_daily_claims (user_id, day) values (p_uid, (now() at time zone v_tz)::date);
   return wm.idem_store(p_uid, p_idem, jsonb_build_object('cards', wm.draw_cards(p_uid, (v_cfg ->> 'size')::int,
     array(select jsonb_array_elements_text(v_cfg -> 'exclude'))::public.rarity[])));
 end $$;
