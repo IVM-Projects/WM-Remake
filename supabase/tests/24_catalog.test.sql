@@ -25,19 +25,22 @@ create function pg_temp.pages(p_uid uuid, n int, p_q text default null, p_rarity
   select coalesce(array_agg(x order by p, o), '{}')
   from generate_series(0, n - 1) p, unnest(pg_temp.ids(wm.cards_page(p_uid, p, p_q, p_rarity, p_wishlist, p_missing))) with ordinality u (x, o)
 $$;
--- Ordre des pages hors arithmétique : rareté desc, titre, id.
+-- Ordre du catalogue dans tous les modes (D§7.4) : rareté desc, seq du pool (carte hors pool en dernier), id.
 create function pg_temp.sorted(p_where text) returns uuid[] language plpgsql as $$
 declare a uuid[]; begin
-  execute format('select coalesce(array_agg(c.id order by c.rarity desc, c.wikipedia_title, c.id), ''{}'') from public.cards c where %s', p_where) into a;
+  execute format('select coalesce(array_agg(c.id order by c.rarity desc, d.seq nulls last, c.id), ''{}'') from public.cards c
+    left join wm.draw_pool d on d.card_id = c.id where %s', p_where) into a;
   return a;
 end $$;
 
--- Index du D§9.4 sur public.cards.
-do $$ begin
+-- Index du D§9.4 sur public.cards ; search_path vide : indexdef qualifie alors extensions.gin_trgm_ops quel que soit le chemin (Supabase).
+do $$ declare sp text := current_setting('search_path'); begin
+  perform set_config('search_path', '', true);
   assert exists (select from pg_indexes where schemaname = 'public' and indexname = 'cards_title_prefix_idx'
     and indexdef like '%ON public.cards USING btree (lower(wikipedia_title) text_pattern_ops)'), 'index préfixe absent';
   assert exists (select from pg_indexes where schemaname = 'public' and indexname = 'cards_search_trgm_idx'
-    and indexdef like '%ON public.cards USING gin (wm.search_text(wikipedia_title, category) extensions.gin_trgm_ops)'), 'index trigramme absent';
+    and indexdef like '%ON public.cards USING gin (wm_index.search_text(wikipedia_title, category) extensions.gin_trgm_ops)'), 'index trigramme absent';
+  perform set_config('search_path', sp, true);
 end $$;
 
 -- 130 cartes : L 1-3, UR 4-58, SR 59-65, R 66-85, PC 86-90, C 91-130 ; catégorie « Géographie humaine » pour 61-120 (60 cartes).
@@ -107,16 +110,17 @@ do $$ declare u uuid := pg_temp.uid('Cat1'); r jsonb; d jsonb; q text; begin
   assert r -> 'total' = 'null' and not r ? 'rarityCounts' and r -> 'searchHasMore' = 'false', r - 'cards';
   assert pg_temp.ids(wm.cards_page(u, p_q => 'ÉL')) = array[pg_temp.card(1)], 'préfixe accentué';
   assert pg_temp.ids(wm.cards_page(u, p_q => 'gé')) = '{}', 'préfixe sur la catégorie';
-  assert pg_temp.ids(wm.cards_page(u, p_q => ' ZOO ')) = array[pg_temp.card(3), pg_temp.card(2)], 'trigramme dans le titre';
+  assert pg_temp.ids(wm.cards_page(u, p_q => ' ZOO ')) = pg_temp.sorted(format('c.id in (%L, %L)', pg_temp.card(2), pg_temp.card(3))),
+    'trigramme dans le titre';
   assert pg_temp.ids(wm.cards_page(u, p_q => 'ELECTRICITE')) = array[pg_temp.card(1)]
     and pg_temp.ids(wm.cards_page(u, p_q => 'électricité statique')) = array[pg_temp.card(1)], 'sans accents ni casse';
   r := wm.cards_page(u, p_q => 'GÉOGRAPHIE');
   assert jsonb_array_length(r -> 'cards') = 50 and r -> 'searchHasMore' = 'true' and r -> 'total' = 'null' and not r ? 'rarityCounts', r - 'cards';
   r := wm.cards_page(u, 1, 'geographie');
   assert jsonb_array_length(r -> 'cards') = 10 and r -> 'searchHasMore' = 'false', r - 'cards';
-  assert pg_temp.pages(u, 2, 'geographie') = pg_temp.sorted($w$category = 'Géographie humaine'$w$), 'catégorie, ordre rareté desc puis titre';
-  assert pg_temp.pages(u, 1, 'geographie', '{C,PC}') = pg_temp.sorted($w$category = 'Géographie humaine' and rarity in ('C', 'PC')$w$)
-    and cardinality(pg_temp.sorted($w$category = 'Géographie humaine' and rarity in ('C', 'PC')$w$)) = 35, 'recherche et rareté';
+  assert pg_temp.pages(u, 2, 'geographie') = pg_temp.sorted($w$category = 'Géographie humaine'$w$), 'catégorie, ordre rareté desc puis seq';
+  assert pg_temp.pages(u, 1, 'geographie', '{C,PC}') = pg_temp.sorted($w$category = 'Géographie humaine' and c.rarity in ('C', 'PC')$w$)
+    and cardinality(pg_temp.sorted($w$category = 'Géographie humaine' and c.rarity in ('C', 'PC')$w$)) = 35, 'recherche et rareté';
   assert pg_temp.pages(u, 3, 'carte') = pg_temp.sorted($w$wikipedia_title like 'Carte %'$w$), 'recherche sur trois pages';
   assert wm.cards_page(u, p_q => '__') -> 'cards' = '[]' and wm.cards_page(u, p_q => '%%%') -> 'cards' = '[]'
     and wm.cards_page(u, p_q => 'zo%') -> 'cards' = '[]', 'jokers LIKE pris à la lettre';
@@ -128,7 +132,7 @@ do $$ declare u uuid := pg_temp.uid('Cat1'); r jsonb := wm.cards_page(pg_temp.ui
   assert cardinality(want) = 4 and pg_temp.ids(r) = want and r -> 'total' = '4' and not r ? 'searchHasMore', r::text;
   assert pg_temp.uuids(r -> 'wishlistCardIds') = want, 'wishlistCardIds';
   r := wm.cards_page(u, p_rarity => '{C}', p_wishlist => true);
-  assert pg_temp.ids(r) = array[pg_temp.card(100), pg_temp.card(120)] and r -> 'total' = '2', r::text;
+  assert pg_temp.ids(r) = pg_temp.sorted(format('c.id in (%L, %L)', pg_temp.card(100), pg_temp.card(120))) and r -> 'total' = '2', r::text;
   r := wm.cards_page(u, p_q => 'carte', p_wishlist => true);
   assert pg_temp.ids(r) = pg_temp.sorted(format('id in (%L, %L, %L)', pg_temp.card(70), pg_temp.card(100), pg_temp.card(120)))
     and r -> 'total' = 'null' and r -> 'searchHasMore' = 'false', r::text;
@@ -159,6 +163,28 @@ do $$ declare u uuid := pg_temp.uid('Cat1'); r jsonb; owned uuid[] := '{}'; wish
   end loop;
   assert cardinality(owned) = 11 and (select count(distinct x) from unnest(owned) x) = 11 and not pg_temp.card(11) = any (owned), owned::text;
   assert cardinality(wished) = 4 and not pg_temp.card(12) = any (wished), wished::text;
-  assert pg_temp.uuids(wm.cards_page(u, p_q => 'zoo') -> 'ownedCardIds') = array[pg_temp.card(3), pg_temp.card(2)], 'overlay de recherche';
+  assert pg_temp.uuids(wm.cards_page(u, p_q => 'zoo') -> 'ownedCardIds') = pg_temp.sorted(format('c.id in (%L, %L)', pg_temp.card(2), pg_temp.card(3))),
+    'overlay de recherche';
   assert wm.cards_page(null) -> 'ownedCardIds' = '[]' and wm.cards_page(null) -> 'wishlistCardIds' = '[]', 'sans joueur';
+end $$;
+
+-- Option A : un rôle sans autre droit que ceux de la table écrit public.cards (l'index évalue wm_index.search_text, exécutable par tous).
+-- La carte, hors pool, sort en fin de rareté ; une recherche sans lettre ni chiffre rend une page vide, même si un titre contient « !!! ».
+do $$ declare r jsonb; q text; begin
+  create role tests_cards_writer nologin bypassrls;
+  grant select, insert, update on public.cards to tests_cards_writer;
+  set local role tests_cards_writer;
+  insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, category)
+  values ('Tardive !!! - -', 'https://fr.wikipedia.org/wiki/Cat_131', 'L', 1, 1, 'Divers');
+  update public.cards set category = 'Géographie tardive' where wikipedia_url = 'https://fr.wikipedia.org/wiki/Cat_131';
+  reset role;
+  assert pg_temp.ids(wm.cards_page(null, p_q => 'GEOGRAPHIE TARDIVE')) = array[pg_temp.card(131)], 'carte écrite par le rôle de table';
+  r := wm.cards_page(null, p_q => 'géographie', p_rarity => '{L}');
+  assert pg_temp.ids(r) = array[pg_temp.card(131)] and not exists (select from wm.draw_pool where card_id = pg_temp.card(131)), r::text;
+  assert pg_temp.ids(wm.cards_page(null, p_rarity => '{L}', p_missing => true))
+    = array(select card_id from wm.draw_pool where rarity = 'L' order by seq) || pg_temp.card(131), 'hors pool en dernier';
+  foreach q in array array['!!!', '- -', '!!! - -'] loop
+    r := wm.cards_page(null, p_q => q);
+    assert r -> 'cards' = '[]' and r -> 'total' = 'null' and r -> 'searchHasMore' = 'false' and not r ? 'rarityCounts', q || ' : ' || r::text;
+  end loop;
 end $$;

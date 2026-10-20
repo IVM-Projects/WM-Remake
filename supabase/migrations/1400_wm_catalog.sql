@@ -1,10 +1,11 @@
 -- ADDITIVE : catalogue (D§7.4, D§9.4, R§3.4) — index de recherche sur public.cards, pages arithmétiques sur draw_pool, overlay joueur. Idempotente.
+-- Option A : pg_trgm et unaccent dans extensions, wm_index.search_text (1300) avant l'index, et les deux index créés CONCURRENTLY par le runbook sur la table en service.
 
 create extension if not exists pg_trgm with schema extensions;
 
 create index if not exists cards_title_prefix_idx on public.cards (lower(wikipedia_title) text_pattern_ops);
--- Expression = wm.search_text (1300) : la redéfinir impose un REINDEX de cet index.
-create index if not exists cards_search_trgm_idx on public.cards using gin (wm.search_text(wikipedia_title, category) extensions.gin_trgm_ops);
+-- Expression = wm_index.search_text (1300) : la redéfinir impose un REINDEX de cet index.
+create index if not exists cards_search_trgm_idx on public.cards using gin (wm_index.search_text(wikipedia_title, category) extensions.gin_trgm_ops);
 
 -- Recherche ou manquantes : total null et searchHasMore sans rarityCounts, d'où le bandeau « Recherche active » (D§7.4).
 create or replace function wm.cards_page(p_uid uuid, p_page int default 0, p_q text default null, p_rarity public.rarity[] default null,
@@ -40,14 +41,16 @@ begin
     -- Valeurs en littéraux : le plan ne garde que les filtres posés, et le préfixe LIKE constant peut prendre l'index.
     v_where := concat_ws(' and ',
       case when char_length(v_q) = 2 then format('lower(c.wikipedia_title) like %L', v_pat || '%')
-           when v_q is not null then format('wm.search_text(c.wikipedia_title, c.category) like %L', '%' || v_pat || '%') end,
+           -- Ni lettre ni chiffre : aucun trigramme, l'index rendrait tout le catalogue à trier ; 'false' coupe le plan sans lecture.
+           when v_q !~ '[[:alnum:]]' then 'false'
+           when v_q is not null then format('wm_index.search_text(c.wikipedia_title, c.category) like %L', '%' || v_pat || '%') end,
       case when v_rar is not null then format('c.rarity = any (%L)', v_rar) end,
       case when p_wishlist then format('exists (select from public.wishlist_items w where w.user_id = %L and w.card_id = c.id)', p_uid) end,
       -- shortcut: anti-jointure, tri complet et offset ; à revoir au M8 sur le catalogue complet (2,77 M cartes).
       case when p_missing then format('not exists (select from public.user_cards uc where uc.user_id = %L and uc.card_id = c.id)', p_uid) end);
-    -- 51 lues : la 51e décide searchHasMore.
-    execute format('select array(select c.id from public.cards c where %s order by c.rarity desc, c.wikipedia_title, c.id limit 51 offset %s)',
-      v_where, v_off) into v_ids;
+    -- 51 lues : la 51e décide searchHasMore. Ordre du catalogue dans chaque rareté (seq, D§7.4) ; une carte hors pool vient en fin de rareté.
+    execute format('select array(select c.id from public.cards c left join wm.draw_pool d on d.card_id = c.id where %s
+      order by c.rarity desc, d.seq nulls last, c.id limit 51 offset %s)', v_where, v_off) into v_ids;
     if v_q is null and p_missing is not true then
       execute format('select count(*) from public.cards c where %s', v_where) into v_n;
       v_meta := jsonb_build_object('total', v_n);

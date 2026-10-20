@@ -36,16 +36,21 @@ create function pg_temp.inv(p_label text) returns void language plpgsql as $$ be
   assert wm.check_invariants() = '[]'::jsonb, p_label || ' : ' || wm.check_invariants()::text;
 end $$;
 
--- Index du D§9.4 ; wm.search_text immutable et parallel safe, sans accents ni casse.
+-- Index du D§9.4 ; wm_index.search_text immutable et parallel safe, sans accents ni casse, sans security definer ni SET, exécutable par tous.
 do $$ declare p text; begin
   foreach p in array array['user_cards USING btree (user_id, obtained_at DESC, id)',
     'user_cards USING btree (user_id, snapshot_rarity DESC, obtained_at DESC, id)', 'user_cards USING btree (card_id, user_id)',
     'user_cards USING btree (user_id) WHERE starred', 'wishlist_items USING btree (card_id)'] loop
     assert exists (select from pg_indexes where schemaname = 'public' and indexdef like '%ON public.' || p), 'index absent : ' || p;
   end loop;
-  assert wm.search_text('Électricité STATIQUE', 'Géographie') = 'electricite statique geographie', wm.search_text('Électricité STATIQUE', 'Géographie');
-  assert wm.search_text('Œuvre', null) = 'oeuvre ', wm.search_text('Œuvre', null);
-  assert (select provolatile = 'i' and proparallel = 's' from pg_proc where oid = 'wm.search_text(text, text)'::regprocedure), 'search_text non immutable';
+  assert wm_index.search_text('Électricité STATIQUE', 'Géographie') = 'electricite statique geographie',
+    wm_index.search_text('Électricité STATIQUE', 'Géographie');
+  assert wm_index.search_text('Œuvre', null) = 'oeuvre ', wm_index.search_text('Œuvre', null);
+  assert (select provolatile = 'i' and proparallel = 's' and not prosecdef and proconfig is null from pg_proc
+          where oid = 'wm_index.search_text(text, text)'::regprocedure), 'search_text non immutable, ou security definer, ou avec SET';
+  assert has_function_privilege('anon', 'wm_index.search_text(text, text)', 'execute') and has_schema_privilege('anon', 'wm_index', 'usage'),
+    'wm_index.search_text non exécutable par tous';
+  assert to_regprocedure('wm.search_text(text, text)') is null, 'wm.search_text encore là';
   assert not has_type_privilege('anon', 'wm.rarity_delta', 'usage'), 'wm.rarity_delta : USAGE resté à PUBLIC';
 end $$;
 

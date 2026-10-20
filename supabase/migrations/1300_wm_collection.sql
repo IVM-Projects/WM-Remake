@@ -65,11 +65,17 @@ do $$ begin
   select user_id, snapshot_rarity, is_shiny, count(*), sum(count) from public.user_cards group by 1, 2, 3;
 end $$;
 
--- Titre + catégorie sans accents ni casse. immutable (unaccent n'est que stable) pour l'index trigramme du catalogue (Task 8).
-create or replace function wm.search_text(t text, c text)
-returns text language sql immutable parallel safe security definer set search_path = '' as $$
-  select extensions.unaccent('extensions.unaccent', lower(t || ' ' || coalesce(c, '')))
-$$;
+-- Fonctions immuables des index, exécutables par tous : les rôles de l'original qui écrivent public.cards doivent pouvoir les évaluer (option A).
+create schema if not exists wm_index;
+grant usage on schema wm_index to public;
+
+-- Titre + catégorie sans accents ni casse. immutable (unaccent n'est que stable) pour l'index trigramme du catalogue.
+-- Corps SQL standard (return) : résolu une fois à la création, l'écrivain n'a besoin d'aucun droit sur le schéma extensions.
+create or replace function wm_index.search_text(t text, c text)
+returns text language sql immutable parallel safe
+return extensions.unaccent('extensions.unaccent'::pg_catalog.regdictionary,
+  pg_catalog.lower(t operator(pg_catalog.||) ' ' operator(pg_catalog.||) coalesce(c, '')));
+grant execute on function wm_index.search_text(text, text) to public;
 
 -- Clause where (ET) des copies lues par my_collection et my_collection_stats, valeurs en littéraux : le plan ne garde que les filtres posés.
 create or replace function wm.collection_filter(p_uid uuid, p_q text, p_rarity public.rarity[], p_tag_id uuid, p_untagged boolean,
@@ -86,7 +92,7 @@ begin
     perform wm.raise_err(403, 'FORBIDDEN', 'Vous devez être amis pour voir sa liste de souhaits');
   end if;
   return concat_ws(' and ', format('uc.user_id = %L', coalesce(p_owned_by, p_uid)),
-    case when v_q is not null then format('strpos(wm.search_text(uc.snapshot_title, uc.snapshot_category), %L) > 0', v_q) end,
+    case when v_q is not null then format('strpos(wm_index.search_text(uc.snapshot_title, uc.snapshot_category), %L) > 0', v_q) end,
     case when p_rarity <> '{}' then format('uc.snapshot_rarity = any (%L)', p_rarity) end,
     -- Étiquettes du lecteur seulement, comme les items : celles d'un autre joueur sont privées (RLS) et ne filtrent rien.
     case when p_tag_id is not null then format('exists (select from public.user_card_tags ut join public.tags t on t.id = ut.tag_id
