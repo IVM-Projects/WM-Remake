@@ -10,6 +10,7 @@ import { CollectionToolbar, type TagCount } from '@/components/collection/Collec
 import { SelectionBar } from '@/components/collection/SelectionBar'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
+import { Loading } from '@/components/ui/Loading'
 import { Pagination } from '@/components/ui/Pagination'
 import { WCoin } from '@/components/ui/WCoin'
 import { api } from '@/lib/api'
@@ -41,16 +42,6 @@ function go(patch: Record<string, string | string[] | null>, replace = false) {
   const url = s ? `?${s}` : window.location.pathname
   if (replace) window.history.replaceState(null, '', url)
   else window.history.pushState(null, '', url)
-}
-
-// Chargement du R§6.3 ; sert aussi de repli à la page tant que l'adresse n'est pas lue.
-export function Loading() {
-  return (
-    <div className="flex-1 flex items-center justify-center py-16" role="status">
-      <div className="w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin" />
-      <span className="sr-only">Chargement de la collection</span>
-    </div>
-  )
 }
 
 export function CollectionClient() {
@@ -326,7 +317,7 @@ export function CollectionClient() {
           </div>
         </div>
       ) : !data ? (
-        <Loading />
+        <Loading label="Chargement de la collection" />
       ) : items.length === 0 ? (
         <div ref={empty} tabIndex={-1} className="card-frame mx-auto flex max-w-md flex-col items-center gap-3 p-8 text-center outline-none">
           {filtered ? (

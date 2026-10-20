@@ -154,3 +154,17 @@ describe('page de la collection', () => {
     expect(contrast(over('#ffffff', 0.8, surface), over('#c10007', 0.8, surface))).toBeGreaterThanOrEqual(4.5)
   })
 })
+
+// /settings et /global-collection : textes dans les panneaux card-frame des sections et de l'en-tête du catalogue.
+describe('paramètres et catalogue', () => {
+  it.each([
+    ['« Pseudo modifié. », émeraude clair sur le panneau', '--color-accent-light', '--color-surface'],
+    ['erreur de champ (FormError), red-300 sur le panneau', '#ffa2a2', '--color-surface'],
+    ['aide sous un champ ou une case, /70 sur le panneau', fg(0.7, '--color-surface'), '--color-surface'],
+    ['bouton principal inactif, /60 sur surface claire', fg(0.6, '--color-surface-light'), '--color-surface-light'],
+  ])('%s ≥ 4,5:1', (_label, c, bg) => expect(contrast(resolve(c), resolve(bg))).toBeGreaterThanOrEqual(4.5))
+  it('case cochée (accent natif) sur le panneau ≥ 3:1, onglet actif (accent sur la page) ≥ 4,5:1', () => {
+    expect(contrast(resolve('--color-accent'), resolve('--color-surface'))).toBeGreaterThanOrEqual(3)
+    expect(contrast(resolve('--color-accent'), resolve('--color-background'))).toBeGreaterThanOrEqual(4.5)
+  })
+})

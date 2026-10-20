@@ -286,6 +286,20 @@ Voile `fixed inset-0 z-50 bg-black/70 backdrop-blur-sm`, puis `div.card-frame.re
 - **Pagination** (`Pagination`) : « ← Précédent », « Page n / m », « Suivant → », boutons bordés de 44 px, bornes en `aria-disabled` (le bouton pressé garde le focus).
 - **États** : chargement au spinner du shell ; collection vide (« Ta collection est vide » et « Ouvrir des paquets » en bouton principal) ; aucun résultat (« Aucune carte ne correspond à ces filtres. » et « Effacer les filtres ») ; erreur avec « Réessayer », et « Effacer les filtres » si un filtre est posé ; une valeur d'adresse que l'API refuserait est ignorée. Une tuile retirée sous le focus (défausse, étiquette filtrée) passe le focus à la suivante, ou à l'état vide.
 
+### Catalogue (/global-collection, R§2.2)
+- **En-tête** : h1 « Collection Globale », puis « Toutes les cartes existantes dans le jeu » à `/70`.
+- **Barre d'outils** (sur le graphite) : champ « Rechercher une carte… » et « Rechercher » bordé, `aria-disabled` tant que le champ est vide (une recherche d'un caractère est refusée sur place : « La recherche demande au moins 2 caractères ») ; vider le champ revient au catalogue entier. Liste « Trier les cartes » à une option, « Rareté » (seul tri de l'API) ; bascule « Liste de souhaits » (`bookmark`, `aria-pressed`, pleine émeraude quand active) ; pastilles de rareté de la collection.
+- **Bandeau** `card-frame` : le nombre de cartes de chaque rareté dans sa couleur, puis « 2 000 cartes au total » ; en liste de souhaits, « N cartes dans ta liste de souhaits » ; pendant une recherche, « Recherche active : pas de décompte par rareté ni de total exact ».
+- **Grille** `flex flex-wrap justify-center gap-3 sm:gap-[22px] md:gap-[26px]`, cartes posées directement (sans wrapper ni marqueur de possession). Pagination de la collection ; pendant une recherche, le total est inconnu : « Page n » seul, « Suivant » selon `searchHasMore`.
+- **États** : chargement au spinner ; erreur « Les cartes n'ont pas pu être chargées. » avec « Réessayer » (et « Effacer les filtres » si un filtre est posé) ; aucun résultat ; liste de souhaits vide (icône `bookmark`, « Voir tout le catalogue »). Une carte retirée de la liste sous le focus passe le focus à la suivante, ou à l'état vide.
+
+### Paramètres (/settings, R§2.2, jamais capturée)
+- **Onglet** « Général » (texte émeraude, filet `border-b-2` émeraude), puis trois sections `card-frame` `p-6` de 42 rem au plus : **Profil**, **Préférences**, **Compte**.
+- **Profil** : champ « Pseudo » (vérifié au départ du champ, sauf pour un simple changement de casse du sien), aide `/70`, « Enregistrer le pseudo » en bouton principal, inactif tant que rien ne change (surface claire, texte `/60`). Succès en émeraude clair avec la date du prochain changement possible ; refus sous le champ, en `red-300`.
+- **Préférences** : trois cases natives émeraude (« Sons », « Masquer les images sensibles », « Profil public »), chacune sur une ligne de 44 px avec son aide `/70` dessous. Enregistrement immédiat de la seule case touchée ; un refus la remet comme avant et le dit.
+- **Compte** : « Nouveau mot de passe » et sa confirmation, « Changer le mot de passe » ; sous un filet, « Se déconnecter » bordé (icône `log-out`).
+- **États** : chaque section lit ses données seule, avec son spinner et son erreur (« Réessayer » ramène le focus sur le titre de la section) ; une section en échec ne bloque pas les autres. Aucun bouton n'est `disabled` sous le focus : `aria-disabled` et une garde.
+
 ### Message bref (toast)
 `components/ui/toast.ts` : un panneau `card-frame` (`px-4 py-3`, `text-sm` 500) dans une région `role="status"` fixée en bas de l'écran, au-dessus de la barre basse sur mobile ; il entre en `motion-safe:animate-fade-in-up` et disparaît après 4 s. Il vit hors de React pour survivre à la modale qui l'émet (« Carte défaussée : +1 wikibidou »).
 

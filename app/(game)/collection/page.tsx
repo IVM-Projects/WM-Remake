@@ -2,7 +2,8 @@ import type { Metadata } from 'next'
 import { Suspense } from 'react'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
-import { CollectionClient, Loading } from './collection-client'
+import { Loading } from '@/components/ui/Loading'
+import { CollectionClient } from './collection-client'
 
 const entry = navEntry('/collection')
 export const metadata: Metadata = { title: entry.title }
@@ -15,7 +16,7 @@ export default function CollectionPage() {
         fallback={
           <>
             <PageHeader title={entry.title} icon={entry.icon} />
-            <Loading />
+            <Loading label="Chargement de la collection" />
           </>
         }
       >

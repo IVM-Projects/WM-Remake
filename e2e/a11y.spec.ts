@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { expect, sql, test } from './fixtures'
+import { expect, makePlayer, sql, test } from './fixtures'
 
 type Known = { rule: string; selector: string }
 
@@ -27,7 +27,9 @@ const TAG_OPTION: Known = { rule: 'nested-interactive', selector: '[role=listbox
 // Contenu rendu après l'hydratation (useSearchParams, session lue par le client) : attendu avant l'analyse.
 const READY: Record<string, string> = {
   '/reset-password': 'main [role=alert]', '/verify-email?email=a11y%40test.local': '#signup-otp-code', '/pulls': '[data-stock-bar]',
-  '/collection': 'main a[href="/pulls"]',
+  '/collection': 'main a[href="/pulls"]', '/global-collection': 'main nav[aria-label="Pagination"]',
+  // Les deux lectures de /settings finies : pseudo et préférences.
+  '/settings': 'main:has(#settings-username) input[name="sounds"]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -36,9 +38,9 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email?email=a11y%40test.local', '/terms', '/rules',
-  'http://127.0.0.1:3101/gate', '/pulls', '/collection']) {
+  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/settings']) {
   test(`axe ${path}`, async ({ page, login }) => {
-    if (path === '/pulls' || path === '/collection') await login()
+    if (['/pulls', '/collection', '/global-collection', '/settings'].includes(path)) await login()
     await page.goto(path)
     if (READY[path]) await page.locator(READY[path]).waitFor()
     await settled(page)
@@ -106,4 +108,39 @@ test('axe /collection, liste d\'étiquettes ouverte', async ({ page, login }) =>
   await expect(page.getByRole('listbox')).toBeVisible()
   await settled(page)
   await expectNoSeriousViolations(page, TAG_OPTION)
+})
+
+test('axe /global-collection : modale de carte ouverte, liste de souhaits vide, recherche active', async ({ page, login }) => {
+  await login()
+  await page.goto('/global-collection')
+  const cards = page.locator('main div.flex.flex-wrap.justify-center.gap-3 > div[class*="glow-"]')
+  await expect(cards).toHaveCount(50)
+  await cards.first().locator('h3 button').click()
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Ajouter à ma liste de souhaits' })).toBeVisible()
+  await settled(page)
+  await expectNoSeriousViolations(page)
+  await page.keyboard.press('Escape')
+  // Bascule pressée (plein émeraude) et état vide de la liste.
+  await page.getByRole('button', { name: 'Liste de souhaits', exact: true }).click()
+  await expect(page.getByText('Ta liste de souhaits est vide', { exact: true })).toBeVisible()
+  await expectNoSeriousViolations(page)
+  await page.getByRole('searchbox', { name: 'Rechercher une carte' }).fill('x')
+  await page.getByRole('button', { name: 'Rechercher', exact: true }).click()
+  await expect(page.locator('main').getByRole('alert')).toBeVisible()
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /settings : erreurs affichées (pseudo pris, mots de passe différents)', async ({ page, login }) => {
+  await login()
+  const { username } = makePlayer()
+  await page.goto('/settings')
+  await page.getByLabel('Pseudo', { exact: true }).fill(username)
+  await page.getByLabel('Pseudo', { exact: true }).blur()
+  await expect(page.getByText('Ce pseudo est déjà pris', { exact: true })).toBeVisible()
+  await page.getByLabel('Nouveau mot de passe', { exact: true }).fill('abcdef')
+  await page.getByLabel('Confirme le nouveau mot de passe').fill('abcdeg')
+  await page.getByRole('button', { name: 'Changer le mot de passe' }).click()
+  await expect(page.getByText('Les deux mots de passe ne correspondent pas.', { exact: true })).toBeVisible()
+  await expect(page.locator('input[name="sounds"]')).toBeVisible()
+  await expectNoSeriousViolations(page)
 })

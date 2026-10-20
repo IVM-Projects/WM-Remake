@@ -31,3 +31,11 @@ test('Pagination : « ← Précédent », « Page n / m », « Suivant → », b
   expect(buttons(renderToStaticMarkup(<Pagination page={46} totalPages={47} onPage={noop} />))[1]).toContain('aria-disabled="true"')
   expect(renderToStaticMarkup(<Pagination page={0} totalPages={1} onPage={noop} />)).toBe('')
 })
+
+test('Pagination à total inconnu (recherche) : « Page n » seul, « Suivant » selon more', () => {
+  const h = renderToStaticMarkup(<Pagination page={1} totalPages={null} more onPage={noop} />)
+  expect(h.replace(/<[^>]+>/g, '')).toBe('← PrécédentPage 2Suivant →')
+  expect(buttons(h)[1]).toContain('aria-disabled="false"')
+  expect(buttons(renderToStaticMarkup(<Pagination page={1} totalPages={null} more={false} onPage={noop} />))[1]).toContain('aria-disabled="true"')
+  expect(renderToStaticMarkup(<Pagination page={0} totalPages={null} more={false} onPage={noop} />)).toBe('')
+})

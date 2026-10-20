@@ -86,8 +86,12 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
         .then(({ data }) => { if (live && data) setMeta(data as Meta) })
     }
     if (!isOwned) {
-      void sb.from('wishlist_items').select('card_id').eq('card_id', card.id).maybeSingle()
-        .then(({ data }) => { if (live) setWished(!!data) })
+      // Lecture en échec : dit, et l'état reste inconnu (« Ajouter » reste sûr, un doublon revient en 23505).
+      void sb.from('wishlist_items').select('card_id').eq('card_id', card.id).maybeSingle().then(({ data, error }) => {
+        if (!live) return
+        if (error) setError('Ta liste de souhaits n\'a pas pu être lue.')
+        else setWished(!!data)
+      })
     }
     return () => { live = false }
   }, [card.id, needMeta, isOwned])
@@ -113,12 +117,13 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
     setBusy(true)
     setError(null)
     const { data: auth } = await sb.auth.getSession()
-    const { error } = wished
-      ? await sb.from('wishlist_items').delete().eq('card_id', card.id)
-      : await sb.from('wishlist_items').insert({ user_id: auth.session?.user.id, card_id: card.id })
+    // select : une écriture que la RLS écarte ne renvoie aucune ligne, ce n'est pas un succès.
+    const { data: rows, error } = wished
+      ? await sb.from('wishlist_items').delete().eq('card_id', card.id).select('card_id')
+      : await sb.from('wishlist_items').insert({ user_id: auth.session?.user.id, card_id: card.id }).select('card_id')
     setBusy(false)
     // 23505 : déjà dans la liste (autre onglet), l'état voulu est atteint.
-    if (error && error.code !== '23505') return setError('La liste de souhaits n\'a pas pu être mise à jour.')
+    if (error?.code !== '23505' && (error || !rows?.length)) return setError('La liste de souhaits n\'a pas pu être mise à jour.')
     setWished(!wished)
     onChanged?.({ wishlisted: !wished })
   }

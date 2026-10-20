@@ -23,3 +23,9 @@ export function authErrorMessage(err: { message?: string; code?: string } | null
   if (err?.message && KNOWN.has(err.message)) return err.message
   return BY_CODE.get(err?.code ?? '') ?? 'Une erreur est survenue, réessaie.'
 }
+
+// Vérification préalable (inscription, paramètres) : message de refus du pseudo (réservé, pris, invalide), ou null s'il est libre.
+export async function usernameProblem(u: string): Promise<string | null> {
+  const body = (await (await fetch(`/api/username-available?u=${encodeURIComponent(u)}`)).json()) as { available?: boolean; error?: string }
+  return body.available === false ? body.error ?? null : null
+}

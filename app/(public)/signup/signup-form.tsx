@@ -6,17 +6,11 @@ import { useRef, useState, type FocusEvent, type FormEvent } from 'react'
 import { Field, FormError, Submit, linkClass } from '@/components/auth/Field'
 import { OtpForm } from '@/components/auth/OtpForm'
 import { useCaptcha } from '@/components/auth/Turnstile'
-import { TERMS_VERSION, authErrorMessage } from '@/lib/auth'
+import { TERMS_VERSION, authErrorMessage, usernameProblem } from '@/lib/auth'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 
 // supabase-js envoie X-Supabase-Api-Version : GoTrue masque alors le refus du trigger sous ce message (500, sans code côté client).
 const MASKED_TRIGGER = 'Database error saving new user'
-
-// Message de refus du pseudo (réservé, pris, invalide), ou null s'il est libre.
-async function usernameProblem(u: string): Promise<string | null> {
-  const body = (await (await fetch(`/api/username-available?u=${encodeURIComponent(u)}`)).json()) as { available?: boolean; error?: string }
-  return body.available === false ? body.error ?? null : null
-}
 
 const checkbox = 'flex min-h-11 items-start gap-3 text-sm'
 const box = 'mt-0.5 size-5 shrink-0 accent-[var(--color-accent)]'
