@@ -48,6 +48,7 @@ run -f "$tests/bootstrap_local.sql" >/dev/null
   GOTRUE_JWT_SECRET=banc-de-test-secret-hs256-inutilise-32c API_EXTERNAL_URL=http://127.0.0.1:54321/auth/v1 \
   GOTRUE_SITE_URL=http://127.0.0.1:3100 GOTRUE_LOG_LEVEL=warn ./auth migrate >/dev/null)
 cron="$(run -Atc "select exists (select from pg_available_extensions where name = 'pg_cron')")"
+node "$root/scripts/check-dml.ts"  # pg-safeupdate de la base hébergée : pas de DELETE/UPDATE sans WHERE
 for f in "$root"/supabase/migrations/*.sql; do
   [[ $cron == f && ${f##*/} == 9000_* ]] && continue
   run -f "$f" >/dev/null

@@ -1,5 +1,5 @@
 -- Catalogue d'essai du développement (décision 4 du plan M1) : 2 000 cartes synthétiques, remplacées par le vrai catalogue au M2.
--- Idempotent. Appliqué par db-test.sh --setup-only (contrat, E2E), jamais par les tests SQL.
+-- Idempotent. Appliqué par db-test.sh --setup-only (contrat, E2E) et inclus par 25_pool (χ² du tirage).
 
 insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, q_score, pageviews, category, summary, hide_image, nsfw_image)
 select 'Article d''essai n° ' || lpad(n::text, 4, '0'),
