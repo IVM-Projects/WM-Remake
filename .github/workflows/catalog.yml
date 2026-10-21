@@ -62,7 +62,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-      - run: sudo apt-get update -q && sudo apt-get install -y -q lbzip2
+      - run: sudo apt-get -o Acquire::Retries=3 update -q && sudo apt-get -o Acquire::Retries=3 install -y -q lbzip2
 
       - name: Dumps SQL page et page_props
         run: |
@@ -167,8 +167,11 @@ jobs:
         run: |
           echo "month=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"
           L=$(node catalog/src/cli.ts cirrus-list)
-          echo "cirrus_date=$(jq -r .date <<< "$L")" >> "$GITHUB_OUTPUT"
-          echo "cirrus_parts=$(jq -c .parts <<< "$L")" >> "$GITHUB_OUTPUT"
+          # Variables d'abord : -e ne voit pas un jq en échec dans une substitution passée à echo.
+          D=$(jq -re .date <<< "$L")
+          P=$(jq -ce '.parts | select(length > 0)' <<< "$L")
+          echo "cirrus_date=$D" >> "$GITHUB_OUTPUT"
+          echo "cirrus_parts=$P" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -193,7 +196,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-      - run: sudo apt-get update -q && sudo apt-get install -y -q lbzip2
+      - run: sudo apt-get -o Acquire::Retries=3 update -q && sudo apt-get -o Acquire::Retries=3 install -y -q lbzip2
 
       - name: Vues du mois
         env:
@@ -267,6 +270,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       max-parallel: 10
+      fail-fast: false # une part en échec n'annule pas les téléchargements en cours ; « Re-run failed jobs » ne refait qu'elle
       matrix:
         part: ${{ fromJSON(needs.dumps.outputs.cirrus_parts) }}
     steps:
@@ -276,7 +280,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-      - run: sudo apt-get update -q && sudo apt-get install -y -q lbzip2
+      - run: sudo apt-get -o Acquire::Retries=3 update -q && sudo apt-get -o Acquire::Retries=3 install -y -q lbzip2
       - uses: actions/download-artifact@v7
         with:
           name: select
@@ -386,7 +390,8 @@ jobs:
         run: |
           left=$(( 345 - ($(date +%s) - JOB_START) / 60 - 15 )) # 345 = timeout-minutes
           code=0
-          node catalog/src/cli.ts commons --dir work --per-minute 100 --concurrency 1 --deadline-min "$left" || code=$?
+          # 2 en vol (M2-R8) : à 1, un lot de plus de ~6,6 s ferait passer ≈ 3 000 lots au-delà du délai ; 100/min reste la limite.
+          node catalog/src/cli.ts commons --dir work --per-minute 100 --concurrency 2 --deadline-min "$left" || code=$?
           case $code in
             0) echo "finished=true" >> "$GITHUB_OUTPUT" ;;
             3) echo "finished=false" >> "$GITHUB_OUTPUT"; echo "::warning::Commons inachevé : relancer le workflow, le cache reprend" ;;
@@ -445,11 +450,13 @@ jobs:
           retention-days: 7
           overwrite: true
 
+      # Ménage seulement (les intermédiaires expirent en 1 jour) : un échec ne rend pas le run rouge après catalog-out.
       - name: Suppression des artefacts intermédiaires
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[] | select(.name != "catalog-out") | "\(.id) \(.name)"' |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" --jq '.artifacts[] | select(.name != "catalog-out") | "\(.id) \(.name)"' |
             while read -r id name; do
               echo "Suppression de $name"
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
