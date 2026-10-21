@@ -1,0 +1,275 @@
+{
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=4437742%7C9624536": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 4437742,
+          "ns": 0,
+          "title": "Pierfrancesco Chili",
+          "extract": "Pierfrancesco Chili (né le 20 juin 1964 à Bologne, dans la province de Bologne, en Émilie-Romagne) est un pilote de moto italien.\n\n Portail des sports motocyclistes   Portail de l’Italie"
+        },
+        {
+          "pageid": 9624536,
+          "ns": 0,
+          "title": "4 janvier 1916",
+          "extract": ""
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=5908%7C12720%7C28808%7C37129%7C57455%7C58547%7C64190%7C78858%7C83389%7C83395%7C103360%7C106998%7C110206%7C118752%7C118780%7C120939%7C140771%7C183094%7C187381%7C194877": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 5908,
+          "ns": 0,
+          "title": "Ny-Hor",
+          "extract": "Ny-Hor est un roi de la période prédynastique égyptienne.\nNy-Hor est connu sous le nom de Her ou Hor (Horus), c'est-à-dire « le Faucon », et sa monarchie s'établit à Nekhen (plus tard Hiéraconpolis).\nLe serekh de Ny–Hor n'a pas de faucon (contrairement aux serekhs postérieurs). Bien que son interprétation demeure controversée, on considère généralement que son nom d'Horus signifie « le chasseur ». Des serekhs avec ce nom ont été retrouvés à Tourah et Tarkhan. Quelques égyptologues suggèrent que ce soit une forme d'inscription du nom du roi Narmer."
+        },
+        {
+          "pageid": 12720,
+          "ns": 0,
+          "title": "Plonéis",
+          "extract": "Plonéis (prononcé : /plo.nɛjs/ est une commune du département du Finistère, dans la région Bretagne, en France. Elle est située à dix kilomètres environ de Quimper. La ville se situe dans l'intercommunalité de Quimper Bretagne occidentale.\nLe Goyen, fleuve côtier qui se jette dans l'océan Atlantique à Audierne, y prend sa source.\nUne station du système de radiolocalisation CONSOL y était installée. La Cité du Radiophare en garde le souvenir."
+        },
+        {
+          "pageid": 28808,
+          "ns": 0,
+          "title": "Spiritisme",
+          "extract": "Le terme de spiritisme désigne, par généralisation, l'ensemble des pratiques, anciennes ou actuelles, impliquant des rites de communication avec des êtres non physiques, reconnus ou autodéterminés comme l'âme des défunts, des anges, des saints catholiques, des démons, des divinités, etc.\nIl est inventé en 1857 par Hyppolite Léon Denizard Rivail, et publié pour la première fois dans le Livre des Esprits. Il désigne d'abord la « doctrine » spiritualiste qu'il a codifié, désigné plus tard sous le nom de « spiritisme kardéciste », « kardécisme », « kardécianisme ». Il désigne ainsi progressivement l'ensemble des cultes impliquant une communication avec l'au-delà au moyen d'un médium (ex : spiritisme umbandiste, spiritisme chamanique, etc)."
+        },
+        {
+          "pageid": 37129,
+          "ns": 0,
+          "title": "Georg Wilhelm Friedrich Hegel",
+          "extract": "Georg Wilhelm Friedrich Hegel (/ˈɡeːɔɐ̯k ˈvɪlhɛlm ˈfʁiːdʁɪç ˈheːɡl̩/), né le 27 août 1770 à Stuttgart et mort le 14 novembre 1831 à Berlin, est un philosophe allemand.\nSon œuvre est une contribution majeure à l'idéalisme allemand et a influencé l'ensemble de la philosophie contemporaine.\nHegel enseigne la philosophie comme système unissant tous les savoirs suivant une logique dialectique. Le système est conçu comme une « phénoménologie de l'esprit » puis comme une « encyclopédie des sciences philosophiques », titres de deux de ses ouvrages. Il englobe l'ensemble des domaines philosophiques, dont la métaphysique et l'ontologie, la philosophie de l'art et de la religion, la philosophie de la nature, la philosophie de l'histoire, la philosophie morale et politique ou la philosophie du droit."
+        },
+        {
+          "pageid": 57455,
+          "ns": 0,
+          "title": "Le Hussard sur le toit (film)",
+          "extract": "Le Hussard sur le toit est un film français de Jean-Paul Rappeneau, sorti en 1995.\nIl est adapté du roman éponyme de Jean Giono."
+        },
+        {
+          "pageid": 58547,
+          "ns": 0,
+          "title": "Jaune",
+          "extract": "Le jaune est un champ chromatique correspondant à des couleurs claires situées entre l'orange et le vert.\nUne des trois couleurs primaires de la synthèse soustractive des couleurs est un jaune.\nEn héraldique, le jaune s'appelle or."
+        },
+        {
+          "pageid": 64190,
+          "ns": 0,
+          "title": "Rhynchocalycaceae",
+          "extract": "Les Rhynchocalycaceae (les Rhynchocalycacées en français) sont une famille de plantes à fleurs dicotylédones de l'ordre des Myrtales, selon la classification phylogénétique APG (1998) et la classification phylogénétique APG II (2003). Elle comprend une espèce : Rhynchocalyx lawsonioides. Ce sont de petits arbres des régions subtropicales, originaires d'Afrique du Sud."
+        },
+        {
+          "pageid": 78858,
+          "ns": 0,
+          "title": "Saintes",
+          "extract": "Saintes (/sɛ̃t/ ) est une commune du Sud-Ouest de la France, située dans le département de la Charente-Maritime  dont elle est une sous-préfecture en région Nouvelle-Aquitaine. Ses habitants sont appelés les Saintais et les Saintaises.\nDeuxième centre urbain du département après La Rochelle, cette ville moyenne compte 25 363 habitants (2023) et est à la tête d'une unité urbaine de 29 871 habitants et de la deuxième aire d'attraction de la Charente-Maritime avec 80 997 habitants (2023).\nArrosée par la Charente où la cité se développa primitivement sur la rive gauche du fleuve, elle devient capitale de la province de Saintonge jusque sous l'Ancien Régime avant d'être désignée préfecture du département de la Charente-Inférieure lors de la réorganisation territoriale de 1790. Finalement supplantée par La Rochelle en 1810, elle est reléguée au rang de sous-préfecture du département mais conserve par compensation son rôle de chef-lieu judiciaire départemental. De plus, la ville voit croître son influence économique dans le dernier tiers du XIXe siècle lorsqu'elle est choisie comme siège du VIIIe arrondissement des chemins de fer de l'État.\nImportant carrefour de communications routières, autoroutières et ferroviaires, Saintes est également le principal pôle économique du centre du département. Si l'industrie est faiblement représentée (industrie électronique, dépôt et centre de réparations ferroviaire, construction d'appareils de levage), la ville s'affirme avant tout comme un centre tertiaire dynamique (fonctions administratives d'État, Cour d'assises et activités judiciaires, banques et mutuelles, établissements d'enseignement, centre hospitalier) et un pôle commercial de dimension régionale (siège de la plus grande coopérative de consommateurs de France, Coop Atlantique).\nSaintes est également devenue, grâce à un important ensemble patrimonial gallo-romain, médiéval, et classique, une ville touristique fréquentée, affiliée au réseau national des villes et pays d'art et d'histoire depuis 1990. La culture n'est pas en reste, Saintes étant dotée de plusieurs musées, d'un théâtre, de cinémas, de nombreux festivals et d'un centre européen de recherche et de pratique musicales implanté au cœur de l'abbaye aux Dames."
+        },
+        {
+          "pageid": 83389,
+          "ns": 0,
+          "title": "Valz-sous-Châteauneuf",
+          "extract": "Valz-sous-Châteauneuf est une commune française, située dans le département du Puy-de-Dôme en région Auvergne-Rhône-Alpes. Les habitants de Valz s'appellent les Castelvalzois."
+        },
+        {
+          "pageid": 83395,
+          "ns": 0,
+          "title": "Boudes",
+          "extract": "Boudes est une commune française rurale, située dans le département du Puy-de-Dôme, en région Auvergne-Rhône-Alpes.\nSes habitants, au nombre de 260 au recensement de 2023, sont appelés les Boudigans et les Boudigannes ou les Boudigands et Boudigandes.\n\n"
+        },
+        {
+          "pageid": 103360,
+          "ns": 0,
+          "title": "Ozalid",
+          "extract": "Un ozalid est une épreuve positive réalisée par contact avec les typons, sur un papier spécial (le diazol). Dernier élément de contrôle (auquel on donne plus souvent le nom de bleus), il sert généralement à donner le bon à tirer (b.a.t dans le jargon des imprimeurs).\nOzalid est une marque utilisée comme nom, car Ozalid est un nom déposé (n.m.) en 1963, du nom de la firme britannique Ozalid, anagramme de diazol."
+        },
+        {
+          "pageid": 106998,
+          "ns": 0,
+          "title": "Le Seigneur des anneaux (série de films)",
+          "extract": "Le Seigneur des anneaux est une trilogie cinématographique américano-néo-zélandaise de fantasy réalisée par Peter Jackson et fondée sur le roman du même nom en trois volumes de J. R. R. Tolkien. Les films composant cette trilogie sont La Communauté de l'anneau (2001), Les Deux Tours (2002) et Le Retour du roi (2003).\nCe projet est considéré comme l'un des plus ambitieux de l'histoire du cinéma, avec un budget de 285 millions de dollars. Il a commencé à être développé par Jackson en 1995 et s'est concrétisé avec le studio de production New Line Cinema après que Miramax Films l'a abandonné. Le projet entier dura huit ans, bien que le tournage des trois films se déroulât simultanément entre octobre 1999 et décembre 2000 et eût lieu entièrement en Nouvelle-Zélande. Une version longue de chaque film de la trilogie est sortie en DVD et Blu-ray environ un an après leur sortie au cinéma. Bien que les films suivent l'histoire du roman de façon générale, ils omettent certains éléments et en ajoutent d'autres, déviant ainsi de leur source.\nSe déroulant dans le monde fictif de la Terre du Milieu, les trois films suivent le hobbit Frodon Sacquet (Frodo Baggins en anglais, joué par Elijah Wood) alors que lui et les autres membres de la Communauté de l'anneau s'engagent dans une quête pour détruire l'Anneau unique, et ainsi provoquer la chute de son créateur, Sauron. La Communauté finit par se diviser et Frodon poursuit sa quête uniquement accompagné de son jardinier Sam (Sean Astin) et d'une créature nommée Gollum (Andy Serkis). Pendant ce temps, le magicien Gandalf (Ian McKellen) et Aragorn (Viggo Mortensen), héritier en exil du trône de Gondor, rallient les peuples libres de la Terre du Milieu, qui finissent par remporter la guerre de l'Anneau.\nLes trois films ont été un grand succès commercial, rapportant au total presque trois milliards de dollars lors de leur sortie dans les salles. Ils ont généralement reçu des critiques très positives, et ont été largement récompensés, remportant notamment dix-sept Oscars sur trente nominations. Le dernier film de la trilogie, Le Retour du roi, remporta les onze Oscars auxquels il était nommé, égalant Ben-Hur et Titanic pour le record du plus grand nombre d'Oscars reçus pour un film. La trilogie reçut de nombreux prix pour la distribution, pour les effets spéciaux et pour l'infographie. Les films ont également apporté un regain d'intérêt et une reconnaissance du grand public pour l'œuvre de Tolkien, malgré quelques controverses sur les différences entre les livres et leur adaptation.\nPar la suite, après le succès de la trilogie, Peter Jackson décide de s'associer au studio Metro-Goldwyn Mayer en plus de la New Line afin d'adapter Le Hobbit au cinéma, entre 2012 et 2014."
+        },
+        {
+          "pageid": 110206,
+          "ns": 0,
+          "title": "Renault 4",
+          "extract": "La Renault 4  (populairement appelée 4L quel que soit le modèle) est une petite voiture populaire de grande diffusion de conception simple et pratique. C'est aussi la première application de la traction sur une voiture de tourisme de la marque Renault après que cette technique a été adoptée sur l'Estafette en 1959. Les R4 changent d'appellation commerciale à partir de l'année-modèle 1966 pour devenir Renault 4, Renault 4 Export, puis Renault 4, Renault 4L, Renault 4 TL, Renault 4 GTL, et 4L Super ! au gré des années et des versions commercialisées.\nLa Renault 4 est désignée ainsi parce qu'elle est équipée d'un moteur de quatre chevaux fiscaux ; la Renault 3, une version très peu produite équipée de la même carrosserie, a un moteur de trois chevaux fiscaux.\nElle est construite d'août 1961 à décembre 1992 dans 28 pays, initialement avec la Dauphine sur l'île Seguin à Boulogne-Billancourt ainsi qu'à l'usine Renault de Flins, en Espagne (par Fasa-Renault), en Argentine par IKA-Renault, en Italie par Alfa Romeo (sous licence), au Maroc, à Madagascar, en Afrique du Sud, puis à partir de 1969 en Yougoslavie (l'usine Renault de Novo Mesto sera d'ailleurs la dernière, en 1992, à assembler ce modèle).\nLa R4 connaît un grand succès en France auprès des PME, des artisans, de la gendarmerie (c'est l'une des voitures françaises de l'époque qui peut être conduite avec un képi sur la tête), mais également auprès des PTT, de France Télécom ou EdF dans sa version fourgonnette ; ces contrats lui donnent une très grande visibilité sur les routes.\nEn France, la R4 est en tête des ventes de 1962 à 1965 (succédant à la Renault Dauphine), puis en 1967 et 1968. Elle est la deuxième voiture d'un constructeur français la plus vendue de l'histoire avec 8 135 424 exemplaires, derrière la Peugeot 206."
+        },
+        {
+          "pageid": 118752,
+          "ns": 0,
+          "title": "Cour des comptes (France)",
+          "extract": "La Cour des comptes est une juridiction financière de l'ordre administratif en France, chargée principalement de contrôler la régularité des comptes publics, de l'État, des établissements publics nationaux, des entreprises publiques, de la sécurité sociale, ainsi que des organismes privés bénéficiant d'une aide de l'État ou faisant appel à la générosité du public. Elle informe le Parlement, le Gouvernement et le public en général sur la régularité des comptes.\nLes rapports de la Cour des comptes n'ont pas de caractère contraignant.\nLa Cour des comptes est créée en 1807, par Napoléon Ier, elle prend la suite des « chambres de comptes » en place sous l'Ancien régime. Elle siège au palais Cambon dans le 1er arrondissement de Paris depuis 1912. Ses missions exactes ont régulièrement évoluées au fil du temps et ce n'est que depuis 2007 qu'elle certifie les comptes de l’État et de la Sécurité sociale.\n\n"
+        },
+        {
+          "pageid": 118780,
+          "ns": 0,
+          "title": "Arcturus (groupe)",
+          "extract": "Arcturus est un groupe de metal norvégien. Le groupe est initialement orienté metal symphonique empreint de touches black metal, avant d'évoluer vers un style de metal avant-gardiste construit autour du clavier du compositeur Steinar Sverd Johnsen.\nLes thèmes des paroles sont avant tout le cosmos et le surnaturel. Les membres du groupe se sont séparés en avril 2007. Le groupe annonce cependant sa reformation pour le début de l'année 2011 dans le but de participer au festival américain ProgPower."
+        },
+        {
+          "pageid": 120939,
+          "ns": 0,
+          "title": "René Guénon",
+          "extract": "René Guénon, né le 15 novembre 1886 à Blois (France) et mort le 7 janvier 1951 au Caire (Égypte), est un auteur français, « figure inclassable de l’histoire intellectuelle du XXe siècle ».\nIl publie dix-sept ouvrages de son vivant, auxquels s'ajoutent dix recueils d'articles publiés à titre posthume, soit au total vingt-sept titres régulièrement réédités. Ces livres ont trait principalement à la métaphysique, au symbolisme, à l'ésotérisme et à la critique du monde moderne.\nDans son œuvre, il se propose soit d'« exposer directement certains aspects des doctrines métaphysiques de l'Orient », doctrines métaphysiques que René Guénon définissait comme étant « universelles », soit d'« adapter ces mêmes doctrines [pour des lecteurs occidentaux] en restant toujours strictement fidèle à leur esprit ». Il ne revendique que la fonction de « transmetteur » de ces doctrines, dont il déclare qu'elles sont de nature essentiellement « non individuelle », reliées à une connaissance supérieure, « directe et immédiate », qu'il nomme « intuition intellectuelle ». Ses ouvrages, écrits en français (il a également contribué en arabe à la revue El Maarifâ), sont traduits en plus de vingt langues.\nSon œuvre oppose les civilisations restées fidèles à l'« esprit traditionnel », qui selon lui « n'a plus de représentant authentique qu'en Orient », à l'ensemble de la civilisation moderne considérée comme déviée. Elle a modifié en profondeur la réception de l'ésotérisme en Occident dans la seconde moitié du XXe siècle et a eu une influence marquante sur des auteurs aussi divers que Mircea Eliade, Antonin Artaud,  Raymond Abellio, Raymond Queneau, René Daumal, Simone Weil et André Breton jusqu'à Charles III roi du Royaume-Uni."
+        },
+        {
+          "pageid": 140771,
+          "ns": 0,
+          "title": "Auto-stop",
+          "extract": "L'auto-stop, ou autostop, aussi appelé partir sur le pouce ou faire du pouce au Québec, est un moyen de transport informel, où un automobiliste ou un camionneur accepte de transporter gratuitement une personne qui fait un signe conventionnel au bord de la route.\nL'auto-stop a été, quand les automobiles étaient suffisamment répandues, mais trop chères pour la jeunesse, et les transports collectifs rares ou chers, des années 1930 à la fin des années 1970, un moyen économique de voyager, correspondant aussi à un désir d'aventure.\nIl est aussi un moyen de se déplacer sur des faibles distances, qui supplée à l'insuffisance des transports publics."
+        },
+        {
+          "pageid": 183094,
+          "ns": 0,
+          "title": "Dardagny",
+          "extract": "Dardagny est une commune suisse du canton de Genève située sur la rive droite du Rhône."
+        },
+        {
+          "pageid": 187381,
+          "ns": 0,
+          "title": "Hernando de Soto (conquistador)",
+          "extract": "Hernando de Soto, né en 1496 ou 1497 en Estrémadure, à Barcarrota ou à Jerez de los Caballeros, en Espagne, et mort le 21 mai 1542 dans l’actuel Arkansas, est un conquistador et explorateur espagnol. Encore adolescent, il participe à la conquête de l’Amérique centrale auprès du premier gouverneur de Panama, Pedrarias Dávila. Il se joint à Francisco Pizarro au début des années 1530, lors de ses conquêtes en Amérique du Sud.\nEn 1539, de Soto entreprend la plus importante des premières expéditions coloniales espagnoles. Une vaste entreprise qui lui fait traverser tout le Sud-Est des États-Unis actuels, à la recherche d’or et d’un passage vers la « mer du Sud » qui ouvre la voie vers la Chine, poursuivant ainsi les mêmes objectifs que Juan Ponce de León en 1513, de Lucas de Ayllón en 1526, et de Pánfilo de Narváez en 1527.\nDe Soto meurt de fièvre, en 1542, sur la rive occidentale du Mississippi, dans un village amérindien nommé Guachoya (proche de l’actuel McArthur dans l’Arkansas)."
+        },
+        {
+          "pageid": 194877,
+          "ns": 0,
+          "title": "Ministre de l'Éducation nationale (France)",
+          "extract": "En France, le ministre de l'Éducation nationale prépare et met en œuvre la politique du Gouvernement relative à l'accès de chacun aux savoirs et au développement de l'enseignement primaire (préélémentaire, élémentaire) et secondaire.\nDepuis le 12 octobre 2025, Édouard Geffray est ministre de l'Éducation nationale dans le gouvernement Lecornu II."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=223878%7C269748%7C287542%7C333486%7C353161%7C398899%7C416048%7C421811%7C444355%7C448324%7C448336%7C470187%7C521080%7C522698%7C543958%7C555648%7C613341%7C623348%7C624301%7C656005": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 223878,
+          "ns": 0,
+          "title": "Championnats du monde de cyclisme sur piste",
+          "extract": "Les Championnats du monde de cyclisme sur piste se tiennent tous les ans depuis 1893 à l'exception des périodes de guerre mondiale. Ils proposent aux pistards de s'affronter pour le titre mondial dans différentes épreuves. À partir de 2017, dix disciplines pour les hommes et pour les femmes sont proposées.\nLa première édition des championnats du monde amateurs de cyclisme sur piste a eu lieu à Chicago en 1893 avec trois épreuves seulement : l’Américain Arthur A. Zimmermann remporte le sprint et l'épreuve des 10 kilomètres et le Sud-Africain Lawrence Meintjes remporte le 100 kilomètres de demi-fond derrière derny. Les épreuves féminines ont débuté en 1958 avec deux épreuves, la vitesse et la poursuite, sous le statut amateur. En 1993, les épreuves professionnelles et amateurs masculines ont été réunifiées et intitulées open.\nDepuis 1893, les épreuves masculines ont compté dix-huit disciplines différentes et les épreuves féminines onze. Cependant, certaines épreuves masculines ont été retirées :\n\nle 10 km dès 1895,\nQuatre épreuves ont été réunifiées à partir de 1993 : vitesse, poursuite, course aux points et demi-fond, devenus open.\nDeux épreuves ont été supprimées en 1995 : tandem et demi-fond.\nD'autres épreuves ont été ajoutées au début du XXIe siècle : \n\nle keirin féminin, le scratch masculin et féminin en 2002,\nl'omnium masculin et la vitesse par équipes féminine en 2007,\nla poursuite par équipes féminine en 2008,\nl'omnium féminin en 2009,\nla course à l’américaine féminine en 2017,\nles courses à l'élimination masculine et féminine en 2021"
+        },
+        {
+          "pageid": 269748,
+          "ns": 0,
+          "title": "Église Saint-Hilaire de Mont-Saint-Hilaire",
+          "extract": "L'église Saint-Hilaire est située à Mont-Saint-Hilaire, au Québec."
+        },
+        {
+          "pageid": 287542,
+          "ns": 0,
+          "title": "Nieuport 11",
+          "extract": "Le Nieuport 11 , surnommé Bébé, est un des chasseurs biplans ayant le plus marqué l'aviation durant la Première Guerre mondiale. Il est réputé comme l'un des appareils ayant mis fin au « fléau Fokker » en 1916, et fut affectueusement surnommé « Bébé Nieuport »."
+        },
+        {
+          "pageid": 333486,
+          "ns": 0,
+          "title": "The Island (film, 2005)",
+          "extract": "The Island ou L'île au Québec est un film de science-fiction américain réalisé par Michael Bay, sorti en 2005. Le film est articulé autour des thèmes du clonage, de la vente d'organes et de l'éthique médicale.\nLe film se déroule en 2019. Lincoln 6-Echo (Ewan McGregor) et son amie Jordan 2-Delta (Scarlett Johansson) font partie des centaines de pensionnaires d'un gigantesque complexe fermé, aseptisé, présenté comme idyllique. À en croire le docteur Merrick (Sean Bean) et ses agents, une terrible contamination a ravagé la Terre quelques années auparavant. Heureusement, des survivants sont régulièrement retrouvés pour être ramenés dans le complexe dont le but est de préserver les résidents de la contamination. La vie y est encadrée et étroitement surveillée. Aussi, pour illuminer l'existence morne de cet univers stérile et totalitaire, chaque personne place ses espoirs dans la Loterie, un générateur numérique aléatoire qui appelle régulièrement quelques noms. Les heureux gagnants reçoivent le privilège de quitter le complexe pour un transfert dans l'Île, censée être le dernier territoire à avoir échappé à la contamination, afin d'y être les Adam et Ève d'une nouvelle humanité."
+        },
+        {
+          "pageid": 353161,
+          "ns": 0,
+          "title": "Interprétations mythologiques de la Voie lactée",
+          "extract": "Il existe plusieurs interprétations mythologiques de la Voie lactée, telle qu'observée à l'œil nu. Dans ces mythologies, la galaxie est presque toujours considérée comme une rivière ou un chemin :  « Rivière de lumière » des Hébreux, « Rivière céleste » des Chinois, « Lit du Gange » dans la tradition sanscrite."
+        },
+        {
+          "pageid": 398899,
+          "ns": 0,
+          "title": "Monnaie fiduciaire",
+          "extract": "La monnaie fiduciaire est la monnaie comprenant les pièces modernes et les billets de banque. C'est un instrument financier dont la valeur nominale est supérieure à la valeur intrinsèque ; la confiance (fiducia en latin) que lui accorde l'utilisateur comme valeur d'échange, moyen de paiement, et donc comme monnaie, repose sur un principe de garantie défendu par une institution centralisatrice."
+        },
+        {
+          "pageid": 416048,
+          "ns": 0,
+          "title": "Maulichères",
+          "extract": "Maulichères (Maulishèra en gascon) est une commune française située dans l'ouest du département du Gers, en région Occitanie. Sur le plan historique et culturel, la commune est dans le pays de Rivière-Basse, un territoire qui s’allonge dans la moyenne vallée de l’Adour, à l’endroit où le fleuve marque un coude entre Bigorre et Gers.\nExposée à un climat océanique altéré, elle est drainée par Canal du Moulin de Tarsaguet, le Pesqué, le ruisseau de la Palue et par deux autres cours d'eau.\nMaulichères est une commune rurale qui compte 155 habitants en 2023. Ses habitants sont appelés les Maulichérois ou  Maulichéroises."
+        },
+        {
+          "pageid": 421811,
+          "ns": 0,
+          "title": "Anthony Réveillère",
+          "extract": "Anthony Réveillère, né le 10 novembre 1979 à Doué-la-Fontaine (Maine-et-Loire), est un footballeur international français. Durant sa carrière, il évolue au poste de défenseur."
+        },
+        {
+          "pageid": 444355,
+          "ns": 0,
+          "title": "Paul Nikolaïevitch Demidoff",
+          "extract": "Pavel Nikolaïevitch Demidov (en russe : Павел Николаевич Демидов), francisé en Paul Demidoff,  est né le 6 août 1798 et mort le 25 mars 1840. Cet héritier richissime servit dans la Guerre patriotique de 1812 et fonda en 1831 le prix Demidoff, décerné par l'Académie des sciences de Russie."
+        },
+        {
+          "pageid": 448324,
+          "ns": 0,
+          "title": "Église évangélique copte",
+          "extract": "L'Église évangélique copte ou Église évangélique d'Égypte - Synode du Nil est une Église protestante de tendance presbytérienne née de l'activité de missionnaires protestants dans la communauté copte en Égypte à partir du XIXe siècle. C'est aujourd'hui la plus importante communauté protestante du Proche-Orient avec plus de 100 000 membres.\nElle est membre de la Communion mondiale d'Églises réformées ainsi que du Conseil des Églises du Moyen-Orient."
+        },
+        {
+          "pageid": 448336,
+          "ns": 0,
+          "title": "Winterberg",
+          "extract": "Winterberg est une ville de Rhénanie-du-Nord-Westphalie (Allemagne), située dans l'arrondissement du Haut-Sauerland, dans le district d'Arnsberg, dans le Landschaftsverband de Westphalie-Lippe.\nWinterberg est une petite ville (13 456 habitants) de moyenne montagne dans le Sauerland, dans l’est de la Rhénanie-du-Nord-Westphalie. La ville est populaire pour les sports d’hiver (ski et compétitions de bobsleigh sur la piste de Winterberg)."
+        },
+        {
+          "pageid": 470187,
+          "ns": 0,
+          "title": "Grand Ballet du marquis de Cuevas",
+          "extract": "Le Grand Ballet du marquis de Cuevas est une compagnie de danse fondée par Jorge Cuevas Bartholin (1885-1961), dit Georges de Cuevas et le marquis de Cuevas. La compagnie est fondée à Monte-Carlo en 1951 et dissoute en 1962.\nIssue de la fusion de la première compagnie du marquis, le Ballet international, et du Nouveau Ballet de Monte-Carlo, elle est à l'époque la première sur le sol européen à être majoritairement composée de danseurs américains."
+        },
+        {
+          "pageid": 521080,
+          "ns": 0,
+          "title": "Hyundai Sonata",
+          "extract": "La Sonata est une berline familiale du constructeur automobile coréen Hyundai. Elle est lancée en 1985 et a connu 7 générations.\nLa Sonata de première génération, introduite en 1985, était une version rénovée de la Hyundai Stellar avec une mise à niveau du moteur et a été retiré du marché en deux ans en raison de la mauvaise réaction des clients."
+        },
+        {
+          "pageid": 522698,
+          "ns": 0,
+          "title": "Ryan Reynolds",
+          "extract": "Ryan Reynolds est un acteur, producteur et entrepreneur canado-américain, né le 23 octobre 1976 à Vancouver, Colombie-Britannique (Canada).\nIl commence sa carrière à l'âge de quatorze ans et se fait connaître en 1998 avec son rôle de Michael « Berg » Bergen dans la série télévisée, Un toit pour trois jusqu'en 2001, puis est révélé au cinéma avec celui de Van Wilder dans le film  American Party : Van Wilder,relations publiques (2002). Par la suite, en parallèle d'autres projets (comédie romantique comme La Proposition, thriller dans Buried), il prête ses traits à divers personnages issus de comics ou non comme Hannibal King dans Blade: Trinity (2004), Hal Jordan / Green Lantern dans le film centré sur le personnage du même nom (2011), Nick Walker dans RIPD : Brigade fantôme (2013) ou même la voix de Pikachu dans Pokémon : Détective Pikachu (2019). En jouant Wade Wilson / Deadpool dans la série de films sur les X-Men, il connaît un large succès, tout d'abord dans X-Men Origins: Wolverine (2009), puis dans les films Deadpool (2016), Deadpool 2 (2018) et Deadpool et Wolverine (2024).\nLe 15 novembre 2023, Ryan Reynolds devient membre de l'Ordre de la Colombie-Britannique en reconnaissance de l'impact important de ses actions au niveau provincial, national et international. Il est nommé à l'Ordre du Canada en 2024."
+        },
+        {
+          "pageid": 543958,
+          "ns": 0,
+          "title": "René Liger",
+          "extract": "René Liger (né à Mayenne le 6 décembre 1734 et mort à Tours le 7 mai 1810) est un prêtre français et auteur de divers ouvrages historiques, littéraires, philosophiques et religieux, ainsi que de pamphlets et libelles."
+        },
+        {
+          "pageid": 555648,
+          "ns": 0,
+          "title": "Vy-lès-Filain",
+          "extract": "Vy-lès-Filain est une commune française située dans le département de la Haute-Saône, la région culturelle et historique de Franche-Comté et la région administrative Bourgogne-Franche-Comté."
+        },
+        {
+          "pageid": 613341,
+          "ns": 0,
+          "title": "Parti social-démocrate de Corée",
+          "extract": "Le Parti social-démocrate de Corée, dirigé par Kim Ho-chol, est un parti politique nord-coréen d'orientation socialiste, fondé le 3 novembre 1945 sous le nom de Parti démocrate de Corée. Sa base sociale était constituée initialement de petits et moyens entrepreneurs, de commerçants, d'artisans, de paysans et de chrétiens.\nSelon Naenara, site officiel de la république populaire démocratique de Corée, le Parti social-démocrate « s'est fixé comme objectif la démocratie sociale nationale conforme aux conditions historiques de la Corée, aux traits caractéristiques de la nation coréenne et l'idéal politique qu'il affiche est la souveraineté, l'indépendance, la démocratie, la paix et la défense des droits de l'homme d'après cet idéal ». Il est membre jusqu'en mars 2024 du Front démocratique pour la réunification de la patrie, coalition unique regroupant les trois partis politiques de Corée du Nord et dirigée par le Parti du travail de Corée."
+        },
+        {
+          "pageid": 623348,
+          "ns": 0,
+          "title": "Jim Black",
+          "extract": "Jim Black, né le 3 août 1967 à Daly City (Californie), est un compositeur, batteur et percussionniste de jazz américain."
+        },
+        {
+          "pageid": 624301,
+          "ns": 0,
+          "title": "Elon Musk",
+          "extract": "Elon Musk (prononcé en anglais : /ˈiːlɒn ˈmʌsk/), né le 28 juin 1971 à Pretoria (Afrique du Sud), est un entrepreneur, homme d'affaires et homme politique sud-africain naturalisé canadien et américain. Il est depuis 2024 la personne la plus riche du monde et depuis 2026, la première personne de l'histoire à avoir dépassé un seuil de fortune de plus de mille milliards de dollars.\nElon Musk commence sa carrière en affaires comme cofondateur de la société de logiciels Zip2 avec son frère, Kimbal Musk. La start-up est acquise par Compaq pour 307 millions de dollars en 1999. La même année, Musk cofonde la banque en ligne X.com, qui fusionne avec Confinity en 2000 pour former PayPal. eBay rachète PayPal en 2002 pour 1,5 milliard de dollars.\nEn 2002, Musk fonde SpaceX, un fabricant aérospatial et une société de services de transport spatial, et en est le président-directeur général. En 2004, il investit 6,5 millions de dollars dans le constructeur de véhicules électriques Tesla, et en devient le PDG en 2008. En 2006, il participe à la création de SolarCity, une société d'énergie solaire qui est ensuite acquise par Tesla et devient Tesla Energy. En 2015, il cofonde et devient coprésident d'OpenAI, une association de recherche promouvant l'intelligence artificielle amicale, qu'il quitte en 2018. En 2016, il fonde The Boring Company, société de construction de tunnels (Hyperloop), et Neuralink, société de neurotechnologie. En 2022, il devient le propriétaire de Twitter par un achat à 44 milliards de dollars, qu'il renomme « X » l'année suivante. En 2023, il fonde la société xAI dans le domaine de l'intelligence artificielle.\nEn janvier 2021, selon Bloomberg, Elon Musk devient, à 49 ans, l'individu le plus riche du monde avec une fortune estimée à 188,5 milliards de dollars. Au cours du dernier trimestre 2025, elle atteint presque 730 milliards au 31 décembre 2025 à la suite de la revalorisation de ses participations.\nÀ partir de la fin des années 2010, ses actions et déclarations, dont certaines relèvent de la désinformation et des théories du complot, sont régulièrement médiatisées.\nLors du premier mandat présidentiel de Donald Trump, Elon Musk devient son conseiller officieux, jusqu'à ce qu'un différend les oppose à propos de l'accord de Paris sur le climat. Alors que ses positions continuent de s'orienter vers l'extrême droite, Musk devient l'un des plus importants soutiens de l'ancien président en vue de sa réélection et s'implique dans sa campagne de 2024, dont il est le deuxième plus gros contributeur financier.\nAprès la victoire de Donald Trump, il est nommé haut conseiller et prend la tête du département de l'Efficacité gouvernementale, instance temporaire qui procède à des coupes drastiques dans de nombreux programmes et agences gouvernementaux et licencie des dizaines de milliers de salariés fédéraux. Au bout de quatre mois, il quitte la direction du département et entre dans un violent conflit avec Donald Trump au sujet de sa politique fiscale. Chantre du natalisme, promoteur du nationalisme blanc et du concept de remigration, il étend par ailleurs son influence sur les pays européens, apportant publiquement son soutien à des partis d'extrême droite européens."
+        },
+        {
+          "pageid": 656005,
+          "ns": 0,
+          "title": "Charles Étienne Louis Camus",
+          "extract": "Charles Étienne Louis Camus, né à Crécy-en-Brie le 23 août 1699 et mort au Louvre, à Paris, le 4 mai 1768, est un mathématicien et astronome français."
+        }
+      ]
+    }
+  }
+}

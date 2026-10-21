@@ -1,0 +1,2742 @@
+{
+  "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&maxlag=5&props=descriptions&languages=fr&ids=Q943%7CQ1922%7CQ9235%7CQ10923%7CQ45743%7CQ49624%7CQ53147%7CQ56996%7CQ60040%7CQ63033%7CQ69471%7CQ70784%7CQ123516%7CQ130932%7CQ158520%7CQ162959%7CQ190214%7CQ191126%7CQ192682%7CQ206235%7CQ212640%7CQ214912%7CQ219691%7CQ224069%7CQ224656%7CQ240532%7CQ247595%7CQ252642%7CQ265061%7CQ268647%7CQ283080%7CQ293505%7CQ315466%7CQ317521%7CQ387027%7CQ419829%7CQ421817%7CQ434846%7CQ450335%7CQ470139%7CQ472932%7CQ474675%7CQ482458%7CQ495497%7CQ495581%7CQ496850%7CQ512556%7CQ541696%7CQ551172%7CQ638241": {
+    "entities": {
+      "Q943": {
+        "type": "item",
+        "id": "Q943",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "champ chromatique correspondant à des couleurs claires situées entre l'orange et le vert"
+          }
+        }
+      },
+      "Q1922": {
+        "type": "item",
+        "id": "Q1922",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "footballeur français"
+          }
+        }
+      },
+      "Q9235": {
+        "type": "item",
+        "id": "Q9235",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "philosophe allemand"
+          }
+        }
+      },
+      "Q10923": {
+        "type": "item",
+        "id": "Q10923",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune allemande"
+          }
+        }
+      },
+      "Q45743": {
+        "type": "item",
+        "id": "Q45743",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "actrice australienne"
+          }
+        }
+      },
+      "Q49624": {
+        "type": "item",
+        "id": "Q49624",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "parti politique nord-coréen"
+          }
+        }
+      },
+      "Q53147": {
+        "type": "item",
+        "id": "Q53147",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune italienne"
+          }
+        }
+      },
+      "Q56996": {
+        "type": "item",
+        "id": "Q56996",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "langue sino-tibétaine"
+          }
+        }
+      },
+      "Q60040": {
+        "type": "item",
+        "id": "Q60040",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "conquistador et explorateur espagnol"
+          }
+        }
+      },
+      "Q63033": {
+        "type": "item",
+        "id": "Q63033",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "actrice allemande"
+          }
+        }
+      },
+      "Q69471": {
+        "type": "item",
+        "id": "Q69471",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune suisse du canton de Genève"
+          }
+        }
+      },
+      "Q70784": {
+        "type": "item",
+        "id": "Q70784",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "roman fantastique chinois du XVIe siècle"
+          }
+        }
+      },
+      "Q123516": {
+        "type": "item",
+        "id": "Q123516",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "écrivain suisse"
+          }
+        }
+      },
+      "Q130932": {
+        "type": "item",
+        "id": "Q130932",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "Classe de poissons fossiles"
+          }
+        }
+      },
+      "Q158520": {
+        "type": "item",
+        "id": "Q158520",
+        "descriptions": {}
+      },
+      "Q162959": {
+        "type": "item",
+        "id": "Q162959",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "actrice et mannequin américaine"
+          }
+        }
+      },
+      "Q190214": {
+        "type": "item",
+        "id": "Q190214",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "trilogie cinématographique par Peter Jackson, adaptée du livre de Tolkien"
+          }
+        }
+      },
+      "Q191126": {
+        "type": "item",
+        "id": "Q191126",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune française du département de la Charente-Maritime"
+          }
+        }
+      },
+      "Q192682": {
+        "type": "item",
+        "id": "Q192682",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "acteur canadien"
+          }
+        }
+      },
+      "Q206235": {
+        "type": "item",
+        "id": "Q206235",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "acteur américain"
+          }
+        }
+      },
+      "Q212640": {
+        "type": "item",
+        "id": "Q212640",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "province historique de la Suède"
+          }
+        }
+      },
+      "Q214912": {
+        "type": "item",
+        "id": "Q214912",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "mode de déplacement"
+          }
+        }
+      },
+      "Q219691": {
+        "type": "item",
+        "id": "Q219691",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "téléphone portable de 2000"
+          }
+        }
+      },
+      "Q224069": {
+        "type": "item",
+        "id": "Q224069",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "film sorti en 2005"
+          }
+        }
+      },
+      "Q224656": {
+        "type": "item",
+        "id": "Q224656",
+        "descriptions": {}
+      },
+      "Q240532": {
+        "type": "item",
+        "id": "Q240532",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "monnaie physique en laquelle on accorde une confiance sur sa valeur"
+          }
+        }
+      },
+      "Q247595": {
+        "type": "item",
+        "id": "Q247595",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "siège du parlement irlandais situé à Dublin"
+          }
+        }
+      },
+      "Q252642": {
+        "type": "item",
+        "id": "Q252642",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "batteur de jazz américain"
+          }
+        }
+      },
+      "Q265061": {
+        "type": "item",
+        "id": "Q265061",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "mangaka japonaise"
+          }
+        }
+      },
+      "Q268647": {
+        "type": "item",
+        "id": "Q268647",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "souverain égyptien prédynastique"
+          }
+        }
+      },
+      "Q283080": {
+        "type": "item",
+        "id": "Q283080",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune française du département de la Haute-Saône"
+          }
+        }
+      },
+      "Q293505": {
+        "type": "item",
+        "id": "Q293505",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "Sultan d'Égypte et de Syrie"
+          }
+        }
+      },
+      "Q315466": {
+        "type": "item",
+        "id": "Q315466",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune allemande"
+          }
+        }
+      },
+      "Q317521": {
+        "type": "item",
+        "id": "Q317521",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "entrepreneur, homme d'affaires et homme politique sud-africain, canadien et américain"
+          }
+        }
+      },
+      "Q387027": {
+        "type": "item",
+        "id": "Q387027",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune tchèque"
+          }
+        }
+      },
+      "Q419829": {
+        "type": "item",
+        "id": "Q419829",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "composé chimique"
+          }
+        }
+      },
+      "Q421817": {
+        "type": "item",
+        "id": "Q421817",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "protéine"
+          }
+        }
+      },
+      "Q434846": {
+        "type": "item",
+        "id": "Q434846",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "garde forestier américain, ayant été foudroyé plusieurs fois"
+          }
+        }
+      },
+      "Q450335": {
+        "type": "item",
+        "id": "Q450335",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "romancier, nouvelliste, essayiste, traducteur espagnol"
+          }
+        }
+      },
+      "Q470139": {
+        "type": "item",
+        "id": "Q470139",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "actrice américaine (1928-1978)"
+          }
+        }
+      },
+      "Q472932": {
+        "type": "item",
+        "id": "Q472932",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune française du département du Puy-de-Dôme"
+          }
+        }
+      },
+      "Q474675": {
+        "type": "item",
+        "id": "Q474675",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune française du département du Finistère"
+          }
+        }
+      },
+      "Q482458": {
+        "type": "item",
+        "id": "Q482458",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "automobile"
+          }
+        }
+      },
+      "Q495497": {
+        "type": "item",
+        "id": "Q495497",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "parti politique"
+          }
+        }
+      },
+      "Q495581": {
+        "type": "item",
+        "id": "Q495581",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "comté de l'Oklahoma, États-Unis"
+          }
+        }
+      },
+      "Q496850": {
+        "type": "item",
+        "id": "Q496850",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "ésotériste et philosophe orientaliste français"
+          }
+        }
+      },
+      "Q512556": {
+        "type": "item",
+        "id": "Q512556",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune française du département de la Haute-Saône"
+          }
+        }
+      },
+      "Q541696": {
+        "type": "item",
+        "id": "Q541696",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "bâtiment de Réthymnon, Crète, en Grèce"
+          }
+        }
+      },
+      "Q551172": {
+        "type": "item",
+        "id": "Q551172",
+        "descriptions": {}
+      },
+      "Q638241": {
+        "type": "item",
+        "id": "Q638241",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "groupe de musique norvégien"
+          }
+        }
+      }
+    },
+    "success": 1
+  },
+  "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&maxlag=5&props=descriptions&languages=fr&ids=Q639244%7CQ646817%7CQ654524%7CQ677358%7CQ684110%7CQ689349%7CQ696278%7CQ714835%7CQ716771%7CQ728311%7CQ730267%7CQ736169%7CQ763351%7CQ764664%7CQ775538%7CQ790169%7CQ794278%7CQ805845%7CQ826457%7CQ838766%7CQ924903%7CQ930377%7CQ946490%7CQ963298%7CQ1006341%7CQ1047880%7CQ1084735%7CQ1112437%7CQ1134995%7CQ1137614%7CQ1138177%7CQ1140835%7CQ1171866%7CQ1194500%7CQ1201783%7CQ1231575%7CQ1270941%7CQ1315514%7CQ1315829%7CQ1317607%7CQ1439561%7CQ1486412%7CQ1542515%7CQ1553207%7CQ1627406%7CQ1627878%7CQ1690821%7CQ1767339%7CQ1784166%7CQ1790481": {
+    "entities": {
+      "Q639244": {
+        "type": "item",
+        "id": "Q639244",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "compétition de cyclisme"
+          }
+        }
+      },
+      "Q646817": {
+        "type": "item",
+        "id": "Q646817",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "Chasseur monoplace français de la 1ère guerre mondiale"
+          }
+        }
+      },
+      "Q654524": {
+        "type": "item",
+        "id": "Q654524",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "powiat (district) de Sainte-Croix, Pologne"
+          }
+        }
+      },
+      "Q677358": {
+        "type": "item",
+        "id": "Q677358",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune rurale du Niger"
+          }
+        }
+      },
+      "Q684110": {
+        "type": "item",
+        "id": "Q684110",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village de Pologne"
+          }
+        }
+      },
+      "Q689349": {
+        "type": "item",
+        "id": "Q689349",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "Turboréacteur britannique"
+          }
+        }
+      },
+      "Q696278": {
+        "type": "item",
+        "id": "Q696278",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "série de manga"
+          }
+        }
+      },
+      "Q714835": {
+        "type": "item",
+        "id": "Q714835",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "évêque de Paris"
+          }
+        }
+      },
+      "Q716771": {
+        "type": "item",
+        "id": "Q716771",
+        "descriptions": {}
+      },
+      "Q728311": {
+        "type": "item",
+        "id": "Q728311",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "peintre miniaturiste indien"
+          }
+        }
+      },
+      "Q730267": {
+        "type": "item",
+        "id": "Q730267",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "station du métro de Londres"
+          }
+        }
+      },
+      "Q736169": {
+        "type": "item",
+        "id": "Q736169",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "roi d'Aksoum"
+          }
+        }
+      },
+      "Q763351": {
+        "type": "item",
+        "id": "Q763351",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "film de Fred Zinnemann, sorti en 1964"
+          }
+        }
+      },
+      "Q764664": {
+        "type": "item",
+        "id": "Q764664",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "établissement humain en Baltimore, Maryland, États-Unis"
+          }
+        }
+      },
+      "Q775538": {
+        "type": "item",
+        "id": "Q775538",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "Trois hommes qui ont été accusés et condamnés en 1994"
+          }
+        }
+      },
+      "Q790169": {
+        "type": "item",
+        "id": "Q790169",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune hongroise"
+          }
+        }
+      },
+      "Q794278": {
+        "type": "item",
+        "id": "Q794278",
+        "descriptions": {}
+      },
+      "Q805845": {
+        "type": "item",
+        "id": "Q805845",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "grotte en Allemagne"
+          }
+        }
+      },
+      "Q826457": {
+        "type": "item",
+        "id": "Q826457",
+        "descriptions": {}
+      },
+      "Q838766": {
+        "type": "item",
+        "id": "Q838766",
+        "descriptions": {}
+      },
+      "Q924903": {
+        "type": "item",
+        "id": "Q924903",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "genre d'oiseaux"
+          }
+        }
+      },
+      "Q930377": {
+        "type": "item",
+        "id": "Q930377",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "cinéaste italien"
+          }
+        }
+      },
+      "Q946490": {
+        "type": "item",
+        "id": "Q946490",
+        "descriptions": {}
+      },
+      "Q963298": {
+        "type": "item",
+        "id": "Q963298",
+        "descriptions": {}
+      },
+      "Q1006341": {
+        "type": "item",
+        "id": "Q1006341",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune française du département du Gers"
+          }
+        }
+      },
+      "Q1047880": {
+        "type": "item",
+        "id": "Q1047880",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune française du département du Puy-de-Dôme"
+          }
+        }
+      },
+      "Q1084735": {
+        "type": "item",
+        "id": "Q1084735",
+        "descriptions": {}
+      },
+      "Q1112437": {
+        "type": "item",
+        "id": "Q1112437",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "galaxie"
+          }
+        }
+      },
+      "Q1134995": {
+        "type": "item",
+        "id": "Q1134995",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune du Bénin"
+          }
+        }
+      },
+      "Q1137614": {
+        "type": "item",
+        "id": "Q1137614",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "juridiction administrative et financière française"
+          }
+        }
+      },
+      "Q1138177": {
+        "type": "item",
+        "id": "Q1138177",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "powiat (district) de Poméranie, Pologne"
+          }
+        }
+      },
+      "Q1140835": {
+        "type": "item",
+        "id": "Q1140835",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "conceptions antiques à caractères religieux concernant la Voie Lactée"
+          }
+        }
+      },
+      "Q1171866": {
+        "type": "item",
+        "id": "Q1171866",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "pilote de vitesse moto italien"
+          }
+        }
+      },
+      "Q1194500": {
+        "type": "item",
+        "id": "Q1194500",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "film de Jean-Paul Rappeneau, sorti en 1995"
+          }
+        }
+      },
+      "Q1201783": {
+        "type": "item",
+        "id": "Q1201783",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "ville chinoise"
+          }
+        }
+      },
+      "Q1231575": {
+        "type": "item",
+        "id": "Q1231575",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "mathématicien français"
+          }
+        }
+      },
+      "Q1270941": {
+        "type": "item",
+        "id": "Q1270941",
+        "descriptions": {}
+      },
+      "Q1315514": {
+        "type": "item",
+        "id": "Q1315514",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce d'oiseaux"
+          }
+        }
+      },
+      "Q1315829": {
+        "type": "item",
+        "id": "Q1315829",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "film sorti en 2006"
+          }
+        }
+      },
+      "Q1317607": {
+        "type": "item",
+        "id": "Q1317607",
+        "descriptions": {}
+      },
+      "Q1439561": {
+        "type": "item",
+        "id": "Q1439561",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "politicien britannique"
+          }
+        }
+      },
+      "Q1486412": {
+        "type": "item",
+        "id": "Q1486412",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "livre de Georg Wilhelm Friedrich Hegel"
+          }
+        }
+      },
+      "Q1542515": {
+        "type": "item",
+        "id": "Q1542515",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "compagnie de danse"
+          }
+        }
+      },
+      "Q1553207": {
+        "type": "item",
+        "id": "Q1553207",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "politicien américain"
+          }
+        }
+      },
+      "Q1627406": {
+        "type": "item",
+        "id": "Q1627406",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "prince italien"
+          }
+        }
+      },
+      "Q1627878": {
+        "type": "item",
+        "id": "Q1627878",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "réalisateur japonais"
+          }
+        }
+      },
+      "Q1690821": {
+        "type": "item",
+        "id": "Q1690821",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "critique littéraire, biographe et traductrice"
+          }
+        }
+      },
+      "Q1767339": {
+        "type": "item",
+        "id": "Q1767339",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce. Rongeur du Brésil"
+          }
+        }
+      },
+      "Q1784166": {
+        "type": "item",
+        "id": "Q1784166",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "Eglise protestante copte"
+          }
+        }
+      },
+      "Q1790481": {
+        "type": "item",
+        "id": "Q1790481",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune brésilienne"
+          }
+        }
+      }
+    },
+    "success": 1
+  },
+  "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&maxlag=5&props=descriptions&languages=fr&ids=Q1852441%7CQ1948021%7CQ1971193%7CQ1986402%7CQ2044203%7CQ2057801%7CQ2174612%7CQ2183764%7CQ2206601%7CQ2210255%7CQ2230653%7CQ2233907%7CQ2301745%7CQ2316161%7CQ2322343%7CQ2342435%7CQ2381141%7CQ2384430%7CQ2410030%7CQ2456661%7CQ2523537%7CQ2535424%7CQ2555379%7CQ2599497%7CQ2615406%7CQ2630615%7CQ2723836%7CQ2742690%7CQ2754524%7CQ2817426%7CQ2818065%7CQ2869240%7CQ2882727%7CQ2921989%7CQ2945679%7CQ2966459%7CQ2975216%7CQ2976837%7CQ2979650%7CQ2984303%7CQ2987977%7CQ3009722%7CQ3054299%7CQ3067237%7CQ3075687%7CQ3080444%7CQ3086984%7CQ3087631%7CQ3103806%7CQ3173684": {
+    "entities": {
+      "Q1852441": {
+        "type": "item",
+        "id": "Q1852441",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune tchèque"
+          }
+        }
+      },
+      "Q1948021": {
+        "type": "item",
+        "id": "Q1948021",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "pair britannique"
+          }
+        }
+      },
+      "Q1971193": {
+        "type": "item",
+        "id": "Q1971193",
+        "descriptions": {}
+      },
+      "Q1986402": {
+        "type": "item",
+        "id": "Q1986402",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce d'arachnides"
+          }
+        }
+      },
+      "Q2044203": {
+        "type": "item",
+        "id": "Q2044203",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "roi de Karthli de 1632 à 1658"
+          }
+        }
+      },
+      "Q2057801": {
+        "type": "item",
+        "id": "Q2057801",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "politicien irlandais"
+          }
+        }
+      },
+      "Q2174612": {
+        "type": "item",
+        "id": "Q2174612",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "rue de Paris, en France"
+          }
+        }
+      },
+      "Q2183764": {
+        "type": "item",
+        "id": "Q2183764",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "localité des Pays-Bas"
+          }
+        }
+      },
+      "Q2206601": {
+        "type": "item",
+        "id": "Q2206601",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "compétition de hockey sur glace"
+          }
+        }
+      },
+      "Q2210255": {
+        "type": "item",
+        "id": "Q2210255",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce d'amphibiens"
+          }
+        }
+      },
+      "Q2230653": {
+        "type": "item",
+        "id": "Q2230653",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "ville américaine de l'État du Minnesota"
+          }
+        }
+      },
+      "Q2233907": {
+        "type": "item",
+        "id": "Q2233907",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "chanson de Shakira et Carlos Santana, sortie en 2006"
+          }
+        }
+      },
+      "Q2301745": {
+        "type": "item",
+        "id": "Q2301745",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce d'arachnides"
+          }
+        }
+      },
+      "Q2316161": {
+        "type": "item",
+        "id": "Q2316161",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "recueil de nouvelles de Guillaume Apollinaire"
+          }
+        }
+      },
+      "Q2322343": {
+        "type": "item",
+        "id": "Q2322343",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "aristocrate et militaire allemand"
+          }
+        }
+      },
+      "Q2342435": {
+        "type": "item",
+        "id": "Q2342435",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "hameau britannique"
+          }
+        }
+      },
+      "Q2381141": {
+        "type": "item",
+        "id": "Q2381141",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "théâtre dans le 18e arrondissement de Paris"
+          }
+        }
+      },
+      "Q2384430": {
+        "type": "item",
+        "id": "Q2384430",
+        "descriptions": {}
+      },
+      "Q2410030": {
+        "type": "item",
+        "id": "Q2410030",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "série télévisée canadienne"
+          }
+        }
+      },
+      "Q2456661": {
+        "type": "item",
+        "id": "Q2456661",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "genre de dinosaures"
+          }
+        }
+      },
+      "Q2523537": {
+        "type": "item",
+        "id": "Q2523537",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "jeu d'orgue"
+          }
+        }
+      },
+      "Q2535424": {
+        "type": "item",
+        "id": "Q2535424",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "saint"
+          }
+        }
+      },
+      "Q2555379": {
+        "type": "item",
+        "id": "Q2555379",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "ville de Serbie"
+          }
+        }
+      },
+      "Q2599497": {
+        "type": "item",
+        "id": "Q2599497",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "écrivain français"
+          }
+        }
+      },
+      "Q2615406": {
+        "type": "item",
+        "id": "Q2615406",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "botaniste britannique"
+          }
+        }
+      },
+      "Q2630615": {
+        "type": "item",
+        "id": "Q2630615",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "entreprise de confection américaine"
+          }
+        }
+      },
+      "Q2723836": {
+        "type": "item",
+        "id": "Q2723836",
+        "descriptions": {}
+      },
+      "Q2742690": {
+        "type": "item",
+        "id": "Q2742690",
+        "descriptions": {}
+      },
+      "Q2754524": {
+        "type": "item",
+        "id": "Q2754524",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "homme politique français"
+          }
+        }
+      },
+      "Q2817426": {
+        "type": "item",
+        "id": "Q2817426",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "ancien régiment de l'armée française"
+          }
+        }
+      },
+      "Q2818065": {
+        "type": "item",
+        "id": "Q2818065",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "station du métro de Chicago"
+          }
+        }
+      },
+      "Q2869240": {
+        "type": "item",
+        "id": "Q2869240",
+        "descriptions": {}
+      },
+      "Q2882727": {
+        "type": "item",
+        "id": "Q2882727",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce de plantes"
+          }
+        }
+      },
+      "Q2921989": {
+        "type": "item",
+        "id": "Q2921989",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "boulevard de Paris, en France"
+          }
+        }
+      },
+      "Q2945679": {
+        "type": "item",
+        "id": "Q2945679",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "hôpital d'Île-de-France"
+          }
+        }
+      },
+      "Q2966459": {
+        "type": "item",
+        "id": "Q2966459",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "réalisateur belge"
+          }
+        }
+      },
+      "Q2975216": {
+        "type": "item",
+        "id": "Q2975216",
+        "descriptions": {}
+      },
+      "Q2976837": {
+        "type": "item",
+        "id": "Q2976837",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "général français"
+          }
+        }
+      },
+      "Q2979650": {
+        "type": "item",
+        "id": "Q2979650",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "album de J.J. Cale, sorti en 1994"
+          }
+        }
+      },
+      "Q2984303": {
+        "type": "item",
+        "id": "Q2984303",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "colonne commémorative à Bonneville (Haute-Savoie)"
+          }
+        }
+      },
+      "Q2987977": {
+        "type": "item",
+        "id": "Q2987977",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village de Bosnie-Herzégovine"
+          }
+        }
+      },
+      "Q3009722": {
+        "type": "item",
+        "id": "Q3009722",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "personnalité politique française"
+          }
+        }
+      },
+      "Q3054299": {
+        "type": "item",
+        "id": "Q3054299",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "scénariste de cinéma et bande dessinée belge"
+          }
+        }
+      },
+      "Q3067237": {
+        "type": "item",
+        "id": "Q3067237",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "joueuse de basket-ball française"
+          }
+        }
+      },
+      "Q3075687": {
+        "type": "item",
+        "id": "Q3075687",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "fondation française ayant pour objectif de soutenir et d’accompagner les artistes"
+          }
+        }
+      },
+      "Q3080444": {
+        "type": "item",
+        "id": "Q3080444",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "rappeur belge"
+          }
+        }
+      },
+      "Q3086984": {
+        "type": "item",
+        "id": "Q3086984",
+        "descriptions": {}
+      },
+      "Q3087631": {
+        "type": "item",
+        "id": "Q3087631",
+        "descriptions": {}
+      },
+      "Q3103806": {
+        "type": "item",
+        "id": "Q3103806",
+        "descriptions": {}
+      },
+      "Q3173684": {
+        "type": "item",
+        "id": "Q3173684",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce de mollusques"
+          }
+        }
+      }
+    },
+    "success": 1
+  },
+  "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&maxlag=5&props=descriptions&languages=fr&ids=Q3184450%7CQ3185733%7CQ3244642%7CQ3251151%7CQ3294854%7CQ3310424%7CQ3353174%7CQ3353828%7CQ3361908%7CQ3364109%7CQ3382924%7CQ3416037%7CQ3419483%7CQ3426556%7CQ3442531%7CQ3465203%7CQ3466062%7CQ3468542%7CQ3472314%7CQ3521531%7CQ3526936%7CQ3539202%7CQ3547467%7CQ3574643%7CQ3579774%7CQ3581798%7CQ3909691%7CQ3965188%7CQ4405665%7CQ4412071%7CQ4462875%7CQ4619322%7CQ4661978%7CQ4723957%7CQ4780211%7CQ4786205%7CQ4856934%7CQ4946500%7CQ5065719%7CQ5461109%7CQ5476583%7CQ6166756%7CQ6220427%7CQ6429423%7CQ6682218%7CQ6714735%7CQ6756464%7CQ6756492%7CQ6927627%7CQ6935939": {
+    "entities": {
+      "Q3184450": {
+        "type": "item",
+        "id": "Q3184450",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "personnalité politique canadienne"
+          }
+        }
+      },
+      "Q3185733": {
+        "type": "item",
+        "id": "Q3185733",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "boxeur français"
+          }
+        }
+      },
+      "Q3244642": {
+        "type": "item",
+        "id": "Q3244642",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "page de liste de Wikimédia"
+          }
+        }
+      },
+      "Q3251151": {
+        "type": "item",
+        "id": "Q3251151",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "page de liste de Wikipédia"
+          }
+        }
+      },
+      "Q3294854": {
+        "type": "item",
+        "id": "Q3294854",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "nom d'un cultivar naturel de châtaignier (synonyme CA 500)"
+          }
+        }
+      },
+      "Q3310424": {
+        "type": "item",
+        "id": "Q3310424",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "acteur canadien"
+          }
+        }
+      },
+      "Q3353174": {
+        "type": "item",
+        "id": "Q3353174",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "revue scientifique"
+          }
+        }
+      },
+      "Q3353828": {
+        "type": "item",
+        "id": "Q3353828",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "tournoi de tennis"
+          }
+        }
+      },
+      "Q3361908": {
+        "type": "item",
+        "id": "Q3361908",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "district indonésien"
+          }
+        }
+      },
+      "Q3364109": {
+        "type": "item",
+        "id": "Q3364109",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espace naturel protégé américain"
+          }
+        }
+      },
+      "Q3382924": {
+        "type": "item",
+        "id": "Q3382924",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "fonctionnaire, France"
+          }
+        }
+      },
+      "Q3416037": {
+        "type": "item",
+        "id": "Q3416037",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "races chevalines de l'Ain"
+          }
+        }
+      },
+      "Q3419483": {
+        "type": "item",
+        "id": "Q3419483",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "conservateur de patrimoine français"
+          }
+        }
+      },
+      "Q3426556": {
+        "type": "item",
+        "id": "Q3426556",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "prêtre français et auteur de textes historiques, littéraires, philosophiques et religieux"
+          }
+        }
+      },
+      "Q3442531": {
+        "type": "item",
+        "id": "Q3442531",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "joueur et entraîneur bulgare de basket-ball"
+          }
+        }
+      },
+      "Q3465203": {
+        "type": "item",
+        "id": "Q3465203",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "saison d'une équipe de football"
+          }
+        }
+      },
+      "Q3466062": {
+        "type": "item",
+        "id": "Q3466062",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "saison 2006-2007 des Penguins de Pittsburg (hockey)"
+          }
+        }
+      },
+      "Q3468542": {
+        "type": "item",
+        "id": "Q3468542",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "saison de série télévisée"
+          }
+        }
+      },
+      "Q3472314": {
+        "type": "item",
+        "id": "Q3472314",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village dans le district de la Comoé, en Côte d'Ivoire"
+          }
+        }
+      },
+      "Q3521531": {
+        "type": "item",
+        "id": "Q3521531",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "réalisateur indien"
+          }
+        }
+      },
+      "Q3526936": {
+        "type": "item",
+        "id": "Q3526936",
+        "descriptions": {}
+      },
+      "Q3539202": {
+        "type": "item",
+        "id": "Q3539202",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "trilogie de romans policiers d'Albert Simonin"
+          }
+        }
+      },
+      "Q3547467": {
+        "type": "item",
+        "id": "Q3547467",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "tournoi de tennis"
+          }
+        }
+      },
+      "Q3574643": {
+        "type": "item",
+        "id": "Q3574643",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "joueur de football marocain"
+          }
+        }
+      },
+      "Q3579774": {
+        "type": "item",
+        "id": "Q3579774",
+        "descriptions": {}
+      },
+      "Q3581798": {
+        "type": "item",
+        "id": "Q3581798",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "église catholique à Mont-Saint-Hilaire"
+          }
+        }
+      },
+      "Q3909691": {
+        "type": "item",
+        "id": "Q3909691",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "locution anglaise"
+          }
+        }
+      },
+      "Q3965188": {
+        "type": "item",
+        "id": "Q3965188",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "saison de série télévisée"
+          }
+        }
+      },
+      "Q4405665": {
+        "type": "item",
+        "id": "Q4405665",
+        "descriptions": {}
+      },
+      "Q4412071": {
+        "type": "item",
+        "id": "Q4412071",
+        "descriptions": {}
+      },
+      "Q4462875": {
+        "type": "item",
+        "id": "Q4462875",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "homme politique néerlandais"
+          }
+        }
+      },
+      "Q4619322": {
+        "type": "item",
+        "id": "Q4619322",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "compétition de football"
+          }
+        }
+      },
+      "Q4661978": {
+        "type": "item",
+        "id": "Q4661978",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "joueur néo-zélandais de rugby à XV"
+          }
+        }
+      },
+      "Q4723957": {
+        "type": "item",
+        "id": "Q4723957",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village d'Azerbaïdjan"
+          }
+        }
+      },
+      "Q4780211": {
+        "type": "item",
+        "id": "Q4780211",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "film allemand"
+          }
+        }
+      },
+      "Q4786205": {
+        "type": "item",
+        "id": "Q4786205",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "chirurgien militaire et médecin britannique"
+          }
+        }
+      },
+      "Q4856934": {
+        "type": "item",
+        "id": "Q4856934",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "établissement humain, comté de Fulton, Illinois, États-Unis"
+          }
+        }
+      },
+      "Q4946500": {
+        "type": "item",
+        "id": "Q4946500",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village de Pologne, Kalisz Pomorski"
+          }
+        }
+      },
+      "Q5065719": {
+        "type": "item",
+        "id": "Q5065719",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village de Pologne"
+          }
+        }
+      },
+      "Q5461109": {
+        "type": "item",
+        "id": "Q5461109",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "district congressionnel des États-Unis"
+          }
+        }
+      },
+      "Q5476583": {
+        "type": "item",
+        "id": "Q5476583",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "avironneur finlandais"
+          }
+        }
+      },
+      "Q6166756": {
+        "type": "item",
+        "id": "Q6166756",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "établissement humain, comté de Yuma, Arizona, États-Unis"
+          }
+        }
+      },
+      "Q6220427": {
+        "type": "item",
+        "id": "Q6220427",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "boxeur américain"
+          }
+        }
+      },
+      "Q6429423": {
+        "type": "item",
+        "id": "Q6429423",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village de Pologne, Koniusza"
+          }
+        }
+      },
+      "Q6682218": {
+        "type": "item",
+        "id": "Q6682218",
+        "descriptions": {}
+      },
+      "Q6714735": {
+        "type": "item",
+        "id": "Q6714735",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "composé chimique"
+          }
+        }
+      },
+      "Q6756464": {
+        "type": "item",
+        "id": "Q6756464",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "astéroïde de la ceinture principale d'astéroïdes"
+          }
+        }
+      },
+      "Q6756492": {
+        "type": "item",
+        "id": "Q6756492",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "astéroïde de la ceinture principale d'astéroïdes"
+          }
+        }
+      },
+      "Q6927627": {
+        "type": "item",
+        "id": "Q6927627",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "établissement humain en France"
+          }
+        }
+      },
+      "Q6935939": {
+        "type": "item",
+        "id": "Q6935939",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "lutteur japonais"
+          }
+        }
+      }
+    },
+    "success": 1
+  },
+  "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&maxlag=5&props=descriptions&languages=fr&ids=Q7190370%7CQ7410969%7CQ7784926%7CQ7922848%7CQ7991831%7CQ8189863%7CQ8331964%7CQ11875156%7CQ11885031%7CQ13373630%7CQ13422888%7CQ13506309%7CQ13518137%7CQ13633756%7CQ15241213%7CQ15296602%7CQ15528142%7CQ15691441%7CQ15818701%7CQ15824662%7CQ15953422%7CQ15994950%7CQ16009296%7CQ16059954%7CQ16335227%7CQ16382642%7CQ16509825%7CQ16525353%7CQ16964724%7CQ16999503%7CQ17049970%7CQ17632539%7CQ17916835%7CQ18010742%7CQ18469089%7CQ19365724%7CQ20027626%7CQ21028651%7CQ21055508%7CQ21234823%7CQ21512504%7CQ21521930%7CQ21656775%7CQ21809593%7CQ22212013%7CQ22411580%7CQ22442963%7CQ22931024%7CQ22999423%7CQ23680378": {
+    "entities": {
+      "Q7190370": {
+        "type": "item",
+        "id": "Q7190370",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village de Pologne"
+          }
+        }
+      },
+      "Q7410969": {
+        "type": "item",
+        "id": "Q7410969",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "personnalité politique irlandaise"
+          }
+        }
+      },
+      "Q7784926": {
+        "type": "item",
+        "id": "Q7784926",
+        "descriptions": {}
+      },
+      "Q7922848": {
+        "type": "item",
+        "id": "Q7922848",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "variation de pression en fonction de l'altitude"
+          }
+        }
+      },
+      "Q7991831": {
+        "type": "item",
+        "id": "Q7991831",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce d'insectes"
+          }
+        }
+      },
+      "Q8189863": {
+        "type": "item",
+        "id": "Q8189863",
+        "descriptions": {}
+      },
+      "Q8331964": {
+        "type": "item",
+        "id": "Q8331964",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "homme politique et dirigeant sportif français"
+          }
+        }
+      },
+      "Q11875156": {
+        "type": "item",
+        "id": "Q11875156",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "édifice religieux situé en Finlande"
+          }
+        }
+      },
+      "Q11885031": {
+        "type": "item",
+        "id": "Q11885031",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "pentalogie de science-fiction américaine"
+          }
+        }
+      },
+      "Q13373630": {
+        "type": "item",
+        "id": "Q13373630",
+        "descriptions": {}
+      },
+      "Q13422888": {
+        "type": "item",
+        "id": "Q13422888",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "évêque mexicain, fondateur des \"sœurs cathéchistes de guadalupe\", déclaré vénérable"
+          }
+        }
+      },
+      "Q13506309": {
+        "type": "item",
+        "id": "Q13506309",
+        "descriptions": {}
+      },
+      "Q13518137": {
+        "type": "item",
+        "id": "Q13518137",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "maison à Neuilly-sur-Seine (Hauts-de-Seine)"
+          }
+        }
+      },
+      "Q13633756": {
+        "type": "item",
+        "id": "Q13633756",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "famille des plantes"
+          }
+        }
+      },
+      "Q15241213": {
+        "type": "item",
+        "id": "Q15241213",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "croyance paranormale impliquant la communication avec les esprits"
+          }
+        }
+      },
+      "Q15296602": {
+        "type": "item",
+        "id": "Q15296602",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "personnalité politique canadienne"
+          }
+        }
+      },
+      "Q15528142": {
+        "type": "item",
+        "id": "Q15528142",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce de plantes"
+          }
+        }
+      },
+      "Q15691441": {
+        "type": "item",
+        "id": "Q15691441",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce d'arachnides"
+          }
+        }
+      },
+      "Q15818701": {
+        "type": "item",
+        "id": "Q15818701",
+        "descriptions": {}
+      },
+      "Q15824662": {
+        "type": "item",
+        "id": "Q15824662",
+        "descriptions": {}
+      },
+      "Q15953422": {
+        "type": "item",
+        "id": "Q15953422",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "tour à Ammerschwihr (Haut-Rhin)"
+          }
+        }
+      },
+      "Q15994950": {
+        "type": "item",
+        "id": "Q15994950",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "mathématicienne américaine"
+          }
+        }
+      },
+      "Q16009296": {
+        "type": "item",
+        "id": "Q16009296",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "page de liste de Wikimédia"
+          }
+        }
+      },
+      "Q16059954": {
+        "type": "item",
+        "id": "Q16059954",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "membre du gouvernement français"
+          }
+        }
+      },
+      "Q16335227": {
+        "type": "item",
+        "id": "Q16335227",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "musée d'art à Florence, installé dans la galerie des Offices"
+          }
+        }
+      },
+      "Q16382642": {
+        "type": "item",
+        "id": "Q16382642",
+        "descriptions": {}
+      },
+      "Q16509825": {
+        "type": "item",
+        "id": "Q16509825",
+        "descriptions": {}
+      },
+      "Q16525353": {
+        "type": "item",
+        "id": "Q16525353",
+        "descriptions": {}
+      },
+      "Q16964724": {
+        "type": "item",
+        "id": "Q16964724",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "moulin à eau à Chaudon (Eure-et-Loir)"
+          }
+        }
+      },
+      "Q16999503": {
+        "type": "item",
+        "id": "Q16999503",
+        "descriptions": {}
+      },
+      "Q17049970": {
+        "type": "item",
+        "id": "Q17049970",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "canton français"
+          }
+        }
+      },
+      "Q17632539": {
+        "type": "item",
+        "id": "Q17632539",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "récit de Xavier Forneret"
+          }
+        }
+      },
+      "Q17916835": {
+        "type": "item",
+        "id": "Q17916835",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "gène de l'espèce Homo sapiens"
+          }
+        }
+      },
+      "Q18010742": {
+        "type": "item",
+        "id": "Q18010742",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "tableau de Dominique Ingres, Fogg Art Museum, 1839"
+          }
+        }
+      },
+      "Q18469089": {
+        "type": "item",
+        "id": "Q18469089",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "espèce d'insectes"
+          }
+        }
+      },
+      "Q19365724": {
+        "type": "item",
+        "id": "Q19365724",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "personnalité marocaine"
+          }
+        }
+      },
+      "Q20027626": {
+        "type": "item",
+        "id": "Q20027626",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "personnalité politique française"
+          }
+        }
+      },
+      "Q21028651": {
+        "type": "item",
+        "id": "Q21028651",
+        "descriptions": {}
+      },
+      "Q21055508": {
+        "type": "item",
+        "id": "Q21055508",
+        "descriptions": {}
+      },
+      "Q21234823": {
+        "type": "item",
+        "id": "Q21234823",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "femme politique nord-irlandaise"
+          }
+        }
+      },
+      "Q21512504": {
+        "type": "item",
+        "id": "Q21512504",
+        "descriptions": {}
+      },
+      "Q21521930": {
+        "type": "item",
+        "id": "Q21521930",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "église située dans l'Oise, en France"
+          }
+        }
+      },
+      "Q21656775": {
+        "type": "item",
+        "id": "Q21656775",
+        "descriptions": {}
+      },
+      "Q21809593": {
+        "type": "item",
+        "id": "Q21809593",
+        "descriptions": {}
+      },
+      "Q22212013": {
+        "type": "item",
+        "id": "Q22212013",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "homme politique français"
+          }
+        }
+      },
+      "Q22411580": {
+        "type": "item",
+        "id": "Q22411580",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "rivière au Québec (Canada)"
+          }
+        }
+      },
+      "Q22442963": {
+        "type": "item",
+        "id": "Q22442963",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "femme politique belge et féministe"
+          }
+        }
+      },
+      "Q22931024": {
+        "type": "item",
+        "id": "Q22931024",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "mardi 4 janvier 1916"
+          }
+        }
+      },
+      "Q22999423": {
+        "type": "item",
+        "id": "Q22999423",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "hôtel particulier à Aix-en-Provence (Bouches-du-Rhône)"
+          }
+        }
+      },
+      "Q23680378": {
+        "type": "item",
+        "id": "Q23680378",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "archer français"
+          }
+        }
+      }
+    },
+    "success": 1
+  },
+  "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&maxlag=5&props=descriptions&languages=fr&ids=Q25379337%7CQ25384726%7CQ25388337%7CQ25389276%7CQ26705669%7CQ28230320%7CQ30115938%7CQ30765777%7CQ33138734%7CQ41748445%7CQ48751535%7CQ48856064%7CQ54889380%7CQ55649583%7CQ56306600%7CQ60848380%7CQ65134243%7CQ65157083%7CQ75335018%7CQ83437111%7CQ86667041%7CQ93861234%7CQ94696193%7CQ96782316%7CQ97277844%7CQ97289392%7CQ97366431%7CQ97368099%7CQ97368897%7CQ98821257%7CQ101427557%7CQ106573495%7CQ108873174%7CQ109044436%7CQ109677732%7CQ110995393%7CQ111208058%7CQ111763256%7CQ113833714%7CQ115799290%7CQ118121720%7CQ118365468%7CQ118911511%7CQ123169536%7CQ124713116%7CQ125908704%7CQ126494766%7CQ131564092%7CQ139580369": {
+    "entities": {
+      "Q25379337": {
+        "type": "item",
+        "id": "Q25379337",
+        "descriptions": {}
+      },
+      "Q25384726": {
+        "type": "item",
+        "id": "Q25384726",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "tableau de Charles Bargue"
+          }
+        }
+      },
+      "Q25388337": {
+        "type": "item",
+        "id": "Q25388337",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "gouvernement de l'Espagne"
+          }
+        }
+      },
+      "Q25389276": {
+        "type": "item",
+        "id": "Q25389276",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "grotte en Thaïlande"
+          }
+        }
+      },
+      "Q26705669": {
+        "type": "item",
+        "id": "Q26705669",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "village au Cameroun"
+          }
+        }
+      },
+      "Q28230320": {
+        "type": "item",
+        "id": "Q28230320",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "chronologie de la Roumanie"
+          }
+        }
+      },
+      "Q30115938": {
+        "type": "item",
+        "id": "Q30115938",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "club français de football"
+          }
+        }
+      },
+      "Q30765777": {
+        "type": "item",
+        "id": "Q30765777",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "chanson de Stevie Wonder, sortie en 1989"
+          }
+        }
+      },
+      "Q33138734": {
+        "type": "item",
+        "id": "Q33138734",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "Ministre de l'Éducation Nationale"
+          }
+        }
+      },
+      "Q41748445": {
+        "type": "item",
+        "id": "Q41748445",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "église située dans les Côtes-d'Armor, en France"
+          }
+        }
+      },
+      "Q48751535": {
+        "type": "item",
+        "id": "Q48751535",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "film de Mathieu Turi sorti en 2017"
+          }
+        }
+      },
+      "Q48856064": {
+        "type": "item",
+        "id": "Q48856064",
+        "descriptions": {}
+      },
+      "Q54889380": {
+        "type": "item",
+        "id": "Q54889380",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "42e édition de la course cycliste nommée auparavant « Route du Sud »"
+          }
+        }
+      },
+      "Q55649583": {
+        "type": "item",
+        "id": "Q55649583",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "ancien collaborateur-sécurité auprès du président de la République française"
+          }
+        }
+      },
+      "Q56306600": {
+        "type": "item",
+        "id": "Q56306600",
+        "descriptions": {}
+      },
+      "Q60848380": {
+        "type": "item",
+        "id": "Q60848380",
+        "descriptions": {}
+      },
+      "Q65134243": {
+        "type": "item",
+        "id": "Q65134243",
+        "descriptions": {}
+      },
+      "Q65157083": {
+        "type": "item",
+        "id": "Q65157083",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "organisme gouvernemental québécois"
+          }
+        }
+      },
+      "Q75335018": {
+        "type": "item",
+        "id": "Q75335018",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "cinéaste britannique"
+          }
+        }
+      },
+      "Q83437111": {
+        "type": "item",
+        "id": "Q83437111",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "chronologie de l'Arabie saoudite"
+          }
+        }
+      },
+      "Q86667041": {
+        "type": "item",
+        "id": "Q86667041",
+        "descriptions": {}
+      },
+      "Q93861234": {
+        "type": "item",
+        "id": "Q93861234",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "compétition de rugby à XIII"
+          }
+        }
+      },
+      "Q94696193": {
+        "type": "item",
+        "id": "Q94696193",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "site archéologique mentionné sur la table de Peutinger"
+          }
+        }
+      },
+      "Q96782316": {
+        "type": "item",
+        "id": "Q96782316",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "autrice française"
+          }
+        }
+      },
+      "Q97277844": {
+        "type": "item",
+        "id": "Q97277844",
+        "descriptions": {}
+      },
+      "Q97289392": {
+        "type": "item",
+        "id": "Q97289392",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "film d'animation américain, sorti en 2021"
+          }
+        }
+      },
+      "Q97366431": {
+        "type": "item",
+        "id": "Q97366431",
+        "descriptions": {}
+      },
+      "Q97368099": {
+        "type": "item",
+        "id": "Q97368099",
+        "descriptions": {}
+      },
+      "Q97368897": {
+        "type": "item",
+        "id": "Q97368897",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "élections au Sénégal"
+          }
+        }
+      },
+      "Q98821257": {
+        "type": "item",
+        "id": "Q98821257",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "acteur français"
+          }
+        }
+      },
+      "Q101427557": {
+        "type": "item",
+        "id": "Q101427557",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "unité de charge électrique"
+          }
+        }
+      },
+      "Q106573495": {
+        "type": "item",
+        "id": "Q106573495",
+        "descriptions": {}
+      },
+      "Q108873174": {
+        "type": "item",
+        "id": "Q108873174",
+        "descriptions": {}
+      },
+      "Q109044436": {
+        "type": "item",
+        "id": "Q109044436",
+        "descriptions": {}
+      },
+      "Q109677732": {
+        "type": "item",
+        "id": "Q109677732",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "écrivaine canadienne"
+          }
+        }
+      },
+      "Q110995393": {
+        "type": "item",
+        "id": "Q110995393",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "footballeur français"
+          }
+        }
+      },
+      "Q111208058": {
+        "type": "item",
+        "id": "Q111208058",
+        "descriptions": {}
+      },
+      "Q111763256": {
+        "type": "item",
+        "id": "Q111763256",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "résultats électoraux des élections législatives françaises de 1956"
+          }
+        }
+      },
+      "Q113833714": {
+        "type": "item",
+        "id": "Q113833714",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "béton dont la production émet moins de CO2"
+          }
+        }
+      },
+      "Q115799290": {
+        "type": "item",
+        "id": "Q115799290",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "épreuve des Jeux olympiques d'été de 2024"
+          }
+        }
+      },
+      "Q118121720": {
+        "type": "item",
+        "id": "Q118121720",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "épisode des Simpson"
+          }
+        }
+      },
+      "Q118365468": {
+        "type": "item",
+        "id": "Q118365468",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "commune de la préfecture de la Kéran, région de la Kara au Togo"
+          }
+        }
+      },
+      "Q118911511": {
+        "type": "item",
+        "id": "Q118911511",
+        "descriptions": {}
+      },
+      "Q123169536": {
+        "type": "item",
+        "id": "Q123169536",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "avocat néerlandais"
+          }
+        }
+      },
+      "Q124713116": {
+        "type": "item",
+        "id": "Q124713116",
+        "descriptions": {}
+      },
+      "Q125908704": {
+        "type": "item",
+        "id": "Q125908704",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "page d'homonymie de Wikimedia"
+          }
+        }
+      },
+      "Q126494766": {
+        "type": "item",
+        "id": "Q126494766",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "page d'homonymie de Wikimedia"
+          }
+        }
+      },
+      "Q131564092": {
+        "type": "item",
+        "id": "Q131564092",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "album de bande dessinée de la série Les Schtroumpfs"
+          }
+        }
+      },
+      "Q139580369": {
+        "type": "item",
+        "id": "Q139580369",
+        "descriptions": {
+          "fr": {
+            "language": "fr",
+            "value": "parc public, situé sur une île de la ville de Nantes"
+          }
+        }
+      }
+    },
+    "success": 1
+  }
+}
