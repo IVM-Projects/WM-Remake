@@ -12,7 +12,7 @@ export function ImageCredit({ credit }: { credit: Credit }) {
     <p className="wrap-anywhere">
       {'Image : '}
       <a href={`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(file)}`} target="_blank" rel="noopener noreferrer" className={link}>
-        {image_author ?? 'voir la page du fichier'}
+        {image_author || 'voir la page du fichier'}
       </a>
       {', '}
       {license_url ? (

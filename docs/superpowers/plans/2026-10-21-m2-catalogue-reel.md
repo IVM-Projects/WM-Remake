@@ -510,8 +510,8 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
   | `pageviews` | `dumps` | `lbzip2` ; URL de la Task 4 avec `M = needs.dumps.outputs.month` ; `curl … \| lbzip2 -dc \| grep '^fr.wikipedia ' \| node catalog/src/cli.ts pageviews --dir work` (`pipefail` : un flux coupé échoue, `minLines` attrape un fichier tronqué) | 120 |
   | `select` | `dumps`, `pageviews` | taux = `inputs.sample_rate`, sinon `psql "$SUPABASE_DB_URL" -qAtX -c "select value from wm.config where key = 'sample_rate'"` (P2) ; `select` ; `NODE_OPTIONS: --max-old-space-size=6144` | 30 |
   | `text` | `dumps`, `select` | `if:` en plus `(inputs.text_source \|\| 'cirrus') == 'cirrus'` ; matrice `part: ${{ fromJSON(needs.dumps.outputs.cirrus_parts) }}`, `max-parallel: 10` ; `lbzip2` ; `curl \| lbzip2 -dc \| cirrus` | 60 |
-  | `wikidata` | `select` | `actions/cache/restore@v6` (préfixe `wikidata-<month>-`), `wikidata --per-minute 100 --concurrency 2`, puis `actions/cache/save@v6` (`if: always()`, clé `wikidata-<month>-<run_id>-<run_attempt>`) | 345 |
-  | `commons` | `select` | même schéma, préfixe `commons-<month>-`, `commons --per-minute 100 --concurrency 1` (P16) | 345 |
+  | `wikidata` | `select` | `actions/cache/restore@v6` (préfixe `wikidata-<month>-`), `wikidata --per-minute 100 --concurrency 1` (M2-R10 : 1 + 2 en vol avec Commons), puis `actions/cache/save@v6` (`if: always()`, clé `wikidata-<month>-<run_id>-<run_attempt>`) | 345 |
+  | `commons` | `select` | même schéma, préfixe `commons-<month>-`, `commons --per-minute 100 --concurrency 2` (P16, M2-R8) | 345 |
   | `compute` | `dumps`, `select`, `text`, `wikidata`, `commons` | `if:` en plus `needs.select.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')` (`text` peut être sauté) ; télécharge `text-*` (`merge-multiple: true`), `compute` ; `NODE_OPTIONS` comme `select` ; artefact `catalog-out` ; enfin, avec `permissions: { contents: read, actions: write }` sur ce job et `GH_TOKEN: ${{ github.token }}`, suppression des artefacts intermédiaires du run (`gh api repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts`, puis `gh api -X DELETE …/actions/artifacts/<id>` pour chaque nom autre que `catalog-out`) | 120 |
 
 - [ ] **Step 2: Relire le YAML** : chaque condition commence par `!cancelled()` ; aucun `always()` hors des étapes `cache/save` ; `defaults: run: shell: bash` présent ; chaque envoi a `overwrite: true`. Puis contrôles rapides (la CI ne lit pas ce YAML ; sa vérification est le run du Step 4).
@@ -792,19 +792,19 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
 - Consumes : `GET /api/cards/{id}/credits` (Task 15) ; `api()` (`lib/api.ts`) ; `usePrefs()` (`lib/prefs.ts`) ; `MIN_VIEWS` (Task 1) ; `formatInt`.
 - Produces :
   - `type Credit = { file: string; image_author: string | null; image_license: string; license_url: string | null }` (la licence est toujours présente, P15) ;
-  - `<ImageCredit credit={Credit} />` → `<p>Image : {image_author ?? 'auteur inconnu'}, <licence></p>`. La licence est un lien `target="_blank" rel="noopener noreferrer"` quand `license_url` existe, du texte sinon.
+  - `<ImageCredit credit={Credit} />` → `<p>Image : <auteur ou « voir la page du fichier », lien vers la page du fichier sur Commons>, <licence></p>` (M2-R10). La licence est un lien `target="_blank" rel="noopener noreferrer"` quand `license_url` existe, du texte sinon.
   - `CardModal` : la ligne « Texte de l'article : CC BY-SA 4.0 — crédits sur la page Wikipédia. » reste, suivie de `ImageCredit` ; le `shortcut:` de la ligne 279 disparaît. Les crédits sont lus seulement si l'image est réellement affichée, selon la règle de `Card.tsx:55` : `image_url && !hide_image && !(nsfw_image && hideSensitive)`. Lecture à l'ouverture avec la même garde `live` que la méta ; un 404 ou une erreur n'affiche rien.
   - `<Footer />` : `<footer>` en `text-xs text-[var(--color-foreground)]/60`, « Projet indépendant de la Fondation Wikimedia · » et le lien `/credits` « Crédits » (`inline-flex min-h-11 items-center`). Il reste hors de la `nav` (le contrat `nav.hidden a` compte 13 entrées).
   - `/credits` (gabarit de `rules/page.tsx`, `metadata.title` « Crédits », « vous ») :
     - h1 « Crédits et licences » ;
-    - h2 « Sources » : « Les textes des cartes viennent de Wikipédia en français, sous licence CC BY-SA 4.0. » (lien `https://creativecommons.org/licenses/by-sa/4.0/deed.fr`) ; « Les descriptions courtes viennent de Wikidata, sous licence CC0. » (lien `https://creativecommons.org/publicdomain/zero/1.0/deed.fr`) ; « Les images viennent de Wikimedia Commons : l'auteur et la licence de chaque image sont indiqués dans la fiche de la carte. » ;
+    - h2 « Sources » : « Les textes des cartes sont des extraits abrégés d'articles de Wikipédia en français, sous licence CC BY-SA 4.0. » (M2-R10) (lien `https://creativecommons.org/licenses/by-sa/4.0/deed.fr`) ; « Les descriptions courtes viennent de Wikidata, sous licence CC0. » (lien `https://creativecommons.org/publicdomain/zero/1.0/deed.fr`) ; « Les images viennent de Wikimedia Commons : l'auteur et la licence de chaque image sont indiqués dans la fiche de la carte. » ;
     - h2 « Statistiques des cartes » : la rareté selon les vues humaines du mois civil précédent, seuils lus dans `MIN_VIEWS` et écrits par `formatInt` (« L : 20 000 vues ou plus », …, « C : moins de 50 ») ; ATK, DEF et Q-Score par la méthode `stats_v1` décrite en mots (longueur du texte, liens entrants, label « Article de qualité » ou « Bon article », rang dans tout le catalogue) ; « Sur la démo, le catalogue est un échantillon proportionnel de chaque rareté : les totaux affichés sont ceux des cartes chargées. » ;
     - paragraphe final « Projet indépendant de la Fondation Wikimedia. ».
 
 - [ ] **Step 1: Tests qui échouent**
   - `CardModal.test.tsx` (`renderToStaticMarkup`) :
     - `ImageCredit` avec auteur, licence et URL → `Image : Jean Dupont, ` puis `<a href="https://creativecommons.org/licenses/by-sa/4.0" target="_blank" rel="noopener noreferrer"…>CC BY-SA 4.0</a>` ;
-    - sans URL → texte simple ; sans auteur → « Image : auteur inconnu, CC BY-SA 4.0 » ;
+    - sans URL → texte simple ; sans auteur → « Image : voir la page du fichier, CC BY-SA 4.0 » (M2-R10) ;
     - la ligne du texte de l'article reste identique (test existant).
   - `e2e/credits.spec.ts` :
     - `/credits` sans session → h1 « Crédits et licences », « Projet indépendant de la Fondation Wikimedia. », `` `L : ${formatInt(20000)} vues ou plus` `` (espace fine insécable) ;
