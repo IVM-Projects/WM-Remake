@@ -97,15 +97,30 @@ describe('CardModal (R§6.5)', () => {
 
 describe('ImageCredit (M2-16)', () => {
   const credit = { file: 'Test.jpg', image_author: 'Jean Dupont', image_license: 'CC BY-SA 4.0', license_url: 'https://creativecommons.org/licenses/by-sa/4.0' }
+  const a = (href: string, text: string) =>
+    `<a href="${href}" target="_blank" rel="noopener noreferrer" class="font-medium text-accent underline hover:text-accent-light">${text}</a>`
+  const commons = 'https://commons.wikimedia.org/wiki/File:'
 
-  test('auteur, puis la licence en lien vers son texte, dans un nouvel onglet', () => {
-    expect(html(<ImageCredit credit={credit} />)).toMatch(
-      /^<p>Image : Jean Dupont, <a href="https:\/\/creativecommons.org\/licenses\/by-sa\/4.0" target="_blank" rel="noopener noreferrer"[^>]*>CC BY-SA 4.0<\/a><\/p>$/,
+  test('auteur en lien vers la page du fichier sur Commons, puis la licence en lien vers son texte, dans un nouvel onglet', () => {
+    expect(html(<ImageCredit credit={credit} />)).toBe(
+      `<p class="wrap-anywhere">Image : ${a(`${commons}Test.jpg`, 'Jean Dupont')}, ${a('https://creativecommons.org/licenses/by-sa/4.0', 'CC BY-SA 4.0')}</p>`,
     )
   })
 
-  test('sans URL, la licence en texte simple ; sans auteur, « auteur inconnu »', () => {
-    expect(html(<ImageCredit credit={{ ...credit, license_url: null }} />)).toBe('<p>Image : Jean Dupont, CC BY-SA 4.0</p>')
-    expect(html(<ImageCredit credit={{ ...credit, image_author: null, license_url: null }} />)).toBe('<p>Image : auteur inconnu, CC BY-SA 4.0</p>')
+  test('sans URL, la licence en texte simple ; sans auteur, « voir la page du fichier »', () => {
+    expect(html(<ImageCredit credit={{ ...credit, license_url: null }} />)).toBe(
+      `<p class="wrap-anywhere">Image : ${a(`${commons}Test.jpg`, 'Jean Dupont')}, CC BY-SA 4.0</p>`,
+    )
+    expect(html(<ImageCredit credit={{ ...credit, image_author: null, license_url: null }} />)).toBe(
+      `<p class="wrap-anywhere">Image : ${a(`${commons}Test.jpg`, 'voir la page du fichier')}, CC BY-SA 4.0</p>`,
+    )
+  })
+
+  // Nom stocké tel que Commons le donne (soulignés, catalog/fixtures/expected/media.csv) ; MediaWiki lit les noms en %.
+  test('nom du fichier encodé : espaces, accents, apostrophe et parenthèses', () => {
+    const href = (file: string) => html(<ImageCredit credit={{ ...credit, file }} />).match(/href="([^"]+)"/)![1]
+    expect(href("219_Château_du_Marhallac'h.jpg")).toBe(`${commons}219_Ch%C3%A2teau_du_Marhallac'h.jpg`)
+    expect(href('Tour Eiffel (1889).jpg')).toBe(`${commons}Tour%20Eiffel%20(1889).jpg`)
+    expect(href('A&B?#.jpg')).toBe(`${commons}A%26B%3F%23.jpg`)
   })
 })

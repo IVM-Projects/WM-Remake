@@ -14,7 +14,7 @@ export default function CreditsPage() {
         <h1 className="text-2xl font-bold">Crédits et licences</h1>
         <h2 className="text-lg font-bold">Sources</h2>
         <p>
-          Les textes des cartes viennent de Wikipédia en français, sous licence{' '}
+          Les textes des cartes sont des extraits abrégés d&apos;articles de Wikipédia en français, sous licence{' '}
           <a href="https://creativecommons.org/licenses/by-sa/4.0/deed.fr" target="_blank" rel="noopener noreferrer" className={link}>
             CC BY-SA 4.0
           </a>

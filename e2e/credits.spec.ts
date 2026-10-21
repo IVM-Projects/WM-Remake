@@ -58,6 +58,9 @@ values (:'uid', :'id', :'title', 'C', 1000, 1000)`, { id, uid, title })
     const license = dialog.getByRole('link', { name: 'CC BY-SA 4.0', exact: true })
     await expect(license).toHaveAttribute('href', 'https://creativecommons.org/licenses/by-sa/4.0')
     await expect(license).toHaveAttribute('target', '_blank')
+    const author = dialog.getByRole('link', { name: 'Jean Dupont', exact: true })
+    await expect(author).toHaveAttribute('href', 'https://commons.wikimedia.org/wiki/File:Zz.jpg')
+    await expect(author).toHaveAttribute('target', '_blank')
     expect(asked).toEqual([`/api/cards/${id}/credits`])
 
     // Image masquée par le staff : ni lecture des crédits, ni ligne.
@@ -86,6 +89,44 @@ insert into wm.user_prefs (user_id, hide_sensitive) values (:'uid', true) on con
     expect(asked).toEqual([])
   } finally {
     sql(`delete from public.user_cards where card_id = :'id';
+delete from wm.card_media where card_id = :'id';
+delete from public.cards where id = :'id'`, { id })
+  }
+})
+
+// Deux cartes et non une mise à jour du média : /api/cards/{id}/credits est en cache dans le navigateur (max-age).
+test('modale à 320 px : sans auteur, « voir la page du fichier » ; un auteur sans espace ne déborde pas', async ({ page, login }) => {
+  const { uid } = await login()
+  await page.setViewportSize({ width: 320, height: 640 })
+  const suffix = randomUUID().slice(-12)
+  const copies = [
+    { title: `Zz crédits anonyme ${suffix} z`, file: "Château_de_l'Été_(1889).jpg", author: '' },
+    { title: `Zz crédits long ${suffix} z`, file: 'Zz.jpg', author: 'Anthony_Réveillère_Euro_2012_vs_Spain.jpg: Станислав Ведмидь derivative work: Simo82' },
+  ]
+  const ids: string[] = []
+  try {
+    for (const c of copies) {
+      const id = sql(`insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, image_url)
+values (:'title', 'https://fr.wikipedia.org/wiki/Zz', 'C', 1000, 1000, 'http://127.0.0.1:3100/icon') returning id`, c)
+      ids.push(id)
+      sql(`insert into wm.card_media (card_id, file, author, license, license_url)
+values (:'id', :'file', nullif(:'author', ''), 'CC BY-SA 3.0', null);
+insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_atk, snapshot_def)
+values (:'uid', :'id', :'title', 'C', 1000, 1000)`, { ...c, id, uid })
+    }
+
+    let dialog = await openCopy(page, copies[0].title)
+    await expect(dialog.getByText('Image : voir la page du fichier, CC BY-SA 3.0', { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('link', { name: 'voir la page du fichier', exact: true }))
+      .toHaveAttribute('href', "https://commons.wikimedia.org/wiki/File:Ch%C3%A2teau_de_l'%C3%89t%C3%A9_(1889).jpg")
+
+    // WCAG 1.4.10 : le crédit tient dans sa colonne (sans coupure, son premier mot la dépasse de 17 px à 320 px).
+    dialog = await openCopy(page, copies[1].title)
+    const credit = dialog.getByText(/^Image : Anthony_Réveillère/)
+    await expect(credit).toBeVisible()
+    expect(await credit.evaluate((p) => p.scrollWidth - p.clientWidth)).toBe(0)
+  } finally {
+    for (const id of ids) sql(`delete from public.user_cards where card_id = :'id';
 delete from wm.card_media where card_id = :'id';
 delete from public.cards where id = :'id'`, { id })
   }
