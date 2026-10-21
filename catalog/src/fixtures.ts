@@ -210,7 +210,7 @@ export async function sliceCirrusCommand(o: { input: NodeJS.ReadableStream; fixt
 }
 
 // Règles de lots du plan sur toutes les pages `selected` de catalog.tsv, puis extractsUrls des 40 premiers ids.
-// only 'extracts' (M2-R5) : complète extracts.json des seuls lots absents, sans toucher aux autres réponses.
+// only 'extracts' (M2-R5) : extracts.json = exactement les lots de ces règles ; corps déjà là repris, les autres demandés.
 export async function fetchCommand(o: {
   dir: string
   fixtures: string
@@ -232,8 +232,9 @@ export async function fetchCommand(o: {
 
   if (o.only === 'extracts') {
     const path = join(raw, 'extracts.json')
-    const extracts = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-    Object.assign(extracts, await fetchRaw(o.client, extractUrls.filter((url) => !Object.hasOwn(extracts, url))))
+    const old = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    const fresh = await fetchRaw(o.client, extractUrls.filter((url) => !Object.hasOwn(old, url)))
+    const extracts = Object.fromEntries(extractUrls.map((url) => [url, Object.hasOwn(old, url) ? old[url] : fresh[url]]))
     await writeFile(path, `${JSON.stringify(extracts, null, 2)}\n`)
     return { extracts: Object.keys(extracts).length }
   }

@@ -28,7 +28,7 @@ Tranches réelles et cohérentes des sources Wikimedia pour un même ensemble d'
 - `pageviews.txt` : lignes `fr.wikipedia` du fichier mensuel `user` pour ces pages (par `page_id`, ou par titre quand `page_id` vaut `null`).
 - `cirrus.ndjson` : paires index/document du dump CirrusSearch pour ces pages. Les champs lourds (`source_text`, `text`, `auxiliary_text`, …) sont retirés ; restent `page_id`, `namespace`, `title`, `page_type`, `redirect_target`, `opening_text`, `text_bytes`, `incoming_links`, `template`, `wikibase_item`, `version`, `timestamp`, `index_name`, `wiki`.
 - `wikidata.json`, `commons.json`, `extracts.json` : réponses des API, rangées par l'URL exacte de la requête.
-- `extracts.json` complété le 2026-10-21 (décision M2-R5, `fixtures fetch --only extracts`) : lots TextExtracts des pages dont l'ouverture Cirrus est un texte d'infobox ; les réponses déjà présentes sont inchangées.
+- `extracts.json` complété le 2026-10-21 (décision M2-R5, `fixtures fetch --only extracts`) : exactement les lots TextExtracts des Règles de lots, dont les pages à ouverture Cirrus d'infobox ; corps déjà présents repris tels quels.
 - `meta.json` : date du run, mois des vues (`YYYY-MM`), date de l'instantané Cirrus.
 
 Projet indépendant de la Fondation Wikimedia.

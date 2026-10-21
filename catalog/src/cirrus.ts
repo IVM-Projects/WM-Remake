@@ -1,6 +1,6 @@
 // Dump CirrusSearch hebdomadaire de frwiki_content (M2-5) : instantané, parts, documents → text-<part>.tsv.
 import { join } from 'node:path'
-import { cleanOpening, cutSummary, hasOpening, SUMMARY_MAX } from './compute.ts'
+import { cleanOpening, cutSummary, SUMMARY_MAX, usableOpening } from './compute.ts'
 import type { Mode } from './compute.ts'
 import { USER_AGENT } from './http.ts'
 import { readTsv, writeTsv } from './tsv.ts'
@@ -64,7 +64,8 @@ const parse = (line: string): unknown => {
 }
 
 // Paires index/document ; la ligne d'index donne l'id attendu du document qui la suit. Un document sans page_id,
-// namespace et text_bytes entiers, ou dont page_id n'est pas cet id, est sauté ; au-delà de 5 %, le format a changé.
+// namespace et text_bytes entiers et title texte, ou dont page_id n'est pas cet id, est sauté ; au-delà de 5 %, le
+// format a changé (un title renommé couperait en silence la règle d'infobox de usableOpening).
 export async function* cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<CirrusDoc> {
   let n = 0
   let docs = 0
@@ -85,7 +86,7 @@ export async function* cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<
     docs++
     const id = expected
     expected = undefined
-    if (!Number.isInteger(d.page_id) || !Number.isInteger(d.namespace) || !Number.isInteger(d.text_bytes)) {
+    if (!Number.isInteger(d.page_id) || !Number.isInteger(d.namespace) || !Number.isInteger(d.text_bytes) || typeof d.title !== 'string') {
       invalid++
       continue
     }
@@ -96,7 +97,7 @@ export async function* cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<
     yield {
       page_id: d.page_id as number,
       namespace: d.namespace as number,
-      title: typeof d.title === 'string' ? d.title : '',
+      title: d.title as string,
       page_type: typeof d.page_type === 'string' ? d.page_type : undefined,
       opening_text: typeof d.opening_text === 'string' ? d.opening_text : undefined,
       text_bytes: d.text_bytes as number,
@@ -108,12 +109,13 @@ export async function* cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<
   if (docs === 0) throw new Error('Format Cirrus inattendu : aucun document')
   if (docs - invalid - mismatch < 0.95 * docs) {
     throw new Error(
-      `Format Cirrus inattendu : ${invalid} documents sur ${docs} sans page_id, namespace et text_bytes entiers, ${mismatch} dont page_id n'est pas l'_id`,
+      `Format Cirrus inattendu : ${invalid} documents sur ${docs} sans page_id, namespace et text_bytes entiers et title texte, ${mismatch} dont page_id n'est pas l'_id`,
     )
   }
 }
 
-// text-<part>.tsv : page_id, text_bytes, incoming_links (0 si absent), summary|\N ; espace 0 hors redirections.
+// text-<part>.tsv : page_id, text_bytes, incoming_links|\N, summary|\N ; espace 0 hors redirections.
+// M2-R7 : incoming_links absent = inconnu (pages récentes), jamais 0.
 // Résumé seulement pour une page selected qui passe hasOpening : les autres reçoivent TextExtracts (Règles de lots).
 export async function cirrusCommand(o: { dir: string; part: string; mode: Mode; input: AsyncIterable<string> }): Promise<{ docs: number; rows: number }> {
   const selected = new Set<number>()
@@ -126,11 +128,11 @@ export async function cirrusCommand(o: { dir: string; part: string; mode: Mode; 
       docs++
       if (d.namespace !== 0 || d.page_type === 'redirect') continue
       if (d.incoming_links === undefined) noLinks++
-      const usable = selected.has(d.page_id) && hasOpening(d.opening_text, d.title)
-      yield [d.page_id, d.text_bytes, d.incoming_links ?? 0, usable ? cutSummary(cleanOpening(d.opening_text ?? ''), SUMMARY_MAX[o.mode]) : null]
+      const text = selected.has(d.page_id) ? cleanOpening(d.opening_text ?? '') : ''
+      yield [d.page_id, d.text_bytes, d.incoming_links ?? null, usableOpening(text, d.title) ? cutSummary(text, SUMMARY_MAX[o.mode]) : null]
     }
   })())
-  // Environ 12 % des articles n'ont pas le champ (0 lien) ; au-delà de la moitié, il a changé de nom ou de type.
+  // Le champ manque sur les pages récentes (environ 12 % du slice) ; sur la plupart des lignes, il a été renommé.
   if (noLinks > rows / 2) throw new Error(`Format Cirrus inattendu : ${noLinks} documents sur ${rows} sans incoming_links`)
   return { docs, rows }
 }

@@ -178,7 +178,7 @@ test('fetch : Règles de lots sur toutes les pages choisies, corps rangés par U
   expect(result).toEqual({ wikidata: wikidata.length, commons: commons.length + fr.length, extracts: extracts.length })
 })
 
-test('fetch --only extracts : seuls les lots absents sont demandés, réponses déjà là gardées, autres tranches intactes', async () => {
+test('fetch --only extracts : exactement les lots des règles, corps déjà là repris, lot mort retiré, autres tranches intactes', async () => {
   const work = join(dir, 'only')
   const fixtures = join(dir, 'only-fixtures')
   await mkdir(work)
@@ -192,7 +192,8 @@ test('fetch --only extracts : seuls les lots absents sont demandés, réponses d
   ]
   await writeFile(join(fixtures, 'raw', 'cirrus.ndjson'), docs.map((d) => `{"index": {"_id": ${d.page_id}}}\n${JSON.stringify(d)}\n`).join(''))
   const [kept] = extractsUrls([1, 2, 3])
-  await writeFile(join(fixtures, 'raw', 'extracts.json'), JSON.stringify({ [kept]: { old: true } }))
+  const dead = extractsUrls([3])[0]
+  await writeFile(join(fixtures, 'raw', 'extracts.json'), JSON.stringify({ [kept]: { old: true }, [dead]: { dead: true } }))
 
   const asked: string[] = []
   const client = { async get(url: string) { asked.push(url); return { url } } }

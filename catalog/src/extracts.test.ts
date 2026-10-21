@@ -5,8 +5,8 @@ import { parseExtracts } from './extracts.ts'
 const bodies = JSON.parse(await readFile(new URL('../fixtures/raw/extracts.json', import.meta.url), 'utf8')) as Record<string, unknown>
 
 test('parseExtracts sur raw/extracts.json : une ligne par page demandée qui a un extrait, texte non vide', () => {
-  // 3 lots du run fixtures, 8 ajoutés pour M2-R5 (ouvertures d'infobox).
-  expect(Object.keys(bodies)).toHaveLength(11)
+  // Lots des Règles de lots sur les pages sans résumé Cirrus (M2-R5), plus les 40 premiers ids (cirrus.test.ts).
+  expect(Object.keys(bodies)).toHaveLength(10)
   for (const [url, body] of Object.entries(bodies)) {
     const asked = new URL(url).searchParams.get('pageids')!.split('|').map(Number)
     const rows = parseExtracts(body)

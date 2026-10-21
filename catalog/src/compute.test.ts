@@ -14,6 +14,7 @@ import {
   selectCommand,
   selectSample,
   statsV1,
+  usableOpening,
 } from './compute.ts'
 import type { CatalogRow, Counts } from './compute.ts'
 import { readTsv, writeTsv } from './tsv.ts'
@@ -249,7 +250,9 @@ test('cleanOpening : notes de maintenance entre crochets et « Écouter » retir
   // « Écouter » collé au mot ou après l'API ; en tête de phrase, c'est un mot.
   expect(cleanOpening("SankadiokroÉcouter est une localité de l'est de la Côte d'Ivoire.")).toBe("Sankadiokro est une localité de l'est de la Côte d'Ivoire.")
   expect(cleanOpening('Saintes (/sɛ̃t/ Écouter) est une commune.')).toBe('Saintes (/sɛ̃t/) est une commune.')
-  expect(cleanOpening('Il dort. Écouter la radio est un plaisir.')).toBe('Il dort. Écouter la radio est un plaisir.')
+  for (const word of ['Il dort. Écouter la radio est un plaisir.', 'Son album Écouter sort en 2010.', 'Il aime le film Écouter le temps.']) {
+    expect(cleanOpening(word)).toBe(word)
+  }
   for (const kept of ['Paris (prononcé [pa.ʁi]) est la capitale.', 'Baracs (hongrois : Baracs [ˈbɒrɒt͡ʃ]) est une localité.', 'Il veut adapter ces doctrines [pour des lecteurs occidentaux] sans trahir.']) {
     expect(cleanOpening(kept)).toBe(kept)
   }
@@ -287,6 +290,9 @@ test('hasOpening : ouverture d’infobox (M2-R5) refusée, vraie phrase d’ouve
     ['Cet article présente la liste des maires de Dunkerque.', 'Liste des maires de Dunkerque'],
   ]
   for (const [text, title] of leads) expect(hasOpening(text, title)).toBe(true)
+  // usableOpening : même règle sur un texte déjà nettoyé (cirrusCommand ne nettoie qu'une fois).
+  for (const [text, title] of [...infobox, ...leads]) expect(usableOpening(cleanOpening(text), title)).toBe(hasOpening(text, title))
+  expect(usableOpening('', 'Chat')).toBe(false)
 })
 
 test('cleanOpening : bandeau dont le titre cité finit par « ! » ou « ? »', () => {

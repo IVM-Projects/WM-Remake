@@ -133,9 +133,10 @@ const BANNER = new RegExp(
   String.raw`^(?:(?:Pour [^.!?]*?,\s?vo(?:ir|yez)(?![\w-])|Ne doit pas être confondu|Ne pas confondre|Cet article (?:concerne|traite|est une ébauche|est orphelin|ne cite|ne s['’]appuie|peut contenir)|Cette page (?:d['’]homonymie|est une très courte ébauche|contient des caractères spéciaux)|Vous lisez un «|Vous pouvez (?:partager vos connaissances en l['’]améliorant \(comment\s?\?\)|aider en ajoutant|également enrichir les pages)|Articles? principa(?:l|ux)\s?:|Moins de trois articles lui sont liés|Si vous disposez d['’]ouvrages|En pratique\s?:\s?Quelles sources sont attendues\s?\?\s?Comment ajouter mes sources|À l['’]instar du célèbre «|L['’]article peut contenir des analyses|Pour améliorer la vérifiabilité|S['’]ils s['’]affichent mal|Voir la page de discussion pour plus de détails|Consultez la liste des tâches|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)|Trouver des sources sur «[^»]*»\s?:[^]*?\(wd\)\s?trouver des œuvres sur Wikidata|Sur les autres projets Wikimedia\s?:(?:[^,]*,\s?sur (?:le |la )?Wik\S*(?: Commons)?)+)\s*`,
 )
 
-// Notes de maintenance entre crochets (liste fixe : l'API « [pa.ʁi] » reste) et « Écouter », collé au mot ou non.
+// Notes de maintenance entre crochets (liste fixe : l'API « [pa.ʁi] » reste) et « Écouter » collé au mot ou après la
+// barre de l'API ; après une espace ordinaire, « Écouter » est un vrai mot (« Son album Écouter… »).
 const NOISE =
-  /\[(?:réf\.\s?(?:nécessaire|souhaitée)|(?:Quoi|Lequel|Laquelle|Lesquels|Lesquelles|Qui|Quand|Où|Comment|Pourquoi|Combien)\s?\?|source\sinsuffisante|non\sneutre|interprétation\spersonnelle|à\svérifier|pas\sclair)\]|(?<=[\p{L}\p{M}/])\s?Écouter(?![\p{L}\p{M}])/gu
+  /\[(?:réf\.\s?(?:nécessaire|souhaitée)|(?:Quoi|Lequel|Laquelle|Lesquels|Lesquelles|Qui|Quand|Où|Comment|Pourquoi|Combien)\s?\?|source\sinsuffisante|non\sneutre|interprétation\spersonnelle|à\svérifier|pas\sclair)\]|(?<=[\p{L}\p{M}])Écouter(?![\p{L}\p{M}])|(?<=\/)\s?Écouter(?![\p{L}\p{M}])/gu
 
 export function cleanOpening(text: string): string {
   // Une espace insécable seule est gardée (typographie française) ; tabulations et sauts de ligne deviennent des espaces.
@@ -149,19 +150,22 @@ export function cleanOpening(text: string): string {
 const INFOBOX =
   /modifier - modifier le code|Localisation sur la carte|Pour plus de détails, voir Fiche technique|Pas d'image \? Cliquez ici| Navigation [\p{Lu}\d]|Cet article est une ébauche|Pour les articles homonymes, voir|» redirige ici|^Chronologies |^(\S+(?: \S+){0,5}) \1 /u
 
-// Ouverture utilisable comme résumé (sinon TextExtracts) : seule règle de cirrusCommand et de `fixtures fetch`.
+// Ouverture utilisable comme résumé (sinon TextExtracts) : seule règle de cirrusCommand et de `fixtures fetch`
+// (usableOpening sur un texte déjà passé par cleanOpening, hasOpening sur le texte brut).
 // M2-R5 : le titre (avec ou sans sa précision entre parenthèses) suivi d'une majuscule ou d'un chiffre ouvre un texte
 // d'infobox (« René Guénon Photographie de 1925… ») ; sans titre, seul INFOBOX joue. Un faux positif coûte un appel
 // TextExtracts, un faux négatif laisse passer l'infobox.
 // shortcut: une légende sans titre ni marqueur passe (« Cave Balve Entrée de la Balver Höhle… »), à reprendre si les
 // résumés de la démo en souffrent.
-export function hasOpening(text: string | undefined, title?: string): boolean {
+export function usableOpening(clean: string, title?: string): boolean {
   // Insécables ramenées à l'espace pour comparer au titre.
-  const t = cleanOpening(text ?? '').replace(/\s/g, ' ')
+  const t = clean.replace(/\s/g, ' ')
   if (t === '' || INFOBOX.test(t)) return false
   const heads = title ? [title, title.replace(/ \([^()]*\)$/, '')].map((h) => `${h.replace(/\s/g, ' ')} `) : []
   return !heads.some((h) => t.startsWith(h) && /^[\p{Lu}\d]/u.test(t.slice(h.length)))
 }
+
+export const hasOpening = (text: string | undefined, title?: string): boolean => usableOpening(cleanOpening(text ?? ''), title)
 
 export function cutSummary(text: string, max: number): string {
   if (text.length <= max) return text

@@ -62,7 +62,8 @@ test('tranche réelle, mode sample : une ligne par document hors redirection, no
   for (const [i, r] of rows.entries()) {
     expect(r[1]).toMatch(/^\d+$/)
     expect(Number(r[1])).toBe(primary[i].text_bytes)
-    expect(r[2]).toBe(String(primary[i].incoming_links ?? 0))
+    // M2-R7 : incoming_links absent = inconnu, écrit \N (jamais 0).
+    expect(r[2]).toBe(primary[i].incoming_links === undefined ? null : String(primary[i].incoming_links))
   }
 
   const summaries = rows.flatMap((r) => (r[3] === null ? [] : [r[3]]))
@@ -78,12 +79,15 @@ test('tranche réelle, mode sample : une ligne par document hors redirection, no
   const extracts = JSON.parse(await readFile(join(raw, 'extracts.json'), 'utf8')) as Record<string, unknown>
   const missing = selected.filter((id) => !withSummary.has(id))
   expect(missing).toHaveLength(145)
-  expect(Object.keys(extracts)).toEqual(expect.arrayContaining(extractsUrls(missing)))
+  // Clés de raw/extracts.json = exactement les lots des Règles de lots de `fixtures fetch` (plus les 40 premiers ids).
+  const batches = new Set([...extractsUrls(missing), ...extractsUrls(selected.slice(0, 40))])
+  expect(batches.size).toBe(10)
+  expect(new Set(Object.keys(extracts))).toEqual(batches)
 })
 
 test('mode full : opening_text de 2 000 caractères → résumé de 601 à 1 200 caractères', async () => {
   const opening = 'Le chat est un petit mammifère carnivore domestique. '.repeat(40).slice(0, 2000)
-  const { rows } = await run('full', [[1, 1]], pairs([{ page_id: 1, namespace: 0, page_type: 'primary', opening_text: opening, text_bytes: 5000, incoming_links: 3 }]))
+  const { rows } = await run('full', [[1, 1]], pairs([{ page_id: 1, namespace: 0, title: 'Chat', page_type: 'primary', opening_text: opening, text_bytes: 5000, incoming_links: 3 }]))
   const summary = rows[0][3]!
   expect(summary.length).toBeGreaterThan(SUMMARY_MAX.sample)
   expect(summary.length).toBeLessThanOrEqual(SUMMARY_MAX.full)
@@ -91,7 +95,8 @@ test('mode full : opening_text de 2 000 caractères → résumé de 601 à 1 200
 
 test('page non selected ou ouverture d’infobox : résumé nul, nombres gardés ; autre espace et redirection sans ligne', async () => {
   const doc = (page_id: number, extra: object = {}) => ({
-    page_id, namespace: 0, page_type: 'primary', opening_text: 'Le chat est un mammifère.', text_bytes: 300 + page_id, incoming_links: page_id,
+    page_id, namespace: 0, title: `T${page_id}`, page_type: 'primary', opening_text: 'Le chat est un mammifère.', text_bytes: 300 + page_id,
+    incoming_links: page_id,
     ...extra,
   })
   const infobox = { title: 'Chat (animal)', opening_text: 'Chat Photo du chat. Le chat est un mammifère.' }
@@ -103,18 +108,18 @@ test('page non selected ou ouverture d’infobox : résumé nul, nombres gardés
   expect(rows).toEqual([
     ['1', '301', '1', 'Le chat est un mammifère.'],
     ['2', '302', '2', null],
-    ['5', '305', '0', 'Le chat est un mammifère.'],
+    ['5', '305', null, 'Le chat est un mammifère.'],
     ['6', '306', '6', null],
   ])
 })
 
 test('gardes de format : champs renommés, lignes d’index et documents illisibles, flux vide ou coupé, 95 % de documents valides', async () => {
-  const all = (k: number, m = 0) => `${k} documents sur ${docs.length} sans page_id, namespace et text_bytes entiers, ${m} dont page_id n'est pas l'_id`
-  for (const field of ['text_bytes', 'namespace', 'page_id']) {
+  const all = (k: number, m = 0) => `${k} documents sur ${docs.length} sans page_id, namespace et text_bytes entiers et title texte, ${m} dont page_id n'est pas l'_id`
+  for (const field of ['text_bytes', 'namespace', 'page_id', 'title']) {
     await expect(run('sample', [], ndjson.replaceAll(`"${field}":`, '"renamed":'))).rejects.toThrow(`Format Cirrus inattendu : ${all(docs.length)}`)
   }
   await expect(run('sample', [], '{"create": {"_id": 1}}\n{}')).rejects.toThrow("Format Cirrus inattendu : ligne d'index 1")
-  const doc = (page_id: number) => ({ page_id, namespace: 0, text_bytes: 10, incoming_links: 1 })
+  const doc = (page_id: number) => ({ page_id, namespace: 0, title: `T${page_id}`, text_bytes: 10, incoming_links: 1 })
   await expect(run('sample', [], `${pairs([doc(1)])}\n${JSON.stringify(doc(2))}`)).rejects.toThrow(
     "Format Cirrus inattendu : ligne d'index 3",
   )
@@ -131,11 +136,11 @@ test('gardes de format : champs renommés, lignes d’index et documents illisib
   const { rows } = await run('sample', [], pairs([...twenty.slice(1), { page_id: 1, namespace: 0 }]))
   expect(rows).toHaveLength(19)
   await expect(run('sample', [], pairs([...twenty.slice(2), { page_id: 1, namespace: 0 }, doc(2)], (d) => (d.page_id === 2 ? 99 : d.page_id)))).rejects.toThrow(
-    "Format Cirrus inattendu : 1 documents sur 20 sans page_id, namespace et text_bytes entiers, 1 dont page_id n'est pas l'_id",
+    "Format Cirrus inattendu : 1 documents sur 20 sans page_id, namespace et text_bytes entiers et title texte, 1 dont page_id n'est pas l'_id",
   )
 
   // incoming_links absent de plus de la moitié des lignes écrites (les redirections n'en ont jamais : hors compte).
-  const noLinks = (page_id: number, extra: object = {}) => ({ page_id, namespace: 0, text_bytes: 10, ...extra })
+  const noLinks = (page_id: number, extra: object = {}) => ({ page_id, namespace: 0, title: `T${page_id}`, text_bytes: 10, ...extra })
   await expect(run('sample', [], pairs([doc(1), noLinks(2), noLinks(3)]))).rejects.toThrow(
     'Format Cirrus inattendu : 2 documents sur 3 sans incoming_links',
   )
