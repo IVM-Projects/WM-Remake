@@ -123,8 +123,10 @@ do $$ declare u uuid := tests.make_user('Idem1'); d jsonb; begin
   assert pg_temp.err(format('select wm.idem_claim(%L, %L)', u, '')) ->> 'status' = '400', 'clé vide acceptée';
 end $$;
 
+-- Sans pg_cron (banc, CI) : settle_lag_s et overdue_s présents et JSON null (P13).
 do $$ declare h jsonb := wm.health(); begin
-  assert h - 'now' = '{"ok":true,"db":"ok"}'::jsonb and (h ->> 'now')::timestamptz is not null, h::text;
+  assert h - 'now' - 'settle_lag_s' - 'overdue_s' = '{"ok":true,"db":"ok"}'::jsonb and (h ->> 'now')::timestamptz is not null
+    and h -> 'settle_lag_s' = 'null'::jsonb and h -> 'overdue_s' = 'null'::jsonb, h::text;
 end $$;
 
 -- Index additif sur profiles.avatar_user_card_id (D§9.4) et index du grand livre.

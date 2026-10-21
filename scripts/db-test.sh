@@ -49,9 +49,10 @@ run -f "$tests/bootstrap_local.sql" >/dev/null
 (cd "$root/.cache/gotrue" && GOTRUE_DB_DRIVER=postgres DATABASE_URL="$(sed -E 's#^([a-z]+://)([^@/]*@)?#\1supabase_auth_admin:auth@#' <<<"$url")" \
   GOTRUE_JWT_SECRET=banc-de-test-secret-hs256-inutilise-32c API_EXTERNAL_URL=http://127.0.0.1:54321/auth/v1 \
   GOTRUE_SITE_URL=http://127.0.0.1:3100 GOTRUE_LOG_LEVEL=warn ./auth migrate >/dev/null)
-cron="$(run -Atc "select exists (select from pg_available_extensions where name = 'pg_cron')")"
+# pg_cron n'est utilisable que préchargé (M3-1) : sinon les migrations 9xxx (cron) sont sautées, comme sur le banc et la CI (P12).
+cron="$(run -Atc "select current_setting('shared_preload_libraries') ~ 'pg_cron'")"
 for f in "$root"/supabase/migrations/*.sql; do
-  [[ $cron == f && ${f##*/} == 9000_* ]] && continue
+  [[ $cron == f && ${f##*/} == 9[0-9][0-9][0-9]_* ]] && continue
   run -f "$f" >/dev/null
 done
 run -f "$tests/helpers.sql" >/dev/null

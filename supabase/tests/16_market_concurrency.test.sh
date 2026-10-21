@@ -8,6 +8,9 @@
 # 4. Cron contre mises (P9) : des lots de 4 qui alternent hi et lo pendant 40 surenchères de A et B sur W → les 20 réglées.
 # 5. Ordre des verrous du lot (P9), déterministe : une mise simulée tient lo puis demande hi ; le lot attend < 1 s, sans 40P01.
 # 6. settle_request contre une prolongation et un retrait validés pendant son attente du verrou → 409 et 404 (P8).
+# 7. Diffusion contre mises (P28), suite de 4 : 20 enchères de V dont les cartes sont souhaitées, une sur deux, par hi seul puis par lo seul ;
+#    un premier lot de 4 contre une mise simulée (lo, puis hi), puis des lots de 4 jusqu'à file vide pendant 40 surenchères de A et B sur W
+#    → 20 wishlist_listed.
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 tmp="$(mktemp -d)"
@@ -195,3 +198,45 @@ z6="$(list "$v" "$cz")"
 q -c "update public.auctions set end_at = now() - interval '1 second' where id = '$z6'" >/dev/null
 race retirée "$z6" "select wm.cancel_auction('$v', '$z6')" 'Enchère introuvable'
 check "settle_request contre un verrou"
+
+# 7. Diffusion contre mises : chaque lot de 4 notifie hi et lo (ordre de la file : hi, lo, hi, lo). Inséré dans cet ordre, il prendrait le
+# FOR KEY SHARE de hi puis de lo, à l'envers d'une mise qui tient lo et attend hi (40P01) ; trié par user_id, jamais (P28). D'abord
+# déterministe : le bloqueur imite une mise (lo, puis hi une seconde plus tard) pendant le premier lot ; puis la boucle pendant les mises.
+ch="$(card h)"; cl="$(card l)"
+q -c "insert into public.wishlist_items (user_id, card_id) values ('$hi', '$ch'), ('$lo', '$cl')" \
+  -c "do \$\$ begin
+  for i in 1 .. 20 loop
+    perform wm.create_auction('$v', (wm.grant_copy('$v', (case when i % 2 = 1 then '$ch' else '$cl' end)::uuid, false)).id, 10, 60);
+  end loop;
+end \$\$" >/dev/null
+w7="$(list "$v" "$cz")"
+pending="select count(*) from wm.wishlist_alert_queue where done_at is null"
+q -v VERBOSITY=verbose -c "begin; select from public.profiles where id = '$lo' for update; select pg_sleep(1);
+  select from public.profiles where id = '$hi' for update; commit;" >/dev/null 2>"$tmp/7mise" &
+blocker=$!
+until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do kill -0 "$blocker"; done
+got="$(q -v VERBOSITY=verbose -c "set role service_role; select wm.wishlist_alerts_fanout(4)" 2>"$tmp/7lot" || true)"
+wait "$blocker" || true
+quiet "$tmp/7mise" "$tmp/7lot"
+[[ $got == 4 ]] || fail "premier lot : $got notifications, 4 attendues"
+(
+  for n in $(seq 200); do
+    [[ "$(q -c "$pending")" == 0 ]] && exit 0
+    q -v VERBOSITY=verbose -c "set role service_role; select wm.wishlist_alerts_fanout(4)" >/dev/null 2>>"$tmp/7fan" || true
+  done
+) & pids+=($!)
+m=10
+for i in $(seq 20); do
+  bg "7a$i" "select wm.place_bid('$a', '$w7', $m)"; m=$(((11 * m + 9) / 10))
+  bg "7b$i" "select wm.place_bid('$b', '$w7', $m)"; m=$(((11 * m + 9) / 10))
+  sleep 0.015
+done
+waitall
+touch "$tmp/7fan"
+quiet "$tmp/7fan"
+refusals 'bid_too_low|Tu es déjà en tête' "$tmp"/7[ab]*
+[[ "$(q -c "$pending")" == 0 ]] || fail "diffusion : $(q -c "$pending") lignes de file en attente"
+got="$(q -c "select format('%s %s', count(*) filter (where user_id = '$hi' and data ->> 'card_id' = '$ch'),
+  count(*) filter (where user_id = '$lo' and data ->> 'card_id' = '$cl')) from public.notifications where type = 'wishlist_listed'")"
+[[ $got == '10 10' ]] || fail "diffusion : $got wishlist_listed pour hi et lo, 10 10 attendus"
+check "diffusion contre mises"

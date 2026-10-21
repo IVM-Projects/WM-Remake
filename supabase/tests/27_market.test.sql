@@ -1046,3 +1046,118 @@ do $$ declare f uuid := pg_temp.player('Ventes1'); p uuid := pg_temp.player('Ven
   assert d -> 'sales' = jsonb_path_query_array(r -> 'sales', '$[0 to 2]') and d -> 'recent' = d -> 'sales', d::text;
   perform pg_temp.inv('ventes Pro');
 end $$;
+
+-- Volatilité des lectures (1640) : un create or replace sans le mot-clé repasserait en volatile, et les lectures perdraient leur instantané.
+do $$ begin
+  assert (select jsonb_object_agg(proname, provolatile::text) from pg_proc where pronamespace = 'wm'::regnamespace
+    and proname in ('market_list', 'market_mine_lists', 'market_mine', 'auction_detail'))
+    = '{"market_list":"s","market_mine_lists":"s","market_mine":"s","auction_detail":"v"}', 'volatilité des lectures';
+end $$;
+
+-- Alertes de liste de souhaits (1650, M3-20, P28).
+-- La file des blocs précédents (cartes que personne ne souhaite) est vidée d'abord. Carte souhaitée par trois joueurs et par le vendeur,
+-- base 15 : budget de 2 → les deux plus petits id, curseur sur le 2e, ligne en attente ; puis le 3e, ligne terminée ; puis rien. Trois
+-- wishlist_listed, aucune pour le vendeur, amount 15 et end_at de l'enchère.
+do $$ declare s uuid := pg_temp.player('Souhait1'); c uuid := pg_temp.card('Souhait marché'); w uuid[]; x uuid; k wm.wishlist_alert_queue; begin
+  perform wm.wishlist_alerts_fanout(1000000);
+  w := array(select pg_temp.player('Souhait' || i) from generate_series(2, 4) i order by 1);
+  insert into public.wishlist_items (user_id, card_id) select u, c from unnest(w || s) u;
+  x := pg_temp.listing(s, c, 15);
+  assert wm.wishlist_alerts_fanout(2) = 2, 'premier lot';
+  select * into k from wm.wishlist_alert_queue where auction_id = x;
+  assert k.cursor_user = w[2] and k.done_at is null, to_jsonb(k)::text;
+  assert wm.wishlist_alerts_fanout(2) = 1, 'second lot';
+  select * into k from wm.wishlist_alert_queue where auction_id = x;
+  assert k.cursor_user = w[3] and k.done_at = now(), to_jsonb(k)::text;
+  assert wm.wishlist_alerts_fanout() = 0, 'file vide';
+  assert (select array_agg(user_id order by user_id) from public.notifications where type = 'wishlist_listed'
+    and data ->> 'auction_id' = x::text) = w, 'destinataires';
+  assert (select bool_and(n.data -> 'amount' = '15' and (n.data ->> 'end_at')::timestamptz = a.end_at)
+    from public.notifications n join public.auctions a on a.id = x where n.data ->> 'auction_id' = x::text), 'data';
+  perform pg_temp.inv('alertes');
+end $$;
+
+-- Enchère retirée avant la diffusion → terminée sans notification. Deux lignes de trois souhaits et un budget de 4 sur tout l'appel → 4 (la
+-- première entière, le plus petit id de la seconde), puis 2.
+do $$ declare s uuid := pg_temp.player('Souhait5'); c uuid := pg_temp.card('Souhait retiré marché'); d uuid := pg_temp.card('Souhait lot marché');
+  w uuid[]; y uuid; x1 uuid; x2 uuid; st text := 'select jsonb_agg(jsonb_build_array(cursor_user, done_at is not null) order by id)
+    from wm.wishlist_alert_queue where auction_id = any (%L::uuid[])'; v jsonb; begin
+  w := array(select pg_temp.player('Souhait' || i) from generate_series(6, 8) i order by 1);
+  insert into public.wishlist_items (user_id, card_id) select u, k from unnest(w) u, unnest(array[c, d]) k;
+  y := pg_temp.listing(s, c);
+  perform wm.cancel_auction(s, y);
+  x1 := pg_temp.listing(s, d);
+  x2 := pg_temp.listing(s, d);
+  assert wm.wishlist_alerts_fanout(4) = 4, 'budget de 4';
+  execute format(st, array[y, x1, x2]) into v;
+  assert v = jsonb_build_array(jsonb_build_array(null::uuid, true), jsonb_build_array(w[3], true), jsonb_build_array(w[1], false)), v::text;
+  assert wm.wishlist_alerts_fanout(4) = 2, 'reste';
+  execute format(st, array[x2]) into v;
+  assert v = jsonb_build_array(jsonb_build_array(w[3], true)), v::text;
+  assert not exists (select from public.notifications where data ->> 'auction_id' = y::text), 'notification d''une enchère retirée';
+  assert (select count(*) from public.notifications where type = 'wishlist_listed' and data ->> 'auction_id' in (x1::text, x2::text)) = 6,
+    'six notifications';
+end $$;
+
+-- purge_expired (M3-20) : clé d'idempotence de 25 h supprimée, de 23 h gardée ; ligne de file terminée il y a 2 h supprimée, il y a 30 min
+-- gardée, en attente gardée. Toutes les autres clés et lignes de file datent de cette transaction.
+do $$ declare u uuid := gen_random_uuid(); x uuid := (select auction_id from wm.wishlist_alert_queue limit 1); q bigint[]; r jsonb; begin
+  insert into wm.idempotency_keys (user_id, key, created_at)
+  values (u, 'vieille', now() - interval '25 hours'), (u, 'récente', now() - interval '23 hours');
+  with i as (insert into wm.wishlist_alert_queue (auction_id, done_at)
+    values (x, now() - interval '2 hours'), (x, now() - interval '30 minutes'), (x, null) returning id)
+  select array_agg(id order by id) into q from i;
+  r := wm.purge_expired();
+  assert r = '{"idempotency_keys":1,"wishlist_alert_queue":1}', r::text;
+  assert (select array_agg(key) from wm.idempotency_keys where user_id = u) = array['récente'], 'clés restantes';
+  assert (select array_agg(id order by id) from wm.wishlist_alert_queue where id = any (q)) = q[2:3], 'lignes de file restantes';
+end $$;
+
+-- Santé (M3-21, P13) et cron (P12), dans cet ordre ; le rollback du banc défait tout, faux schéma cron compris.
+-- Échues des blocs précédents réglées d'abord (elles fausseraient overdue_s). Sans pg_cron : les deux clés sont le JSON null.
+do $$ declare h jsonb; begin
+  perform wm.settle_due_auctions(100000);
+  h := wm.health();
+  assert h -> 'settle_lag_s' = 'null'::jsonb and h -> 'overdue_s' = 'null'::jsonb, h::text;
+end $$;
+
+-- 9000 sans pg_cron préchargé : sans erreur ni schéma cron.
+\ir ../migrations/9000_wm_cron.sql
+
+-- Faux pg_cron 1.6 (colonnes de cron.job et cron.job_run_details lues par 1650). Sans wm-settle → null ; wm-settle sans run → 86400 ; dernier
+-- run succeeded de wm-settle fini il y a 5 s → 5 (ni le run en échec ni celui d'un autre job ne comptent). overdue_s : échue depuis 2 min →
+-- ≥ 120, depuis 30 s → null. Purge : fini il y a 25 h et sans end_time commencé il y a 25 h → 2, celui d'il y a 23 h reste. Colonne
+-- renommée → pas d'exception, 86400 et overdue_s null même avec une échue de 2 min.
+do $$ declare s uuid := pg_temp.player('Sante1'); x uuid := pg_temp.listing(s, pg_temp.card('Santé marché')); h jsonb; begin
+  assert to_regnamespace('cron') is null, 'schéma cron créé sans pg_cron';
+  assert wm.purge_cron_history() = 0, 'purge sans pg_cron';
+  create schema cron;
+  create table cron.job (jobid bigint, jobname text, schedule text, command text, active boolean);
+  create table cron.job_run_details (jobid bigint, runid bigint, status text, start_time timestamptz, end_time timestamptz);
+  update public.auctions set end_at = now() - interval '2 minutes' where id = x;
+  insert into cron.job values (1, 'wm-purge', '7 * * * *', 'select wm.purge_expired()', true);
+  h := wm.health();
+  assert h -> 'settle_lag_s' = 'null'::jsonb and h -> 'overdue_s' = 'null'::jsonb, 'sans wm-settle : ' || h::text;
+  insert into cron.job values (2, 'wm-settle', '10 seconds', 'select wm.settle_due_auctions(500)', true);
+  h := wm.health();
+  assert h -> 'settle_lag_s' = '86400' and (h ->> 'overdue_s')::int >= 120, 'wm-settle sans run : ' || h::text;
+  insert into cron.job_run_details values
+    (2, 1, 'succeeded', now() - interval '6 seconds', now() - interval '5 seconds'),
+    (2, 2, 'failed', now() - interval '2 seconds', now() - interval '1 second'),
+    (1, 3, 'succeeded', now() - interval '2 seconds', now() - interval '1 second');
+  h := wm.health();
+  assert h -> 'settle_lag_s' = '5' and (h ->> 'overdue_s')::int >= 120, h::text;
+  update public.auctions set end_at = now() - interval '30 seconds' where id = x;
+  h := wm.health();
+  assert h -> 'settle_lag_s' = '5' and h -> 'overdue_s' = 'null'::jsonb, 'échue depuis 30 s : ' || h::text;
+  insert into cron.job_run_details values
+    (2, 4, 'succeeded', now() - interval '25 hours 1 second', now() - interval '25 hours'),
+    (2, 5, 'failed', now() - interval '25 hours', null),
+    (2, 6, 'succeeded', now() - interval '23 hours 1 second', now() - interval '23 hours');
+  assert wm.purge_cron_history() = 2, 'purge de l''historique';
+  assert (select array_agg(runid order by runid) from cron.job_run_details) = array[1, 2, 3, 6]::bigint[], 'runs restants';
+  update public.auctions set end_at = now() - interval '2 minutes' where id = x;
+  alter table cron.job rename column jobname to name;
+  h := wm.health();
+  assert h - 'now' = '{"ok":true,"db":"ok","settle_lag_s":86400,"overdue_s":null}', 'lecture en erreur : ' || h::text;
+end $$;
