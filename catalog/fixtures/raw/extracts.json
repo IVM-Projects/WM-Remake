@@ -271,5 +271,931 @@
         }
       ]
     }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=37129%7C57455%7C64190%7C106998%7C118752%7C118780%7C120939%7C223878%7C333486%7C398899%7C522698%7C543958%7C623348%7C624301%7C656005%7C772653%7C773625%7C955391%7C956120%7C1126435": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 37129,
+          "ns": 0,
+          "title": "Georg Wilhelm Friedrich Hegel",
+          "extract": "Georg Wilhelm Friedrich Hegel (/ˈɡeːɔɐ̯k ˈvɪlhɛlm ˈfʁiːdʁɪç ˈheːɡl̩/), né le 27 août 1770 à Stuttgart et mort le 14 novembre 1831 à Berlin, est un philosophe allemand.\nSon œuvre est une contribution majeure à l'idéalisme allemand et a influencé l'ensemble de la philosophie contemporaine.\nHegel enseigne la philosophie comme système unissant tous les savoirs suivant une logique dialectique. Le système est conçu comme une « phénoménologie de l'esprit » puis comme une « encyclopédie des sciences philosophiques », titres de deux de ses ouvrages. Il englobe l'ensemble des domaines philosophiques, dont la métaphysique et l'ontologie, la philosophie de l'art et de la religion, la philosophie de la nature, la philosophie de l'histoire, la philosophie morale et politique ou la philosophie du droit."
+        },
+        {
+          "pageid": 57455,
+          "ns": 0,
+          "title": "Le Hussard sur le toit (film)",
+          "extract": "Le Hussard sur le toit est un film français de Jean-Paul Rappeneau, sorti en 1995.\nIl est adapté du roman éponyme de Jean Giono."
+        },
+        {
+          "pageid": 64190,
+          "ns": 0,
+          "title": "Rhynchocalycaceae",
+          "extract": "Les Rhynchocalycaceae (les Rhynchocalycacées en français) sont une famille de plantes à fleurs dicotylédones de l'ordre des Myrtales, selon la classification phylogénétique APG (1998) et la classification phylogénétique APG II (2003). Elle comprend une espèce : Rhynchocalyx lawsonioides. Ce sont de petits arbres des régions subtropicales, originaires d'Afrique du Sud."
+        },
+        {
+          "pageid": 106998,
+          "ns": 0,
+          "title": "Le Seigneur des anneaux (série de films)",
+          "extract": "Le Seigneur des anneaux est une trilogie cinématographique américano-néo-zélandaise de fantasy réalisée par Peter Jackson et fondée sur le roman du même nom en trois volumes de J. R. R. Tolkien. Les films composant cette trilogie sont La Communauté de l'anneau (2001), Les Deux Tours (2002) et Le Retour du roi (2003).\nCe projet est considéré comme l'un des plus ambitieux de l'histoire du cinéma, avec un budget de 285 millions de dollars. Il a commencé à être développé par Jackson en 1995 et s'est concrétisé avec le studio de production New Line Cinema après que Miramax Films l'a abandonné. Le projet entier dura huit ans, bien que le tournage des trois films se déroulât simultanément entre octobre 1999 et décembre 2000 et eût lieu entièrement en Nouvelle-Zélande. Une version longue de chaque film de la trilogie est sortie en DVD et Blu-ray environ un an après leur sortie au cinéma. Bien que les films suivent l'histoire du roman de façon générale, ils omettent certains éléments et en ajoutent d'autres, déviant ainsi de leur source.\nSe déroulant dans le monde fictif de la Terre du Milieu, les trois films suivent le hobbit Frodon Sacquet (Frodo Baggins en anglais, joué par Elijah Wood) alors que lui et les autres membres de la Communauté de l'anneau s'engagent dans une quête pour détruire l'Anneau unique, et ainsi provoquer la chute de son créateur, Sauron. La Communauté finit par se diviser et Frodon poursuit sa quête uniquement accompagné de son jardinier Sam (Sean Astin) et d'une créature nommée Gollum (Andy Serkis). Pendant ce temps, le magicien Gandalf (Ian McKellen) et Aragorn (Viggo Mortensen), héritier en exil du trône de Gondor, rallient les peuples libres de la Terre du Milieu, qui finissent par remporter la guerre de l'Anneau.\nLes trois films ont été un grand succès commercial, rapportant au total presque trois milliards de dollars lors de leur sortie dans les salles. Ils ont généralement reçu des critiques très positives, et ont été largement récompensés, remportant notamment dix-sept Oscars sur trente nominations. Le dernier film de la trilogie, Le Retour du roi, remporta les onze Oscars auxquels il était nommé, égalant Ben-Hur et Titanic pour le record du plus grand nombre d'Oscars reçus pour un film. La trilogie reçut de nombreux prix pour la distribution, pour les effets spéciaux et pour l'infographie. Les films ont également apporté un regain d'intérêt et une reconnaissance du grand public pour l'œuvre de Tolkien, malgré quelques controverses sur les différences entre les livres et leur adaptation.\nPar la suite, après le succès de la trilogie, Peter Jackson décide de s'associer au studio Metro-Goldwyn Mayer en plus de la New Line afin d'adapter Le Hobbit au cinéma, entre 2012 et 2014."
+        },
+        {
+          "pageid": 118752,
+          "ns": 0,
+          "title": "Cour des comptes (France)",
+          "extract": "La Cour des comptes est une juridiction financière de l'ordre administratif en France, chargée principalement de contrôler la régularité des comptes publics, de l'État, des établissements publics nationaux, des entreprises publiques, de la sécurité sociale, ainsi que des organismes privés bénéficiant d'une aide de l'État ou faisant appel à la générosité du public. Elle informe le Parlement, le Gouvernement et le public en général sur la régularité des comptes.\nLes rapports de la Cour des comptes n'ont pas de caractère contraignant.\nLa Cour des comptes est créée en 1807, par Napoléon Ier, elle prend la suite des « chambres de comptes » en place sous l'Ancien régime. Elle siège au palais Cambon dans le 1er arrondissement de Paris depuis 1912. Ses missions exactes ont régulièrement évoluées au fil du temps et ce n'est que depuis 2007 qu'elle certifie les comptes de l’État et de la Sécurité sociale.\n\n"
+        },
+        {
+          "pageid": 118780,
+          "ns": 0,
+          "title": "Arcturus (groupe)",
+          "extract": "Arcturus est un groupe de metal norvégien. Le groupe est initialement orienté metal symphonique empreint de touches black metal, avant d'évoluer vers un style de metal avant-gardiste construit autour du clavier du compositeur Steinar Sverd Johnsen.\nLes thèmes des paroles sont avant tout le cosmos et le surnaturel. Les membres du groupe se sont séparés en avril 2007. Le groupe annonce cependant sa reformation pour le début de l'année 2011 dans le but de participer au festival américain ProgPower."
+        },
+        {
+          "pageid": 120939,
+          "ns": 0,
+          "title": "René Guénon",
+          "extract": "René Guénon, né le 15 novembre 1886 à Blois (France) et mort le 7 janvier 1951 au Caire (Égypte), est un auteur français, « figure inclassable de l’histoire intellectuelle du XXe siècle ».\nIl publie dix-sept ouvrages de son vivant, auxquels s'ajoutent dix recueils d'articles publiés à titre posthume, soit au total vingt-sept titres régulièrement réédités. Ces livres ont trait principalement à la métaphysique, au symbolisme, à l'ésotérisme et à la critique du monde moderne.\nDans son œuvre, il se propose soit d'« exposer directement certains aspects des doctrines métaphysiques de l'Orient », doctrines métaphysiques que René Guénon définissait comme étant « universelles », soit d'« adapter ces mêmes doctrines [pour des lecteurs occidentaux] en restant toujours strictement fidèle à leur esprit ». Il ne revendique que la fonction de « transmetteur » de ces doctrines, dont il déclare qu'elles sont de nature essentiellement « non individuelle », reliées à une connaissance supérieure, « directe et immédiate », qu'il nomme « intuition intellectuelle ». Ses ouvrages, écrits en français (il a également contribué en arabe à la revue El Maarifâ), sont traduits en plus de vingt langues.\nSon œuvre oppose les civilisations restées fidèles à l'« esprit traditionnel », qui selon lui « n'a plus de représentant authentique qu'en Orient », à l'ensemble de la civilisation moderne considérée comme déviée. Elle a modifié en profondeur la réception de l'ésotérisme en Occident dans la seconde moitié du XXe siècle et a eu une influence marquante sur des auteurs aussi divers que Mircea Eliade, Antonin Artaud,  Raymond Abellio, Raymond Queneau, René Daumal, Simone Weil et André Breton jusqu'à Charles III roi du Royaume-Uni."
+        },
+        {
+          "pageid": 223878,
+          "ns": 0,
+          "title": "Championnats du monde de cyclisme sur piste",
+          "extract": "Les Championnats du monde de cyclisme sur piste se tiennent tous les ans depuis 1893 à l'exception des périodes de guerre mondiale. Ils proposent aux pistards de s'affronter pour le titre mondial dans différentes épreuves. À partir de 2017, dix disciplines pour les hommes et pour les femmes sont proposées.\nLa première édition des championnats du monde amateurs de cyclisme sur piste a eu lieu à Chicago en 1893 avec trois épreuves seulement : l’Américain Arthur A. Zimmermann remporte le sprint et l'épreuve des 10 kilomètres et le Sud-Africain Lawrence Meintjes remporte le 100 kilomètres de demi-fond derrière derny. Les épreuves féminines ont débuté en 1958 avec deux épreuves, la vitesse et la poursuite, sous le statut amateur. En 1993, les épreuves professionnelles et amateurs masculines ont été réunifiées et intitulées open.\nDepuis 1893, les épreuves masculines ont compté dix-huit disciplines différentes et les épreuves féminines onze. Cependant, certaines épreuves masculines ont été retirées :\n\nle 10 km dès 1895,\nQuatre épreuves ont été réunifiées à partir de 1993 : vitesse, poursuite, course aux points et demi-fond, devenus open.\nDeux épreuves ont été supprimées en 1995 : tandem et demi-fond.\nD'autres épreuves ont été ajoutées au début du XXIe siècle : \n\nle keirin féminin, le scratch masculin et féminin en 2002,\nl'omnium masculin et la vitesse par équipes féminine en 2007,\nla poursuite par équipes féminine en 2008,\nl'omnium féminin en 2009,\nla course à l’américaine féminine en 2017,\nles courses à l'élimination masculine et féminine en 2021"
+        },
+        {
+          "pageid": 333486,
+          "ns": 0,
+          "title": "The Island (film, 2005)",
+          "extract": "The Island ou L'île au Québec est un film de science-fiction américain réalisé par Michael Bay, sorti en 2005. Le film est articulé autour des thèmes du clonage, de la vente d'organes et de l'éthique médicale.\nLe film se déroule en 2019. Lincoln 6-Echo (Ewan McGregor) et son amie Jordan 2-Delta (Scarlett Johansson) font partie des centaines de pensionnaires d'un gigantesque complexe fermé, aseptisé, présenté comme idyllique. À en croire le docteur Merrick (Sean Bean) et ses agents, une terrible contamination a ravagé la Terre quelques années auparavant. Heureusement, des survivants sont régulièrement retrouvés pour être ramenés dans le complexe dont le but est de préserver les résidents de la contamination. La vie y est encadrée et étroitement surveillée. Aussi, pour illuminer l'existence morne de cet univers stérile et totalitaire, chaque personne place ses espoirs dans la Loterie, un générateur numérique aléatoire qui appelle régulièrement quelques noms. Les heureux gagnants reçoivent le privilège de quitter le complexe pour un transfert dans l'Île, censée être le dernier territoire à avoir échappé à la contamination, afin d'y être les Adam et Ève d'une nouvelle humanité."
+        },
+        {
+          "pageid": 398899,
+          "ns": 0,
+          "title": "Monnaie fiduciaire",
+          "extract": "La monnaie fiduciaire est la monnaie comprenant les pièces modernes et les billets de banque. C'est un instrument financier dont la valeur nominale est supérieure à la valeur intrinsèque ; la confiance (fiducia en latin) que lui accorde l'utilisateur comme valeur d'échange, moyen de paiement, et donc comme monnaie, repose sur un principe de garantie défendu par une institution centralisatrice."
+        },
+        {
+          "pageid": 522698,
+          "ns": 0,
+          "title": "Ryan Reynolds",
+          "extract": "Ryan Reynolds est un acteur, producteur et entrepreneur canado-américain, né le 23 octobre 1976 à Vancouver, Colombie-Britannique (Canada).\nIl commence sa carrière à l'âge de quatorze ans et se fait connaître en 1998 avec son rôle de Michael « Berg » Bergen dans la série télévisée, Un toit pour trois jusqu'en 2001, puis est révélé au cinéma avec celui de Van Wilder dans le film  American Party : Van Wilder,relations publiques (2002). Par la suite, en parallèle d'autres projets (comédie romantique comme La Proposition, thriller dans Buried), il prête ses traits à divers personnages issus de comics ou non comme Hannibal King dans Blade: Trinity (2004), Hal Jordan / Green Lantern dans le film centré sur le personnage du même nom (2011), Nick Walker dans RIPD : Brigade fantôme (2013) ou même la voix de Pikachu dans Pokémon : Détective Pikachu (2019). En jouant Wade Wilson / Deadpool dans la série de films sur les X-Men, il connaît un large succès, tout d'abord dans X-Men Origins: Wolverine (2009), puis dans les films Deadpool (2016), Deadpool 2 (2018) et Deadpool et Wolverine (2024).\nLe 15 novembre 2023, Ryan Reynolds devient membre de l'Ordre de la Colombie-Britannique en reconnaissance de l'impact important de ses actions au niveau provincial, national et international. Il est nommé à l'Ordre du Canada en 2024."
+        },
+        {
+          "pageid": 543958,
+          "ns": 0,
+          "title": "René Liger",
+          "extract": "René Liger (né à Mayenne le 6 décembre 1734 et mort à Tours le 7 mai 1810) est un prêtre français et auteur de divers ouvrages historiques, littéraires, philosophiques et religieux, ainsi que de pamphlets et libelles."
+        },
+        {
+          "pageid": 623348,
+          "ns": 0,
+          "title": "Jim Black",
+          "extract": "Jim Black, né le 3 août 1967 à Daly City (Californie), est un compositeur, batteur et percussionniste de jazz américain."
+        },
+        {
+          "pageid": 624301,
+          "ns": 0,
+          "title": "Elon Musk",
+          "extract": "Elon Musk (prononcé en anglais : /ˈiːlɒn ˈmʌsk/), né le 28 juin 1971 à Pretoria (Afrique du Sud), est un entrepreneur, homme d'affaires et homme politique sud-africain naturalisé canadien et américain. Il est depuis 2024 la personne la plus riche du monde et depuis 2026, la première personne de l'histoire à avoir dépassé un seuil de fortune de plus de mille milliards de dollars.\nElon Musk commence sa carrière en affaires comme cofondateur de la société de logiciels Zip2 avec son frère, Kimbal Musk. La start-up est acquise par Compaq pour 307 millions de dollars en 1999. La même année, Musk cofonde la banque en ligne X.com, qui fusionne avec Confinity en 2000 pour former PayPal. eBay rachète PayPal en 2002 pour 1,5 milliard de dollars.\nEn 2002, Musk fonde SpaceX, un fabricant aérospatial et une société de services de transport spatial, et en est le président-directeur général. En 2004, il investit 6,5 millions de dollars dans le constructeur de véhicules électriques Tesla, et en devient le PDG en 2008. En 2006, il participe à la création de SolarCity, une société d'énergie solaire qui est ensuite acquise par Tesla et devient Tesla Energy. En 2015, il cofonde et devient coprésident d'OpenAI, une association de recherche promouvant l'intelligence artificielle amicale, qu'il quitte en 2018. En 2016, il fonde The Boring Company, société de construction de tunnels (Hyperloop), et Neuralink, société de neurotechnologie. En 2022, il devient le propriétaire de Twitter par un achat à 44 milliards de dollars, qu'il renomme « X » l'année suivante. En 2023, il fonde la société xAI dans le domaine de l'intelligence artificielle.\nEn janvier 2021, selon Bloomberg, Elon Musk devient, à 49 ans, l'individu le plus riche du monde avec une fortune estimée à 188,5 milliards de dollars. Au cours du dernier trimestre 2025, elle atteint presque 730 milliards au 31 décembre 2025 à la suite de la revalorisation de ses participations.\nÀ partir de la fin des années 2010, ses actions et déclarations, dont certaines relèvent de la désinformation et des théories du complot, sont régulièrement médiatisées.\nLors du premier mandat présidentiel de Donald Trump, Elon Musk devient son conseiller officieux, jusqu'à ce qu'un différend les oppose à propos de l'accord de Paris sur le climat. Alors que ses positions continuent de s'orienter vers l'extrême droite, Musk devient l'un des plus importants soutiens de l'ancien président en vue de sa réélection et s'implique dans sa campagne de 2024, dont il est le deuxième plus gros contributeur financier.\nAprès la victoire de Donald Trump, il est nommé haut conseiller et prend la tête du département de l'Efficacité gouvernementale, instance temporaire qui procède à des coupes drastiques dans de nombreux programmes et agences gouvernementaux et licencie des dizaines de milliers de salariés fédéraux. Au bout de quatre mois, il quitte la direction du département et entre dans un violent conflit avec Donald Trump au sujet de sa politique fiscale. Chantre du natalisme, promoteur du nationalisme blanc et du concept de remigration, il étend par ailleurs son influence sur les pays européens, apportant publiquement son soutien à des partis d'extrême droite européens."
+        },
+        {
+          "pageid": 656005,
+          "ns": 0,
+          "title": "Charles Étienne Louis Camus",
+          "extract": "Charles Étienne Louis Camus, né à Crécy-en-Brie le 23 août 1699 et mort au Louvre, à Paris, le 4 mai 1768, est un mathématicien et astronome français."
+        },
+        {
+          "pageid": 772653,
+          "ns": 0,
+          "title": "Placodermes",
+          "extract": "Les placodermes (Placodermi) sont une classe fossile de poissons. Ils furent parmi les tout premiers Vertébrés gnathostomes (possédant une mâchoire). Ils ont vécu du Silurien au Dévonien (entre −440 et −358 millions d'années)."
+        },
+        {
+          "pageid": 773625,
+          "ns": 0,
+          "title": "Alfred Barton Rendle",
+          "extract": "Alfred Barton Rendle est un botaniste britannique, né le 19 janvier 1865 à Lewisham et mort le 11 janvier 1938 à Leatherhead."
+        },
+        {
+          "pageid": 955391,
+          "ns": 0,
+          "title": "Édouard Carpentier",
+          "extract": "Édouard Carpentier, né Édouard Wiercowicz (ou Édouard Ignacz Wieczorkiewicz ou Édouard Wieczorkwicz) le 17 juillet 1926 à Roanne (Loire) et mort le 30 octobre 2010 à Montréal (Canada), est un gymnaste français devenu catcheur, puis entraîneur et animateur de télévision."
+        },
+        {
+          "pageid": 956120,
+          "ns": 0,
+          "title": "Alex D. Linz",
+          "extract": "Alexander David Linz est un acteur américain né le 3 janvier 1989 à Santa Barbara, en Californie (États-Unis). Il a tourné dans plusieurs films de Disney. Il est surnommé child actor en référence à ses nombreuses apparitions dans des films durant son enfance."
+        },
+        {
+          "pageid": 1126435,
+          "ns": 0,
+          "title": "Moto Hagio",
+          "extract": "Moto Hagio (萩尾望都, Hagio Moto) est une mangaka japonaise née le 12 mai 1949 à Ōmuta. Elle a principalement dessiné pour le compte de la maison d'édition Shōgakukan dans le domaine du shōjo manga, le manga féminin.\nElle commence sa carrière en 1969, et avec ses consœurs du Groupe de l'an 24, donne ses lettres de noblesse au shōjo manga dans les années 1970, jusqu'alors déconsidéré par les critiques et éditeurs de manga. Récompensée par plus de douze prix et décorations au Japon et à l'international, elle est regardée comme l'une des contributrices les plus importantes de l'histoire du manga.\nConnue en dehors du Japon comme une pionnière du genre boys' love — histoires d'amour entre personnages masculins — avec Le Cœur de Thomas, elle est surtout appréciée au Japon pour ses œuvres de science-fiction comme Nous sommes onze ! ou Barbara, l'entre-deux-monde. Marquée par une relation difficile avec ses parents, la majorité de ses œuvres mettent en avant le thème de la famille dysfonctionnelle, avec une forte psychologisation de ses personnages."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=1149417%7C1238033%7C1296218%7C1403939%7C1405499%7C1469533%7C1494686%7C1588917%7C1603503%7C1695012%7C1836072%7C1849361%7C1864481%7C1887604%7C2151401%7C2620642%7C2882598%7C2902126%7C2911616%7C3030859": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 1149417,
+          "ns": 0,
+          "title": "Saison 2006-2007 des Penguins de Pittsburgh",
+          "extract": "La saison 2006-2007 est la 39e saison des Penguins de Pittsburgh dans la Ligue nationale de hockey. Les Penguins connaissant une première moitié de saison en dents de scie avant de réaliser une très bonne seconde partie, après le 55e Match des étoiles. Ils parviennent finalement à se qualifier pour les séries éliminatoires de la Coupe Stanley 2007 pour la première fois depuis la saison 2000-2001 de la LNH.\nAu cours de la saison, Sidney Crosby est le meilleur joueur de l'équipe finissant avec 120 points, premier de la ligue, et devenant le plus jeune joueur à dépasser les 200 points dans sa carrière le 2 mars. La saison des Penguins prend fin en avril contre les Sénateurs d'Ottawa qui gagnent en cinq matchs leur ticket pour les demi-finales d'Association des séries éliminatoires de la Coupe Stanley 2007."
+        },
+        {
+          "pageid": 1238033,
+          "ns": 0,
+          "title": "Christophe Reichert",
+          "extract": "Christophe Reichert est un réalisateur belge.\nResponsable[Quoi ?] du département  informations reportages, magazines et multi-caméra à la Radio-télévision belge de la Communauté francophone (RTBF) entre 1980 et 1985, la chaîne lui confie des missions de réalisation pour des projets publicitaires, documentaires industriels et des longs-métrages de cinéma."
+        },
+        {
+          "pageid": 1296218,
+          "ns": 0,
+          "title": "Banksia occidentalis",
+          "extract": "Banksia occidentalis, le banksia rouge des marais, est une espèce de plante du genre Banksia, famille des Proteaceae. C'est un arbuste ou un petit arbre endémique d'Australie qui se rencontre sur la côte méridionale de l'Australie-Occidentale en trois peuplements disjoints : à Augusta, autour d'Albany et dans la région d'Esperance."
+        },
+        {
+          "pageid": 1403939,
+          "ns": 0,
+          "title": "La Pérégrination vers l'Ouest",
+          "extract": "La Pérégrination vers l'Ouest (chinois simplifié : 西游记 ; chinois traditionnel : 西遊記 ; pinyin : Xī Yóu Jì ; Wade : Hsi Yu Chi ; EFEO : Si Yeou Ki) est un roman de Wu Cheng'en. Il est aussi connu en français sous d'autres titres : Le Voyage en Occident, Le Singe pèlerin, Le Roi-Singe, Pérégrinations vers l'Ouest et Le pèlerinage d'Occident. Ces différents titres sont surtout dus à son héros principal, Sun Wukong, un singe immortel. Ce roman est connu de longue date au Japon sous le nom de Saiyūki et au Viêt Nam sous le nom de Tây Du Ký. Mais il compte surtout comme l'un des grands classiques de la Chine.\nIl retrace l'expédition du moine bouddhiste Tang Sanzang (唐三藏), « Tripitaka de l'Empire des Tang », Tang Sanzang étant un titre honorifique pour les moines ayant la maîtrise de l'ensemble du canon bouddhiste, lui-même appelé en sanskrit, Tripiṭaka (त्रिपिटक), les « Trois Corbeilles ». Xuan Zang se rendit de Chine en Inde pour en rapporter les textes authentiques du courant de la « Conscience seule » (yogācāra), afin de les traduire en chinois. Alors que le roman date du XVIe siècle environ, le réel voyage du personnage historique daterait en fait du VIIe siècle (602-664), décrit par son disciple dans le Dà Táng Xī Yù Jì (大唐西域記), le « Rapport du voyage en Occident à l'époque des Grands Tang » en 646 de l’ère chrétienne.\nDans ce roman fantastique, le moine rencontre toute une série de monstres prêts à le dévorer pour obtenir l'immortalité, car sa chair pure donnerait, dit-on, dix-mille années de vie à qui la mangerait. Il est aidé par des Shén (神) « divinités », des Xiān (仙) « Immortels », des Pú Sà (菩薩 ; Bodhisattva) en sanskrit et des Fó (佛 ; bouddhas) qui tiennent à protéger son voyage périlleux. Shì Jiā Móu Ní (釋迦牟尼) (Śākyamuni), le Bouddha historique, lui envoie la Bodhisattva, Guanyin (觀音), « la Grande Miséricordieuse », qui lui adjoint pour sa part quatre protecteurs : un singe immortel, sorte de Hanumân indien, jadis auto-proclamé Qí Tiān Dà Shèng (齊天大聖), « Grand Saint Égal du Ciel », plus connu sous le nom de Sun Wukong (孫悟空), dont le nom personnel signifie « Conscient de la vacuité », un dragon, Longwang sanjun (龍王三君) « Troisième Fils du Roi-Dragon », transformé en Bái Lóng Mǎ (白龍馬), le « Cheval-Dragon Blanc », qui sert de monture au bonze, un cochon ou sanglier, Zhu Bajie (豬八戒), « huit défenses (interdits religieux) » ou Wù Néng (悟能) « Conscient de ses capacités » qui ne pense qu'à manger et à fonder une famille et enfin un bonze des sables, Sha Wujing (沙和尚) « Moine des Sables », aussi prénommé Wu Jing (悟净) « Conscient de la pureté » qui ne pense lui qu'à devenir meilleur.\nCes quatre personnages fantastiques ont pour mission de protéger le moine San Zang ; il s'agit pour Sun Wukong de s'assagir et de réaliser son potentiel, et pour les deux autres d'effacer les conséquences de leurs erreurs passées qui les ont transformés en Yāo Guài (妖怪) « Démons ». Cette mission leur permettra de racheter leurs fautes passées, d'être pardonnés par le Ciel et de devenir à leur tour des Bouddhas ou des Saints du bouddhisme.\nCe roman fait partie des quatre livres extraordinaires. On peut entrevoir au travers du récit l'époque Ming dont le système politique et administratif est reproduit dans l'entourage des démons et dans leurs relations, ainsi que le syncrétisme idéologique et religieux, mélange de bouddhisme, taoïsme, et confucianisme. À l'instar des autres romans chinois classiques, le récit accorde une large part aux usages ainsi qu'aux combats militaires. Il met au jour les mécanismes du pouvoir, notamment la façon dont sont distribuées les charges mandarinales aux puissants, afin de s'assurer de leur loyauté et non de sanctionner une compétence particulière. À ce double titre, le ton parfois humoristique fait qu'elle a pu être interprétée comme une satire de la société de l'époque."
+        },
+        {
+          "pageid": 1405499,
+          "ns": 0,
+          "title": "Pierre-Charles Laurent de Villedeuil",
+          "extract": "Pierre-Charles Laurent de Villedeuil, né le 11 octobre 1742 à Bouchain et mort le 28 avril 1828 à Paris, fut contrôleur général des finances sous Louis XVI. \nSon père, l'ingénieur Pierre-Joseph Laurent, s'était enrichi notamment en participant à la fondation de la  Compagnie des mines d'Anzin et avait été anobli vers 1750, portant le titre de marquis de Villedeuil.\nIl épouse en 1776, Marguerite Françoise Nicole d'Agay, fille de François Marie Bruno d'Agay, maître des requêtes, intendant de Bretagne puis d'Amiens, et d'Anne Charlotte Le Bas du Plessis (1729-1802) et sœur de Philippe Charles Bruno d'Agay."
+        },
+        {
+          "pageid": 1469533,
+          "ns": 0,
+          "title": "Antonio Muñoz Molina",
+          "extract": "Antonio Muñoz Molina, né le 10 janvier 1956 à Úbeda (Province de Jaén) en Andalousie (Espagne), est un écrivain espagnol, membre depuis 1995 de la Académie royale espagnole fondée en 1713. Il réside à Madrid et à New York, où il dirige l'Institut Cervantes jusqu'en 2006.\nIl reçoit le prix Princesse des Asturies en 2013 et le Prix Médicis étranger en 2020."
+        },
+        {
+          "pageid": 1494686,
+          "ns": 0,
+          "title": "Yannick Haenel",
+          "extract": "Yannick Haenel, né le 23 septembre 1967 à Rennes, est un écrivain français, cofondateur de la revue Ligne de risque."
+        },
+        {
+          "pageid": 1588917,
+          "ns": 0,
+          "title": "An-Nâsir Muhammad ben Qalâ'ûn",
+          "extract": "An-Nâsir Muhammad ben Qalâ'ûn (en arabe : ناصر الدين محمد بن قلاوون) est un sultan mamelouk bahrite d’Égypte de 1293 à 1295 et de 1299 à 1309 et enfin après une courte interruption du 5 mars 1310 à 1341. Il est né au Caire en 1285 et mort au Caire en 1341.\nDe toute la dynastie bahrite, il est le sultan au plus long règne."
+        },
+        {
+          "pageid": 1603503,
+          "ns": 0,
+          "title": "Marcel de Paris",
+          "extract": "Saint Marcel fut le neuvième évêque de Paris. Saint sauroctone, il est fêté par l'Église catholique le 1er novembre."
+        },
+        {
+          "pageid": 1695012,
+          "ns": 0,
+          "title": "Kompas",
+          "extract": "Kompas est un quotidien indonésien publié par le groupe Kompas Gramedia depuis le 28 juin 1965.\nKompas gère également le portail en ligne kompas.id, qui contient des informations mises à jour et la version numérique du document."
+        },
+        {
+          "pageid": 1836072,
+          "ns": 0,
+          "title": "Blake Lively",
+          "extract": "Blake Lively est une actrice et mannequin américaine, née le 25 août 1987 à Los Angeles (Californie).\nAprès avoir joué dans des films tels que Quatre Filles et un jean (2005), Admis à tout prix (2006), elle est révélée, auprès du grand public, par le rôle de Serena Van Der Woodsen dans la série télévisée Gossip Girl (2007-2012).\nSa carrière cinématographique s'intensifie et elle est notamment à l'affiche de longs métrages comme : Les Vies privées de Pippa Lee (2009), The Town (2010), Green lantern (2011), Savages (2012), Adaline (2015), Instinct de survie (2016), Café Society (2016), L'Ombre d'Emily (2018) et Jamais plus (2024)."
+        },
+        {
+          "pageid": 1849361,
+          "ns": 0,
+          "title": "Championnat du monde féminin de volley-ball 1956",
+          "extract": "Le 2e championnat du monde de volley-ball féminin a eu lieu à  Paris du 30 août au 12 septembre 1956."
+        },
+        {
+          "pageid": 1864481,
+          "ns": 0,
+          "title": "Saison 9 de Columbo",
+          "extract": "La saison 9 de la série télévisée  Columbo comporte six épisodes diffusés de novembre 1989 à mai 1990."
+        },
+        {
+          "pageid": 1887604,
+          "ns": 0,
+          "title": "Lovely Complex (manga)",
+          "extract": "Lovely Complex (ラブ★コン, Rabu★Kon) est un manga de type shōjo créé par la mangaka Aya Nakahara. Il existe aussi une adaptation en film live, un fanbook et un artbook ainsi qu’un jeu vidéo sorti sur PlayStation 2.\nLe manga est publié en France par l’éditeur Delcourt. L’anime compte au total 24 épisodes."
+        },
+        {
+          "pageid": 2151401,
+          "ns": 0,
+          "title": "Le Trianon (Paris)",
+          "extract": "Le Trianon est un théâtre parisien situé au 80, boulevard Marguerite-de-Rochechouart dans le 18e arrondissement de Paris (France), au pied de la butte Montmartre."
+        },
+        {
+          "pageid": 2620642,
+          "ns": 0,
+          "title": "Rostom (roi de Karthli)",
+          "extract": "Rostom Khan (né à Ispahan en 1567 et mort à Tiflis le 16 novembre 1658 ; en géorgien : როსტომ ხანი), aussi connu sous les noms de Kaïkhosro Bagration (ქაიხოსრო ბაგრატიონი) ou Khosro-Mirza (ხოსრო-მირზა), est un homme politique et militaire persan et géorgien du XVIIe siècle qui sert comme darugha (préfet) d'Ispahan (1618-1658), qollar-aghassi (commandant) des forces armées séfévides (1629-1632), puis roi de Karthli (1632-1658) et de Kakhétie (1648-1656).\nMembre de l'ancienne dynastie géorgienne des Bagrations, il est le fils illégitime du roi David XI de Karthli et passe la plus grande partie de sa vie en Perse. Après une courte tentative de s'impliquer dans la politique géorgienne en 1605, il regagne rapidement la Perse, où il tombe dans la pauvreté pendant plusieurs années avant d'être sauvé par le général géorgien Georges Saakadzé, qui l'introduit auprès de chah Abbas le Grand et fait de lui le membre plus influent de la grande communauté géorgienne de Perse. Nommé préfet de la capitale séfévide en 1618, une position qu'il garde jusqu'à la fin de sa vie, il amasse une grande fortune et devient l'un des plus proches conseillers du chah, jusqu'à la mort de celui-ci en 1629.\nGénéral talentueux, il participe aux campagnes militaires de la Perse en Géorgie (1625) et en Iraq (1630) et devient commandant-en-chef de l'armée séfévide, une position qui l'aide à porter sur le trône le chah Séfi Ier en 1629 et à évincer et à liquider la famille Oundiladzé, l'un des plus puissants clans de la Perse. Devenu Rostom Khan, il est nommé vali du Gourdjistan en 1632 par le gouvernement séfévide et est envoyé avec une grande armée pour envahir la Karthli, chassant le roi rebelle Teïmouraz et le remplaçant comme roi de Karthli.\nDurant son règne, Rostom se fait remarquer par une politique de tolérance entre sa propre religion musulmane et la puissante influence de l'Église orthodoxe géorgienne. Parvenu au pouvoir après des décennies de guerres, il organise un vaste programme de reconstruction national, notamment en reconstruisant la capitale Tiflis et Gori et en promouvant la classe marchande du royaume. Il réorganise le gouvernement géorgien conformément aux coutumes séfévides et reçoit un important soutien financier et militaire d'Ispahan. C'est exactement cette politique pro-persane qui mène à de nombreuses tentatives d'assassinat et révoltes nobiliaires, notamment lors du complot de 1642 qui se solde par une victoire du roi et l'exécution du catholicos Eudème. En 1648, il défait une dernière fois le roi Teïmouraz et envahit la Kakhétie, l'annexant à ses domaines.\nSa diplomatie tortueuse, qui l'amène à entretenir des relations secrètes avec la Russie dans les années 1650 et à conclure une alliance militaire avec la Mingrélie vers 1635, lui permet de combiner l'influence islamique et une renaissance chrétienne, et fait de lui l'un des personnages les plus intéressants de l'histoire de la Géorgie. Il meurt à l'âge avancé de 91 ans en 1658 et a pour successeur son fils adoptif Vakhtang V, qui fonde la dynastie des Bagrations de Moukhran."
+        },
+        {
+          "pageid": 2882598,
+          "ns": 0,
+          "title": "Leinster House",
+          "extract": "Leinster House (en irlandais Teach Laighean) est l'ancienne résidence du duc de Leinster  à Dublin. Depuis 1922, elle est le siège du Parlement de l'État libre d'Irlande, puis de la république d'Irlande. C'est là que se réunissent les deux chambres du Parlement, le Dáil Éireann et le Seanad Éireann. Aussi le terme « Leinster House » désigne maintenant, par métonymie, l'activité politique irlandaise. Jusqu'en 1922, ce bâtiment abrita le siège de la Royal Dublin Society. Les fameuses manifestations de cette société, le « Dublin Spring Show » et le « Dublin Horse Show » se tenaient sur la pelouse de Leinster House, en face de Merrion Square."
+        },
+        {
+          "pageid": 2902126,
+          "ns": 0,
+          "title": "Fells Point",
+          "extract": "Fells Point est un quartier de la ville de Baltimore, dans le Maryland (États-Unis).\nSitué à l'est de l'Inner Harbor et de Little Italy dans l'estuaire du Patapsco, Fells Point est un quartier portuaire reconverti et classé dans le Registre national des lieux historiques. Aujourd'hui, il est connu pour sa grande concentration de bars et de restaurants et attire de nombreux touristes."
+        },
+        {
+          "pageid": 2911616,
+          "ns": 0,
+          "title": "Et vint le jour de la vengeance",
+          "extract": "Et vint le jour de la vengeance (Behold a Pale Horse) est un film américain réalisé par Fred Zinnemann, sorti en 1964. Il est basé sur la vie de l'anarchiste espagnol Francesc Sabaté."
+        },
+        {
+          "pageid": 3030859,
+          "ns": 0,
+          "title": "Heavenly Forest",
+          "extract": "Heavenly Forest (ただ、君を愛してる, Tada, kimi o aishiteru) est un film japonais de Takehiko Shinjō sortie en 2006. C'est l'histoire de deux jeunes étudiants : Makoto Segawa et Shizuru Satonaka."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=3147905%7C3202950%7C3289939%7C3310912%7C3382915%7C3406168%7C3650318%7C3946575%7C3980794%7C4323150%7C4382640%7C4437742%7C4668393%7C4737713%7C4746079%7C4759617%7C4764283%7C4801255%7C5008415%7C5094023": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 3147905,
+          "ns": 0,
+          "title": "Closer to You (album de J. J. Cale)",
+          "extract": "Closer to You est le onzième album de JJ Cale, paru en 1994."
+        },
+        {
+          "pageid": 3202950,
+          "ns": 0,
+          "title": "Sankadiokro",
+          "extract": "Sankadiokro est une localité de l'est de la Côte d'Ivoire et appartenant au département d'Abengourou, région d'Indénié-Djuablin. La localité de Sankadiokro est un chef-lieu de commune."
+        },
+        {
+          "pageid": 3289939,
+          "ns": 0,
+          "title": "Parc d'État de Yuba",
+          "extract": "Le parc d'État de Yuba (en anglais : Yuba State Park) est un parc d'État américain situé en Utah, ses attractions se concentrant autour du lac Yuba.\n\n"
+        },
+        {
+          "pageid": 3310912,
+          "ns": 0,
+          "title": "Michel Mpambara",
+          "extract": "Michel Mpambara (né en 1973 au Burundi, d'origine rwandaise) est un humoriste, animateur et acteur québécois résidant principalement à Montréal. Révélé dès 1996 par ses monologues au festival Juste pour rire, et par son animation remarqué au Canal Évasion de l'émission Adoptez Mpambara.\nIl reçoit le prix Félix du spectacle de l'année pour Y A TROP DE BLANC AU QUÉBEC en 2001."
+        },
+        {
+          "pageid": 3382915,
+          "ns": 0,
+          "title": "Thoropa megatympanum",
+          "extract": "Thoropa megatympanum est une espèce d'amphibiens de la famille des Cycloramphidae."
+        },
+        {
+          "pageid": 3406168,
+          "ns": 0,
+          "title": "Fred Zinn",
+          "extract": "Friedrich Wilhelm Zinn dit Fred Zinn est un aviateur et photographe américain."
+        },
+        {
+          "pageid": 3650318,
+          "ns": 0,
+          "title": "Demi-sang de la Dombes",
+          "extract": "Le demi-sang de la Dombes, connu également sous le nom de cheval de Bresse au Moyen Âge et de demi-sang de l'Ain, est une ancienne race de chevaux de selle française originaire de la Dombes et de la Bresse, dans l'actuel département de l'Ain. Elle y est réputée de la fin du Moyen Âge jusqu'au XVIe siècle. À la suite des réquisitions de 1799, les faibles effectifs restants sont croisés au cours du XIXe siècle avec des carrossiers du Cotentin, des Percherons, puis des Anglo-normands et des Pur-sangs. Devenu une monture militaire puis un cheval de sport, le demi-sang de la Dombes perdure jusqu'à son inclusion parmi la race nationale du selle français en 1958.\nQuelques descriptions évoquent un cheval de sang assez rustique, modifié par croisement jusqu'à devenir un grand demi-sang de sport. L'élevage des chevaux de selle français, héritiers du demi-sang de l'Ain, reste traditionnel dans le département et y représente toujours une activité économique importante."
+        },
+        {
+          "pageid": 3946575,
+          "ns": 0,
+          "title": "Galerie des Offices",
+          "extract": "La galerie des Offices ou Les Offices est un des musées de Florence, en Italie. Il est installé dans le palais des Offices qui fait partie du complexe muséal appelé les « galeries des Offices » (Gallerie degli Uffizi) comprenant la galerie susmentionnée, mais aussi le corridor de Vasari, les collections du palais Pitti et le jardin de Boboli, qui composent par la quantité et la qualité des œuvres rassemblées l'un des ensembles de musées les plus importants au monde.\nOuverte au public depuis 1765, la galerie des Offices déploie, sur 12 000 m2, la plus belle collection au monde de peintures italiennes et des œuvres de nombreux grands maîtres européens, d’Albrecht Dürer à Francisco de Goya.\nLa galerie des Offices rassemble la collection existante la plus remarquable de Raphaël et de Botticelli, ainsi que les principales d'œuvres de Giotto, de Titien, de Pontormo, de Bronzino, d'Andrea del Sarto, du Caravage, de Dürer, de Rubens, de Léonard de Vinci... Les œuvres picturales du VIe siècle et baroques, mais aussi des XIXe et XXe siècles en Italie, sont concentrées au palais Pitti.\nLe musée abrite une collection d'œuvres d'art inestimables, dont le noyau fondamental provient des collections Médicis, enrichies au fil des siècles par des legs, des échanges et des dons, parmi lesquels un groupe d'œuvres religieuses procédant de la suppression des monastères et couvents entre les XVIIIe et XIXe siècles. Divisée en différentes salles aménagées par écoles et par styles dans l'ordre chronologique, l'exposition présente des œuvres du XIIe au XVIIIe siècle, avec la meilleure collection au monde d'œuvres de la Renaissance florentine. La collection de statuaire antique et surtout celle de dessins et d'estampes, conservée dans le Cabinet du même nom, est l'une des plus importantes au monde.\nEn 2019, il a enregistré 4 391 861 visiteurs, ce qui en fait le musée le plus visité d'Italie, hors Vatican."
+        },
+        {
+          "pageid": 3980794,
+          "ns": 0,
+          "title": "Maggie McNamara",
+          "extract": "Maggie McNamara est une actrice américaine, née le 18 juin 1928 à New York où elle est morte le 18 février 1978."
+        },
+        {
+          "pageid": 4323150,
+          "ns": 0,
+          "title": "Joseph-Étienne Dussault",
+          "extract": "Joseph-Étienne Dussault (17 octobre 1884-25 décembre 1943) est un industriel, entrepreneur, rédacteur et homme politique fédéral du Québec."
+        },
+        {
+          "pageid": 4382640,
+          "ns": 0,
+          "title": "GDRT",
+          "extract": "GDRT (ou GDR, prononcé Gadarat ou Gadara par les historiens) est un roi d’Aksoum (c. 200), connu aujourd’hui pour avoir été le premier roi d’Axoum à être intervenu dans les affaires de l’actuel Yémen. Il est principalement connu grâce à des inscriptions retrouvées dans le sud de l'Arabie, faisant mention de lui et de son fils BYGT (prononcé Beygat). GDRT est supposé être la même personne que GDR, dont le nom a été retrouvé sur un sceptre de bronze découvert à Addi Galamo, près d’Atsbi et Dar’a, dans le nord de l'Éthiopie. \nGadarat a parfois été assimilé au roi anonyme qui régna de c. 200 à c. 230 et dont fait mention le Monumentum adulitanum, mais on les considère communément comme deux personnages distincts. Quoi qu’il en soit, le chercheur français Christian Robin, étudiant les inscriptions d’Al-Mis’al, au Yémen, a démontré que Gadarat et son successeur 'Adhebah ('DBH) vécurent durant la première moitié du IIIe siècle."
+        },
+        {
+          "pageid": 4437742,
+          "ns": 0,
+          "title": "Pierfrancesco Chili",
+          "extract": "Pierfrancesco Chili (né le 20 juin 1964 à Bologne, dans la province de Bologne, en Émilie-Romagne) est un pilote de moto italien.\n\n Portail des sports motocyclistes   Portail de l’Italie"
+        },
+        {
+          "pageid": 4668393,
+          "ns": 0,
+          "title": "Anna Maria Mühe",
+          "extract": "Anna Maria Mühe, née le 23 juillet 1985 à Berlin-Est, est une actrice d'origine allemande."
+        },
+        {
+          "pageid": 4737713,
+          "ns": 0,
+          "title": "Coupe du monde de football des moins de 17 ans 1991",
+          "extract": "La Coupe du monde de football des moins de 17 ans 1991 est la quatrième édition de la coupe du monde de football des moins de 17 ans. La phase finale se déroule en Italie du 16 au 31 août 1991. Seuls les joueurs nés après le 1er août 1974 peuvent participer au tournoi. Initialement prévue en Équateur, elle est déplacée en Italie à cause de l'épidémie de choléra. L'Italie a été choisie car elle dispose de toutes les infrastructures nécessaires, puisqu'elle a accueilli la Coupe du monde \"seniors\", un an auparavant.\nOn note la présence de l'équipe des moins de 17 ans de l'Allemagne désormais réunifiée. Une nouvelle fois, une équipe du golfe Persique tire son épingle du jeu. Cette année, il s'agit du Qatar, qui arrive à se hisser jusqu'en demi-finales, éliminé seulement aux tirs au but par le futur vainqueur ghanéen. Le Brésil échoue quant à lui une nouvelle fois en quarts de finale.\nLa compétition est de nouveau remportée par un pays africain, puisque le Ghana, 6 ans après le sacre du Nigéria, bat l'Espagne en finale.\nLe tournoi est complètement boudé par le public, avec à peine plus de 1 000 spectateurs par match, phénomène qui s'est accentué avec l'élimination de l'équipe d'Italie dès le premier tour."
+        },
+        {
+          "pageid": 4746079,
+          "ns": 0,
+          "title": "The Bridge (série télévisée, 2010)",
+          "extract": "The Bridge (L'Incorruptible au Québec) est une série télévisée canadienne en treize épisodes de 42 minutes créée par Alan Di Fiore et diffusée entre le 5 mars et le 21 mai 2010 sur le réseau CTV. Elle a aussi été diffusée aux États-Unis sur le réseau CBS à partir du samedi 10 juillet 2010 mais a été annulé après trois épisodes, faute d'audiences.\nEn France, la série est diffusée depuis le 19 juillet 2010 sur 13ème rue et au Québec à partir du 29 décembre 2014 sur Séries+. Elle reste inédite dans les autres pays francophones."
+        },
+        {
+          "pageid": 4759617,
+          "ns": 0,
+          "title": "Double dames des Internationaux de France 2005",
+          "extract": "Cet article présente les résultats détaillés du double dames de l’édition 2005 des Internationaux de France de tennis qui est disputé du 23 mai au 5 juin 2005. Ce tournoi est le deuxième de la tournée du Grand Chelem."
+        },
+        {
+          "pageid": 4764283,
+          "ns": 0,
+          "title": "L'Odalisque à l'esclave",
+          "extract": "L'Odalisque à l'esclave est un tableau, peint en 1839 par Jean-Auguste-Dominique Ingres à la suite d'une commande privée du mécène Charles Marcotte. Il est exposé  au Fogg Art Museum de Cambridge dans le Massachusetts\n.\nEn 1842, Ingres en réalisa, avec la collaboration des frères Paul et Hippolyte Flandrin, alors ses élèves, une copie qui se trouve au Walters Art Museum de Baltimore\n.\nElle diffère de la toile de 1839 par l'arrière-plan, peint par Paul Flandrin, représentant un jardin inspiré du parc du château de Dampierre."
+        },
+        {
+          "pageid": 4801255,
+          "ns": 0,
+          "title": "Gobemouche drongo",
+          "extract": "Le Gobemouche drongo (Melaenornis edolioides) est une espèce d’oiseaux de la famille des Muscicapidae."
+        },
+        {
+          "pageid": 5008415,
+          "ns": 0,
+          "title": "Trilogie d'Albert Simonin",
+          "extract": "Albert Simonin a écrit une trilogie de romans qui partagent personnages, décors et une langue très argotique : Touchez pas au grisbi ! (1953), Le Cave se rebiffe (1954), et Grisbi or not grisbi (1955). Simonin n'a pas donné de titre à la trilogie dans son ensemble, et elle ne porte aucun titre consacré à ce jour. Une édition intégrale récente est intitulée Le Grisbi et décrite dans le quatrième de couverture comme « la trilogie de Max le menteur » (Le Manufacture de Livres, 2020).\nChacun des trois romans a fait l'objet d'une adaptation cinématographique : Touchez pas au grisbi ! sous le même titre en 1954 ; Le Cave se rebiffe sous le même titre en 1961 ; et Grisbi or not grisbi sous le titre de Les Tontons flingueurs en 1963.\nSimonin a ensuite écrit une autre trilogie, sans lien avec la précédente. Elle est connue sous le titre de Trilogie du Hotu (1968–1972) et met en scène les malfrats Johnny (« Le Hotu ») et Paulo."
+        },
+        {
+          "pageid": 5094023,
+          "ns": 0,
+          "title": "Fricot des barques",
+          "extract": "Le fricot des barques, mets spécifique aux mariniers du Rhône d'Arles, qui le consommaient sur leurs barques, est une variante de la broufado."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=5350472%7C5607210%7C5783403%7C5972638%7C6108012%7C6284784%7C6297406%7C6328158%7C6472944%7C7037577%7C7062588%7C7090138%7C7309192%7C7353635%7C7695596%7C7728246%7C7735499%7C7876972%7C7940578%7C7995129": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 5350472,
+          "ns": 0,
+          "title": "Raphaël Masson",
+          "extract": "Raphaël Masson est un conservateur du patrimoine, adjoint du directeur du Centre de recherche du château de Versailles, responsable du programme de recherche sur les grandes fêtes du château de Versailles.\nEn 2018, il participe à l'émission Secrets d'Histoire consacrée à  Marie-Thérèse de France, intitulée  Madame Royale, l'orpheline de la Révolution, diffusée le 12 juillet 2018 sur France 2.\nAujourd’hui, il s’occupe du théâtre de la Reine à Versailles."
+        },
+        {
+          "pageid": 5607210,
+          "ns": 0,
+          "title": "Yuriy Nikitin",
+          "extract": "Yuriy Viktorovych Nikitin (en ukrainien : Юрій Вікторович Нікітін), né le 15 juillet 1978 à Kherson, est un gymnaste trampoliniste ukrainien."
+        },
+        {
+          "pageid": 5783403,
+          "ns": 0,
+          "title": "Saison 2 de Mission casse-cou",
+          "extract": "Cet article présente le guide des épisodes de la deuxième saison de la série télévisée britannique Mission casse-cou (Dempsey & Makepeace)."
+        },
+        {
+          "pageid": 5972638,
+          "ns": 0,
+          "title": "Athlétisme à l'Universiade d'été de 1975",
+          "extract": "Les épreuves d'athlétisme de l'Universiade d'été de 1975 se sont déroulées à Rome, en Italie. L'Universiade en elle-même a été annulée, et seules les épreuves d'athlétisme ont eu lieu. Il s'agit donc en pratique de championnats du monde universitaires d'athlétisme."
+        },
+        {
+          "pageid": 6108012,
+          "ns": 0,
+          "title": "Illegal",
+          "extract": "Illegal est le troisième single de l'album anglophone : Oral Fixation Vol. 2 de Shakira, sorti en 21 octobre 2006.\nCe single est un duo avec le célèbre guitariste mexicain Carlos Santana. La chanson sort après l'énorme succès de la chanson Hips Don't Lie. Le clip video correspondant est tourné le 16 novembre 2006 et est diffusé le lendemain sur Total Request Live et sur MTV Le jour de sa sortie, le clip se classe à la 9e place. Par la suite, la chanson est un succès, comme en Lettonie ou en Ukraine[réf. nécessaire]."
+        },
+        {
+          "pageid": 6284784,
+          "ns": 0,
+          "title": "Geostachys penangensis",
+          "extract": "Geostachys penangensis est une espèce de plante de la famille des Zingiberaceae (famille du gingembre) endémique aux collines de l'île de Penang en Malaisie."
+        },
+        {
+          "pageid": 6297406,
+          "ns": 0,
+          "title": "Bella Heathcote",
+          "extract": "Bella Heathcote (née Isabella Heathcote) est une actrice australienne, née le 27 mai 1987 à Melbourne."
+        },
+        {
+          "pageid": 6328158,
+          "ns": 0,
+          "title": "Phlogiellus bundokalbo",
+          "extract": "Phlogiellus bundokalbo est une espèce d'araignées mygalomorphes de la famille des Theraphosidae."
+        },
+        {
+          "pageid": 6472944,
+          "ns": 0,
+          "title": "Monsieur R",
+          "extract": "Monsieur R, de son vrai nom Richard Makela, est un rappeur et auteur-compositeur belge d'origine kino-congolaise, né le 25 septembre 1975 à Etterbeek (Belgique)."
+        },
+        {
+          "pageid": 7037577,
+          "ns": 0,
+          "title": "Maison du Commandant Charcot",
+          "extract": "La maison du Commandant Charcot est une maison d'habitation située au no 53 boulevard du Commandant-Charcot à Neuilly-sur-Seine, dans les Hauts-de-Seine, en France."
+        },
+        {
+          "pageid": 7062588,
+          "ns": 0,
+          "title": "Ctenomys lami",
+          "extract": "Ctenomys lami est une espèce de rongeurs de la famille des Ctenomyidae. Comme les autres membres du genre Ctenomys, appelés localement des tuco-tucos, c'est un petit mammifère d'Amérique du Sud bâti pour creuser des terriers. Ce rongeur est endémique du Brésil où il est considéré par l'UICN comme étant une espèce vulnérable.\nL'espèce a été décrite pour la première fois en 2001 par le généticien, zoologiste, biologiste brésilien Thales Renato Ochotorena de Freitas."
+        },
+        {
+          "pageid": 7090138,
+          "ns": 0,
+          "title": "Basawan",
+          "extract": "Basawan ou Basavan (actif de 1580 à 1600), était un peintre en miniature indienne de style Moghol Il était connu de ses contemporains comme un habile coloriste et un fin observateur de la nature humaine, ainsi que pour son usage du portrait dans les illustrations de l'Akbarnama, biographie officielle de l'empereur moghol Akbar, considéré comme une innovation dans l'art indien."
+        },
+        {
+          "pageid": 7309192,
+          "ns": 0,
+          "title": "Tour du Pétrole",
+          "extract": "La tour du Pétrole est un monument historique situé à Ammerschwihr, dans le département français du Haut-Rhin."
+        },
+        {
+          "pageid": 7353635,
+          "ns": 0,
+          "title": "Contarinia tritici",
+          "extract": "Contarinia tritici (la cécidomyie des fleurs du blé ou cécidomyie jaune du blé) est une espèce d'insectes diptères nématocères de la famille des Cecidomyiidae, d'origine eurasiatique.\nCet insecte est une cécidomyie inféodée aux plantes de la famille des Poaceae. C'est un ravageur sporadique de certaines céréales cultivées, en particulier le blé, l'orge, l'avoine et le seigle.\nLes dégâts sont causés par les larves qui se développent dans les fleurs, empêchant la formation des graines ou dégradant leur qualité."
+        },
+        {
+          "pageid": 7695596,
+          "ns": 0,
+          "title": "Leptoneta kernensis",
+          "extract": "Leptoneta kernensis est une espèce d'araignées aranéomorphes de la famille des Leptonetidae."
+        },
+        {
+          "pageid": 7728246,
+          "ns": 0,
+          "title": "Pinelema spirae",
+          "extract": "Pinelema spirae est une espèce d'araignées aranéomorphes de la famille des Telemidae."
+        },
+        {
+          "pageid": 7735499,
+          "ns": 0,
+          "title": "Hunger Games (série de films)",
+          "extract": "Hunger Games est une franchise cinématographique de science-fiction américaine, basée sur la série littéraire dystopique du même nom de Suzanne Collins.\nLes films qui composent cette série sont : Hunger Games, Hunger Games : L'Embrasement, Hunger Games : La Révolte, partie 1, Hunger Games : La Révolte, partie 2 (sortis entre 2012 et 2015), suivis de deux préquelles : Hunger Games : La Ballade du serpent et de l'oiseau chanteur (2023) et Hunger Games : Lever de soleil sur la moisson (prévue en 2026).\nLe premier film est réalisé par Gary Ross, et les suivants par Francis Lawrence.\nLa série se déroule à Panem, une nation fictive composée de districts et dirigée par un état autoritaire. Chaque année, le régime impose l’organisation des Hunger Games, un événement télévisé durant lequel vingt-quatre adolescents, sélectionnés de force, sont contraints de s'entretuer.\nLa série raconte l’histoire de Katniss Everdeen, une jeune fille d’un district de Panem, qui se porte volontaire pour participer aux jeux afin de sauver sa sœur. Elle décrit également comment, prise dans un engrenage politique et médiatique, Katniss devient, malgré elle, le symbole d'une révolte contre le pouvoir en place.\nCette série est suivie de deux préquelles. La première, sortie en 2023, est centrée sur la jeunesse de Coriolanus Snow. La seconde, prévue pour 2026, racontera la jeunesse de Haymitch Abernathy.\nÀ l'image des romans dont ils sont tirés, les films possèdent par ailleurs un certain nombre de références à l'Antiquité et à la mythologie gréco-romaine."
+        },
+        {
+          "pageid": 7876972,
+          "ns": 0,
+          "title": "Championnat de France de combiné nordique",
+          "extract": "Cette page recense les podiums des championnats de France de combiné nordique. Contrairement aux autres nations, la France n'organise qu'un championnat national en hiver."
+        },
+        {
+          "pageid": 7940578,
+          "ns": 0,
+          "title": "Muneji Munemura",
+          "extract": "Muneji Munemura (宗村 宗二, Munemura Muneji) (né le 1er octobre 1943) est un lutteur japonais spécialiste de la lutte gréco-romaine. Lors des Jeux olympiques d'été de 1968, il remporte la médaille d'or en combattant dans la catégorie des poids légers (63-70 kg)."
+        },
+        {
+          "pageid": 7995129,
+          "ns": 0,
+          "title": "Moulin de Mormoulins",
+          "extract": "Le moulin de Mormoulins est un moulin à eau situé sur l'Eure dans le hameau de Mormoulins de la commune française de Chaudon dans le département d'Eure-et-Loir en région Centre-Val de Loire. Il est inscrit au titre de monument historique depuis 2003."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=9231184%7C9624536%7C9648789%7C9796552%7C9911777%7C9988492%7C10391924%7C10396664%7C10440116%7C10443913%7C10804569%7C11170040%7C11451781%7C11747395%7C11855694%7C11934764%7C11934772%7C12084285%7C12129158%7C12132603": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 9231184,
+          "ns": 0,
+          "title": "Eugen Gomringer",
+          "extract": "Eugen Gomringer, né le 20 janvier 1925 à Cachuela Esperanza (Bolivie) et mort à Bamberg (Bavière) le 21 août 2025, est un poète bolivien-suisse. Il est le fondateur de la poésie concrète."
+        },
+        {
+          "pageid": 9624536,
+          "ns": 0,
+          "title": "4 janvier 1916",
+          "extract": ""
+        },
+        {
+          "pageid": 9648789,
+          "ns": 0,
+          "title": "Championnat de Cuba de football 2011",
+          "extract": "La saison 2011 du Championnat de Cuba de football est la quatre-vingt-seizième édition du Campeonato Nacional de Fútbol, le championnat de première division à Cuba. Les huit formations provinciales sont regroupées au sein d'une poule unique où elles s'affrontent deux fois, à domicile et à l'extérieur. Les quatre premiers jouent la phase finale pour le titre, l'avant-dernier le barrage de promotion-relégation tandis que le dernier est relégué et remplacé par le vainqueur du Torneo de Ascenso. \nC'est le FC Villa Clara qui remporte la compétition cette saison après avoir battu le FC Guantánamo en finale. Il s'agit du onzième titre de champion de Cuba de l'histoire du club."
+        },
+        {
+          "pageid": 9796552,
+          "ns": 0,
+          "title": "Hamparan Perak",
+          "extract": "Hamparan Perak est une ville indonésienne située dans la province de Sumatra du Nord."
+        },
+        {
+          "pageid": 9911777,
+          "ns": 0,
+          "title": "Florent Mulot",
+          "extract": "Florent Mulot, né le 8 avril 1992, est un archer français.\nIl est médaillé d'argent par équipes en tir à l'arc classique avec Thomas Antoine et Olivier Tavernier aux Championnats du monde en salle 2016 et avec Jean-Charles Valladont et Olivier Tavernier aux Championnats d'Europe en salle 2017."
+        },
+        {
+          "pageid": 9988492,
+          "ns": 0,
+          "title": "Gouvernement Aznar-Cabañas",
+          "extract": "Le Gouvernement de Juan Bautista Aznar-Cabañas est le gouvernement du royaume d'Espagne en fonction le 18 février 1931 au 14 avril 1931. Faisant suite au gouvernement Berenguer, il se trouve dans une période de transition après la fin de la dictature de Primo de Rivera et l'instauration de la Seconde République espagnole.\nLe 12 avril ont lieu des élections municipales, remportées en majorité par les Républicains (notamment à Madrid, Valence et Barcelone). Le 14 avril 1931, la République est proclamée et le roi Alphonse XIII quitte l'Espagne."
+        },
+        {
+          "pageid": 10391924,
+          "ns": 0,
+          "title": "Moyecques",
+          "extract": "Moyecques est un petit hameau au sein de la commune de Landrethun-le-Nord dans le Pas-de-Calais dans la région Hauts-de-France."
+        },
+        {
+          "pageid": 10396664,
+          "ns": 0,
+          "title": "S. S. Rajamouli",
+          "extract": "Koduri Srisaila Sri Rajamouli, est un réalisateur et scénariste indien qui travaille principalement dans le cinéma indien en télougou et connu pour opérer dans les genres d'action à grand spectacle.\nRéalisateur de douze films, il est principalement connu pour ses films Eega (2012), le diptyque Baahubali (2015-2017) et RRR (2022), parmi les plus grands succès nationaux comme internationaux du cinéma indien; Baahubali 2 tient toujours le record avec plus de 100 millions d'entrées vendues.\nSon film d'action fantasy Magadheera (2009) devient le plus gros succès du cinéma télougou à sa sortie. Eega gagne en 2012 le prix du Most Original Film au 8e festival After Dark de Toronto, et le premier Baahubali reçoit six nominations aux Saturn Awards et le prix du Meilleur Film International. RRR devient lui phénomène mondial, en partie grâce à sa chanson Naatu Naatu qui reçoit l'Oscar et le Golden Globe de la meilleure chanson originale, une première pour un film indien."
+        },
+        {
+          "pageid": 10440116,
+          "ns": 0,
+          "title": "Free (chanson de Stevie Wonder)",
+          "extract": "Free est une chanson de l'auteur-compositeur-interprète américain Stevie Wonder, enregistrée pour son album Characters en 1987. Sixième et dernier extrait de l'album à paraître en single en mai 1989, le single n'a connu qu'un succès limité et ne s'est pas classé au Billboard Hot 100.\nEn France, Free doit sa notoriété à son utilisation pour une publicité de la Banque populaire en 1993, ce qui lui permet de ressortir en single et restera cinq semaines dans le classement national des meilleurs ventes."
+        },
+        {
+          "pageid": 10443913,
+          "ns": 0,
+          "title": "Rhynchocyclus",
+          "extract": "Rhynchocyclus est un genre de passereaux de la famille des Tyrannidés. Il se trouve à l'état naturel dans le Nord de l'Amérique du Sud et en Amérique centrale."
+        },
+        {
+          "pageid": 10804569,
+          "ns": 0,
+          "title": "Aaron Dundon",
+          "extract": "Aaron Dundon, né le 22 mai 1982 à Wellington en Nouvelle-Zélande, est un joueur de rugby à XV. Évoluant comme talonneur au Leinster jusqu'en 2016, il se reconvertit en tant qu'entraîneur."
+        },
+        {
+          "pageid": 11170040,
+          "ns": 0,
+          "title": "Hostile",
+          "extract": "Hostile est un film d'horreur post-apocalyptique français écrit et réalisé par Mathieu Turi, sorti en 2017. Il s'agit du premier long-métrage du réalisateur, tourné en anglais."
+        },
+        {
+          "pageid": 11451781,
+          "ns": 0,
+          "title": "Eugène de Savoie-Gênes",
+          "extract": "Eugène de Savoie-Gênes (en italien : Eugenio Alfonso Carlo Maria Giuseppe di Savoia-Genova), né à Turin, le 13 mars 1906 et mort à São Paulo, le 8 décembre 1996, est un membre de la maison de Savoie, appartenant à la branche de Savoie-Gênes, et un amiral italien.\nDans l'entre-deux-guerres, il est souvent cité avec le titre de duc d'Ancône. En 1990, à la mort de son frère Philibert, il devient le 5e duc de Gênes."
+        },
+        {
+          "pageid": 11747395,
+          "ns": 0,
+          "title": "Attaque de Tichla (1987)",
+          "extract": "L'attaque de Tichla a eu lieu le 8 juillet 1987 pendant la guerre du Sahara occidental. Le Polisario attaque avec succès le mur des sables."
+        },
+        {
+          "pageid": 11855694,
+          "ns": 0,
+          "title": "Alexandre Benalla",
+          "extract": "Alexandre Benalla, né Maroine Benalla le 8 septembre 1991 à Évreux (Eure), est un responsable de sécurité et agent public contractuel français.\nEn 2012, il fait partie de l'équipe de sécurité de la campagne de François Hollande. Après le départ d'Emmanuel Macron du gouvernement Valls II, Alexandre Benalla se rapproche de l'ancien ministre et est engagé comme directeur de la sûreté et de la sécurité d'En marche durant la campagne présidentielle en 2017.\nAprès l'élection d'Emmanuel Macron, il est engagé comme chargé de mission par le cabinet présidentiel. En juillet 2018, il est accusé d'avoir usurpé la fonction de policier, interpellé et violenté un couple de personnes qui avait lancé des projectiles sur des CRS lors d'une des manifestations du 1er mai 2018 à Paris.\nCet événement est le point de départ de l'affaire Benalla, dans le cadre de laquelle il est condamné en 2021 en première instance, et en 2023 en appel à trois ans d’emprisonnement dont un an ferme sous bracelet électronique. Sa condamnation à un an de prison ferme est définitivement confirmée en juin 2024."
+        },
+        {
+          "pageid": 11934764,
+          "ns": 0,
+          "title": "(35718) 1999 FE34",
+          "extract": "(35718) 1999 FE34 est un astéroïde de la ceinture principale d'astéroïdes découvert en 1999."
+        },
+        {
+          "pageid": 11934772,
+          "ns": 0,
+          "title": "(35722) 1999 FM41",
+          "extract": "(35722) 1999 FM41 est un astéroïde de la ceinture principale d'astéroïdes de 1,770 km de diamètre découvert en 1999."
+        },
+        {
+          "pageid": 12084285,
+          "ns": 0,
+          "title": "Harmony (Minnesota)",
+          "extract": "Harmony est une ville du comté de Fillmore dans le Minnesota, aux États-Unis."
+        },
+        {
+          "pageid": 12129158,
+          "ns": 0,
+          "title": "Joanna Richardson",
+          "extract": "Joanna Leah Richardson (8 août 1925 - 7 mars 2008) est une écrivaine, traductrice et journaliste britannique. Elle est l'auteure de 21 biographies d'écrivains et de poètes et lauréate du Prix Goncourt de la Biographie en 1989. Elle collabore avec des journaux et des magazines."
+        },
+        {
+          "pageid": 12132603,
+          "ns": 0,
+          "title": "Siège de Corroy",
+          "extract": "Le siège du château de Corroy (juillet-août 1542) s'inscrit dans le cadre des opérations militaires menées dans le Brabant, par l'armée des duchés de Clèves et de Gueldre, dressés contre le Saint Empire. Ces actions se situent au cœur de la neuvième guerre d'Italie."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=12180533%7C12263897%7C12324802%7C12328861%7C12392155%7C12553559%7C12790118%7C12828437%7C12906564%7C13191644%7C13194648%7C13313430%7C13324767%7C13392240%7C13534054%7C13557262%7C13945554%7C13981739%7C14012199%7C14093806": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 12180533,
+          "ns": 0,
+          "title": "Cascaronia astragalina",
+          "extract": "Cascaronia astragalina est une espèce de plantes dicotylédones de la famille des Fabaceae, sous-famille des Faboideae, originaire d'Amérique du Sud. C'est l'unique espèce acceptée du genre Cascaronia (genre monotypique).\nCe sont des arbres pouvant atteindre 25 mètres de haut, exploités localement pour leur bois dur et lourd."
+        },
+        {
+          "pageid": 12263897,
+          "ns": 0,
+          "title": "Cyartonema elegans",
+          "extract": "Cyartonema elegans est une espèce de nématodes chromadorés de la famille des Cyartonematidae (ordre des Desmoscolecida)."
+        },
+        {
+          "pageid": 12324802,
+          "ns": 0,
+          "title": "Clanoptilus elegans",
+          "extract": "Clanoptilus elegans est une espèce d'insectes coléoptères de la famille des Melyridae, de la sous-famille des Malachiinae et de la tribu des Malachiini. Elle est présente en Europe."
+        },
+        {
+          "pageid": 12328861,
+          "ns": 0,
+          "title": "Patrick McGilligan",
+          "extract": "Patrick Joseph McGilligan (12 avril 1889 - 15 novembre 1979) est une personnalité politique irlandaise, du Fine Gael. Il est notamment procureur général de l'Irlande (en) de 1954 à 1957, ministre des Finances de 1948 à 1951, ministre des Affaires extérieures de 1927 à 1932 et ministre de l'Industrie et du Commerce. Il est Teachta Dála (député) de 1923 à 1965."
+        },
+        {
+          "pageid": 12392155,
+          "ns": 0,
+          "title": "Liri Gero",
+          "extract": "Liri Gero (1926-1944) est une jeune militante communiste albanaise et membre de la résistance durant la Seconde Guerre mondiale. En combattant aux côtés des partisans albanais, elle est tuée dans une escarmouche avec les nazis. Pour son héroïsme, elle reçoit le titre d'Héroïne du peuple d'Albanie."
+        },
+        {
+          "pageid": 12553559,
+          "ns": 0,
+          "title": "Embuscade de Baley Beri",
+          "extract": "L'embuscade de Baley Beri a lieu le 14 mai 2019 pendant la guerre du Sahel. Elle est menée contre une patrouille de l'armée nigérienne par des djihadistes de l'État islamique dans le Grand Sahara."
+        },
+        {
+          "pageid": 12790118,
+          "ns": 0,
+          "title": "Samuel Bradstreet",
+          "extract": "Samuel Bradstreet, 3e baronnet (octobre 1738 – 2 mai 1791) est un homme politique, avocat et juge irlandais. Son indépendance d'esprit politique lui vaut le surnom un peu trompeur de « Slippery Sam » ."
+        },
+        {
+          "pageid": 12828437,
+          "ns": 0,
+          "title": "Hôtel de Lacépède",
+          "extract": "L'hôtel de Lacépède est un hôtel particulier situé à Aix-en-Provence."
+        },
+        {
+          "pageid": 12906564,
+          "ns": 0,
+          "title": "Jonathan Hodgson",
+          "extract": "Jonathan Hodgson, né en 1960, est un réalisateur d'animation britannique, fondateur de la société de production Hodgson Films, pour laquelle il a réalisé plusieurs courts métrages, et vainqueur à 2 reprises du BAFTA du meilleur court-métrage d'animation."
+        },
+        {
+          "pageid": 13191644,
+          "ns": 0,
+          "title": "Susanne Brenner",
+          "extract": "Susanne Cecelia Brenner est une mathématicienne américaine, dont les recherches concernent la méthode des éléments finis et les techniques associées pour la solution numérique des équations différentielles. Elle est professeure de mathématiques à l'université d'État de Louisiane. Elle est  présidente élue de la Society for Industrial and Applied Mathematics (SIAM) pour le mandat 2021-2022."
+        },
+        {
+          "pageid": 13194648,
+          "ns": 0,
+          "title": "La Culture physique",
+          "extract": "La Culture physique est une revue bimensuelle illustrée française créé à Paris par Albert Surier et Edmond Desbonnet, publiée entre 1904 et 1967, promouvant le culturisme et les bienfaits de l'activité physique pour tous.\nCréée en 1904, la revue ne paraît pas entre 1914 et 1925, ni de septembre 1943 à décembre 1946. À partir de 1926, Albert Surier n'est plus mentionné qu'en qualité de « cofondateur ».\nAprès 1914, la revue absorbe les revues La Beauté par la santé, La Santé par la beauté, Santé-beauté et L'Athlète dont il reprend la numérotation d'années, plus ancienne."
+        },
+        {
+          "pageid": 13313430,
+          "ns": 0,
+          "title": "Coupe de France de rugby à XIII 1953-1954",
+          "extract": "La Coupe de France de rugby à XIII 1953-1954 est la 16e édition de la Coupe de France, compétition à élimination directe mettant aux prises des clubs de rugby à XIII amateurs et professionnels affiliés à la Fédération française de jeu à XIII (aujourd'hui Fédération française de rugby à XIII)."
+        },
+        {
+          "pageid": 13324767,
+          "ns": 0,
+          "title": "Koniusza (Petite-Pologne)",
+          "extract": "Koniusza est une localité polonaise, siège de la gmina de Koniusza, située dans le powiat de Proszowice en voïvodie de Petite-Pologne."
+        },
+        {
+          "pageid": 13392240,
+          "ns": 0,
+          "title": "Villa Dalmacija à Sokobanja",
+          "extract": "La villa Dalmacija à Sokobanja (en serbe cyrillique : Вила \"Далмација\" у Сокобањи ; en serbe latin : Vila \"Dalmacija\" u Sokobanji) se trouve à Sokobanja et dans le district de Zaječar, en Serbie. Elle est inscrite sur la liste des monuments culturels protégés de la république de Serbie (identifiant no SK 757)."
+        },
+        {
+          "pageid": 13534054,
+          "ns": 0,
+          "title": "Kounkouna",
+          "extract": "Kounkouna est une localité située dans le département de Kampti de la province du Poni dans la région du Djôrô  au Burkina Faso."
+        },
+        {
+          "pageid": 13557262,
+          "ns": 0,
+          "title": "Pasquale d'Inca",
+          "extract": "Pasquale d'Inca est un acteur français."
+        },
+        {
+          "pageid": 13945554,
+          "ns": 0,
+          "title": "Ida Dequeecker",
+          "extract": "Ida Dequeecker (née à Gand, le 25 mars 1943) est une féministe, active dans les mouvements Dolle Mina et BOEH, et une femme politique belge trotskyste membre du Socialistische Arbeiderspartij."
+        },
+        {
+          "pageid": 13981739,
+          "ns": 0,
+          "title": "Apokal",
+          "extract": "Apokal est un film ouest-allemand réalisé par Paul Anczykowski, sorti en 1971."
+        },
+        {
+          "pageid": 14012199,
+          "ns": 0,
+          "title": "Spirit : L'Indomptable",
+          "extract": "Spirit : L'Indomptable (Spirit Untamed) est un film d'animation réalisé par Elaine Bogan et Ennio Torresan Jr. et sorti en 2021.\nIl s'agit d'une adaptation cinématographique de la série télévisée d'animation Spirit : Au galop en toute liberté diffusée sur le service Netflix, et elle-même adaptée du film d'animation Spirit, l'étalon des plaines, sorti en 2002. Le film est également un reboot de la série, reprenant son histoire depuis le début.\nLe film commence par l'apparition de Milagro Navarro, grande cavalière mexicaine et mère de Luky. Elle monte son cheval au galop et dit à sa fille « vis sans peur » avant de sauter. Alors, le plan se recentre sur le public consterné ce qui laisse penser que Milagro est morte d’une chute de cheval."
+        },
+        {
+          "pageid": 14093806,
+          "ns": 0,
+          "title": "Borowo (Poméranie-Occidentale)",
+          "extract": "Borowo est une localité polonaise de la gmina mixte de Kalisz Pomorski, située dans le powiat de Drawsko en voïvodie de Poméranie-Occidentale. Elle se trouve à environ 29 km au sud de la ville de Drawsko Pomorskie et 89 km à l'est de Szczecin, la capitale régionale."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=14280740%7C14287824%7C14420391%7C14498198%7C14508076%7C14691698%7C14703112%7C15033834%7C15354522%7C15412213%7C15634371%7C15682761%7C15901601%7C16003634%7C16173432%7C16216136%7C16321313%7C16365581%7C16465198%7C16516517": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 14280740,
+          "ns": 0,
+          "title": "Siège de Fort-Slack",
+          "extract": "Alors que la France avait rouvert les hostilités avec l'Angleterre le 8 août 1549, les Français entamèrent une campagne de reconquête des dernières places fortes sur le territoire, qui culminera 9 ans plus tard avec la prise de Calais en 1558. François de Guise et Anne de Montmorency s'attaquèrent simultanément à Fort-Slack et à Ambleteuse."
+        },
+        {
+          "pageid": 14287824,
+          "ns": 0,
+          "title": "Tekus",
+          "extract": "Tekus (Thekus ou encore Thekes, dixit Tekus Comes ou Tekus ispán), décédé aux alentours de 1270, est une ancienne personnalité de l'ère des Árpád. Il est avec ses frères l'un des propriétaires dominants de la Hongrie septentrionale au XIIIe siècle. \nIl est l'ancêtre des familles Szini, Jósvafői, Szalonnai et Tornay."
+        },
+        {
+          "pageid": 14420391,
+          "ns": 0,
+          "title": "Championnat de Formule 3 FIA 2022",
+          "extract": "Le Championnat de Formule 3 FIA 2022 est la quatrième saison du championnat de Formule 3 FIA, qui succède au GP3 Series et au championnat d'Europe de Formule 3. Comportant 18 courses réparties en 9 manches, il démarre le 18 mars à Sakhir et se termine le 11 septembre à Monza."
+        },
+        {
+          "pageid": 14498198,
+          "ns": 0,
+          "title": "Gabrielle Giasson-Dulude",
+          "extract": "Gabrielle Giasson-Dulude, née à Montréal en 1984, est une poète et essayiste québécoise."
+        },
+        {
+          "pageid": 14508076,
+          "ns": 0,
+          "title": "Le Jeu d'échecs sur la terrasse",
+          "extract": "Le Jeu d'échecs sur la terrasse ou Le Jeu d'échecs est le dernier tableau réalisé par le peintre français du XIXe siècle Charles Bargue."
+        },
+        {
+          "pageid": 14691698,
+          "ns": 0,
+          "title": "Albrecht Eugen de Wurtemberg",
+          "extract": "Albrecht Eugen de Wurtemberg, né à Stuttgart le 8 janvier 1895 et mort à Schwäbisch Gmünd le 24 juin 1954, est un membre de la maison de Wurtemberg."
+        },
+        {
+          "pageid": 14703112,
+          "ns": 0,
+          "title": "Cimetière militaire britannique de Jinja",
+          "extract": "Le cimetière militaire britannique de Jinja (Jinja War Cemetery) est situé dans la ville de Jinja en Ouganda."
+        },
+        {
+          "pageid": 15033834,
+          "ns": 0,
+          "title": "Gianni Martucci",
+          "extract": "Gianni Martucci, né Gian Antonio Martucci le 22 mai 1942 à Ancône (Marches), est un réalisateur et scénariste italien."
+        },
+        {
+          "pageid": 15354522,
+          "ns": 0,
+          "title": "Léon de Catane",
+          "extract": "Saint Léon de Catane ou Léon le thaumaturge († 789), est un saint sicilien, évêque de la ville de Catane au VIIIe siècle. Il est réputé pour avoir accompli des miracles, en particulier des guérisons. Sa mémoire est célébrée le 20 février."
+        },
+        {
+          "pageid": 15412213,
+          "ns": 0,
+          "title": "Wellton Hills",
+          "extract": "Wellton Hills est une census-designated place du comté de Yuma, dans l'État de l'Arizona, aux États-Unis. En 2020, elle compte une population de 167 habitants."
+        },
+        {
+          "pageid": 15634371,
+          "ns": 0,
+          "title": "Gordon Jackson (avocat)",
+          "extract": "William Gordon Jackson, né le 5 août 1948 à Ardrossan, est un avocat britannique et un homme politique écossais.\nIl est député travailliste au Parlement écossais de 1999 à 2007 pour la région électorale de Glasgow Govan (en). De 2016 à 2020, il est le doyen de la Faculté des avocats (en)."
+        },
+        {
+          "pageid": 15682761,
+          "ns": 0,
+          "title": "Truncatella clathrus",
+          "extract": "Truncatella clathrus est une espèce de gastéropodes terrestres de la famille des Truncatellidae, peuplant les rivages de l'est des Caraïbes et des Bermudes."
+        },
+        {
+          "pageid": 15901601,
+          "ns": 0,
+          "title": "Piaszno (Poméranie)",
+          "extract": "Piaszno est une localité polonaise de la gmina rurale de Tuchomie située dans le powiat de Bytów en voïvodie de Poméranie. Elle se trouve à environ 11 km à l'ouest de Bytów et 89 km à l'ouest de la capitale régionale Gdańsk."
+        },
+        {
+          "pageid": 16003634,
+          "ns": 0,
+          "title": "Jean-Claude van Rijckeghem",
+          "extract": "Jean-Claude van Rijckeghem, né le 1er décembre 1963 à Gand (province de Flandre-Orientale), est un auteur de bande dessinée, scénariste, réalisateur et producteur de cinéma belge néerlandophone."
+        },
+        {
+          "pageid": 16173432,
+          "ns": 0,
+          "title": "2008 en Roumanie",
+          "extract": "Cet article présente les faits marquants de l'année 2008 en Roumanie."
+        },
+        {
+          "pageid": 16216136,
+          "ns": 0,
+          "title": "Tournoi masculin de basket-ball aux Jeux olympiques d'été de 2024",
+          "extract": "Le tournoi masculin de basket-ball aux Jeux olympiques d'été de 2024 se tient à Paris, en France, du 27 juillet au 10 août 2024. La phase préliminaire se tient à Villeneuve d'Ascq au Stade Pierre-Mauroy."
+        },
+        {
+          "pageid": 16321313,
+          "ns": 0,
+          "title": "2020 en Arabie saoudite",
+          "extract": "Cet article présente les faits marquants de l'année 2020 en Arabie saoudite."
+        },
+        {
+          "pageid": 16365581,
+          "ns": 0,
+          "title": "Seymourina Poirson",
+          "extract": "Seymourina Poirson, née Seymourina Suzanne Vincente Cuthbert le 15 mai 1846 dans l'ancien 3e arrondissement de Paris et morte le 17 mars 1931 dans le 17e arrondissement de Paris, est une autrice et salonnière française."
+        },
+        {
+          "pageid": 16465198,
+          "ns": 0,
+          "title": "Archibald Arnott",
+          "extract": "Archibald Arnott, né le 18 avril 1772 à Ecclefechan dans le Dumfriesshire en Écosse et mort le 6 juillet 1855, est un chirurgien militaire et médecin britannique. \nEnvoyé avec son régiment à île de Sainte-Hélène, il examine et tente de soigner Napoléon Ier en avril-mai 1821, juste avant la mort de ce dernier."
+        },
+        {
+          "pageid": 16516517,
+          "ns": 0,
+          "title": "Kurt Gassen",
+          "extract": "Kurt Gassen (né le 9 novembre 1892 à Berlin sous le nom d'Otto Gustav Curt Gassen et mort le 11 avril 1981 à Hambourg) est un bibliothécaire et auteur allemand."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=16963173%7C17102931%7C17379736%7C17598530%7C17633222": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 16963173,
+          "ns": 0,
+          "title": "Jorunna parva",
+          "extract": "Jorunna parva est une espèce de mollusques nudibranches de la famille des Discodorididae."
+        },
+        {
+          "pageid": 17102931,
+          "ns": 0,
+          "title": "Kéran 3",
+          "extract": "Kéran 3 est une commune située dans la région de la Kara, partie septentrionale du Togo, précisément dans la préfecture de Kéran. Elle est communément appelée commune des tatas, et a pour chef-lieu Nadoba."
+        },
+        {
+          "pageid": 17379736,
+          "ns": 0,
+          "title": "Deuxième République (Brésil)",
+          "extract": "La Deuxième République brésilienne, officiellement République des États-Unis du Brésil, désigne la période de l'histoire du Brésil comprise entre 1930 et 1937. Elle débute avec la révolution de 1930, menée par Getúlio Vargas, et se divise en trois phases : le gouvernement de transition, le gouvernement provisoire et le gouvernement constitutionnel. Elle s'achève par un coup d'État perpétré par Vargas en 1937, qui instaure l'Estado Novo (“État nouveau”).\n\nLe gouvernement de transition désigne la période durant laquelle une junte militaire provisoire (pt) a brièvement dirigé le pays après le renversement de Washington Luís.\nLe gouvernement provisoire correspond à la période où Vargas a gouverné par décret, sans constitution ni cadre légal défini, jusqu'à la promulgation de la Constitution de 1934 (pt).\nEnfin, le gouvernement constitutionnel a vu le jour en 1934, année où Vargas a été élu indirectement à la présidence par une assemblée constituante démocratiquement élue."
+        },
+        {
+          "pageid": 17598530,
+          "ns": 0,
+          "title": "Roy Sullivan",
+          "extract": "Roy Cleveland Sullivan, né le 7 février 1912 dans le comté de Greene, en Virginie, et mort le 28 septembre 1983 à Dooms, est un garde forestier américain ayant travaillé dans le parc national de Shenandoah.\nEntre 1942 et 1977, Sullivan aurait survécu à sept impacts de foudre. Pour cette raison, il acquiert les surnoms de « conducteur de foudre humain » et de « paratonnerre humain ». Sullivan est reconnu par le Guinness World Records comme la personne ayant été frappée par la foudre le plus grand nombre de fois officiellement recensées."
+        },
+        {
+          "pageid": 17633222,
+          "ns": 0,
+          "title": "Geltsdale",
+          "extract": "Geltsdale est un hameau et une ancienne paroisse civile, aujourd'hui rattaché à la paroisse de Castle Carrock, dans le district de Cumberland, dans le comté de Cumbria, en Angleterre, au sud-est du village de Castle Carrock. En 2001, la paroisse comptait une population de 6 habitants. À partir de 1858, Geltsdale était une paroisse civile à part entière. Le 1er avril 2003, la paroisse a été supprimée et fusionnée avec Castle Carrock.\nLa ligne ferroviaire Geltsdale Reservoir railway passait à proximité.\n\nLes paysages locaux bénéficient de plusieurs niveaux de protection. Deux des zones protégées couvrent une vaste superficie :\n\nla région des North Pennines, classée espace de remarquable beauté naturelle\nla zone de protection spéciale des North Pennines Moors (147 276 ha ) \nLe site d'intérêt scientifique particulier (SSSI) de Geltsdale & Glendue Fells couvre une superficie de 8 059 ha et est l'un des SSSI inclus dans la zone de protection spéciale.\nLa réserve RSPB de Geltsdale est une réserve naturelle de 5 000 ha située au sein du site d'intérêt scientifique particulier (SSSI). Elle est principalement constituée de landes et est gérée par la Royal Society for Protection of Birds pour les oiseaux de montagne tels que le tétras lyre et le Busard Saint-Martin. L'acquisition de terrains supplémentaires par la RSPB en 2025 a agrandi la réserve, qui est ainsi devenue la plus grande réserve de l'organisation en Angleterre."
+        }
+      ]
+    }
   }
 }

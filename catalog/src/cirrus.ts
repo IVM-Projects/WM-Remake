@@ -1,6 +1,6 @@
 // Dump CirrusSearch hebdomadaire de frwiki_content (M2-5) : instantané, parts, documents → text-<part>.tsv.
 import { join } from 'node:path'
-import { cleanOpening, cutSummary, SUMMARY_MAX } from './compute.ts'
+import { cleanOpening, cutSummary, hasOpening, SUMMARY_MAX } from './compute.ts'
 import type { Mode } from './compute.ts'
 import { USER_AGENT } from './http.ts'
 import { readTsv, writeTsv } from './tsv.ts'
@@ -45,44 +45,72 @@ export async function cirrusListing(
   throw new Error('Cirrus : aucun instantané complet de frwiki_content')
 }
 
-export type CirrusDoc = { page_id: number; namespace: number; page_type?: string; opening_text?: string; text_bytes: number; incoming_links?: number }
+export type CirrusDoc = {
+  page_id: number
+  namespace: number
+  title: string
+  page_type?: string
+  opening_text?: string
+  text_bytes: number
+  incoming_links?: number
+}
 
-// Paires index/document ; la ligne d'index donne l'id attendu du document qui la suit. Un document dont page_id ou
-// text_bytes n'est pas entier, ou dont page_id n'est pas cet id, est sauté ; au-delà de 5 %, le format a changé.
+const parse = (line: string): unknown => {
+  try {
+    return JSON.parse(line)
+  } catch {
+    return undefined
+  }
+}
+
+// Paires index/document ; la ligne d'index donne l'id attendu du document qui la suit. Un document sans page_id,
+// namespace et text_bytes entiers, ou dont page_id n'est pas cet id, est sauté ; au-delà de 5 %, le format a changé.
 export async function* cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<CirrusDoc> {
   let n = 0
   let docs = 0
-  let skipped = 0
+  let invalid = 0
+  let mismatch = 0
   let expected: number | undefined
   for await (const line of lines) {
     n++
+    const json = parse(line)
     if (expected === undefined) {
-      let id: unknown
-      try {
-        id = (JSON.parse(line) as { index?: { _id?: unknown } }).index?._id
-      } catch {}
+      const id = (json as { index?: { _id?: unknown } } | null | undefined)?.index?._id
       if (id === undefined) throw new Error(`Format Cirrus inattendu : ligne d'index ${n}`)
       expected = Number(id)
       continue
     }
-    const d = JSON.parse(line) as Record<string, unknown>
+    if (typeof json !== 'object' || json === null) throw new Error(`Format Cirrus inattendu : ligne ${n}`)
+    const d = json as Record<string, unknown>
     docs++
-    const ok = Number.isInteger(d.page_id) && d.page_id === expected && Number.isInteger(d.text_bytes)
+    const id = expected
     expected = undefined
-    if (!ok) {
-      skipped++
+    if (!Number.isInteger(d.page_id) || !Number.isInteger(d.namespace) || !Number.isInteger(d.text_bytes)) {
+      invalid++
+      continue
+    }
+    if (d.page_id !== id) {
+      mismatch++
       continue
     }
     yield {
       page_id: d.page_id as number,
       namespace: d.namespace as number,
+      title: typeof d.title === 'string' ? d.title : '',
       page_type: typeof d.page_type === 'string' ? d.page_type : undefined,
       opening_text: typeof d.opening_text === 'string' ? d.opening_text : undefined,
       text_bytes: d.text_bytes as number,
       incoming_links: Number.isInteger(d.incoming_links) ? (d.incoming_links as number) : undefined,
     }
   }
-  if (docs - skipped < 0.95 * docs) throw new Error(`Format Cirrus inattendu : ${skipped} documents sur ${docs} sans text_bytes`)
+  // Flux coupé ou vide : jamais une part sans erreur.
+  if (expected !== undefined) throw new Error(`Format Cirrus inattendu : ligne d'index ${n} sans document`)
+  if (docs === 0) throw new Error('Format Cirrus inattendu : aucun document')
+  if (docs - invalid - mismatch < 0.95 * docs) {
+    throw new Error(
+      `Format Cirrus inattendu : ${invalid} documents sur ${docs} sans page_id, namespace et text_bytes entiers, ${mismatch} dont page_id n'est pas l'_id`,
+    )
+  }
 }
 
 // text-<part>.tsv : page_id, text_bytes, incoming_links (0 si absent), summary|\N ; espace 0 hors redirections.
@@ -92,14 +120,17 @@ export async function cirrusCommand(o: { dir: string; part: string; mode: Mode; 
   // catalog.tsv : page_id, title, len, views, rarity, image|\N, qid|\N, badge, selected (0|1).
   for await (const f of readTsv(join(o.dir, 'catalog.tsv'))) if (f[8] === '1') selected.add(Number(f[0]))
   let docs = 0
+  let noLinks = 0
   const rows = await writeTsv(join(o.dir, `text-${o.part}.tsv`), (async function* (): AsyncGenerator<Field[]> {
     for await (const d of cirrusDocs(o.input)) {
       docs++
       if (d.namespace !== 0 || d.page_type === 'redirect') continue
-      // cleanOpening non vide = hasOpening, calculé une fois.
-      const text = selected.has(d.page_id) ? cleanOpening(d.opening_text ?? '') : ''
-      yield [d.page_id, d.text_bytes, d.incoming_links ?? 0, text ? cutSummary(text, SUMMARY_MAX[o.mode]) : null]
+      if (d.incoming_links === undefined) noLinks++
+      const usable = selected.has(d.page_id) && hasOpening(d.opening_text, d.title)
+      yield [d.page_id, d.text_bytes, d.incoming_links ?? 0, usable ? cutSummary(cleanOpening(d.opening_text ?? ''), SUMMARY_MAX[o.mode]) : null]
     }
   })())
+  // Environ 12 % des articles n'ont pas le champ (0 lien) ; au-delà de la moitié, il a changé de nom ou de type.
+  if (noLinks > rows / 2) throw new Error(`Format Cirrus inattendu : ${noLinks} documents sur ${rows} sans incoming_links`)
   return { docs, rows }
 }

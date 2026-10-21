@@ -178,6 +178,31 @@ test('fetch : Règles de lots sur toutes les pages choisies, corps rangés par U
   expect(result).toEqual({ wikidata: wikidata.length, commons: commons.length + fr.length, extracts: extracts.length })
 })
 
+test('fetch --only extracts : seuls les lots absents sont demandés, réponses déjà là gardées, autres tranches intactes', async () => {
+  const work = join(dir, 'only')
+  const fixtures = join(dir, 'only-fixtures')
+  await mkdir(work)
+  await mkdir(join(fixtures, 'raw'), { recursive: true })
+  await writeTsv(join(work, 'catalog.tsv'), [1, 2, 3].map((id) => [id, `P${id}`, 100, 0, 'C', null, `Q${id}`, 0, 1]))
+  // 2 : ouverture d'infobox (titre suivi d'une majuscule, M2-R5) ; 3 : sans texte.
+  const docs = [
+    { page_id: 1, namespace: 0, title: 'Chat', opening_text: 'Le chat est un mammifère.' },
+    { page_id: 2, namespace: 0, title: 'Chien (animal)', opening_text: 'Chien Photo du chien. Le chien aboie.' },
+    { page_id: 3, namespace: 0, title: 'Loup' },
+  ]
+  await writeFile(join(fixtures, 'raw', 'cirrus.ndjson'), docs.map((d) => `{"index": {"_id": ${d.page_id}}}\n${JSON.stringify(d)}\n`).join(''))
+  const [kept] = extractsUrls([1, 2, 3])
+  await writeFile(join(fixtures, 'raw', 'extracts.json'), JSON.stringify({ [kept]: { old: true } }))
+
+  const asked: string[] = []
+  const client = { async get(url: string) { asked.push(url); return { url } } }
+  expect(await fetchCommand({ dir: work, fixtures, client, only: 'extracts' })).toEqual({ extracts: 2 })
+  const [fresh] = extractsUrls([2, 3])
+  expect(asked).toEqual([fresh])
+  expect(JSON.parse(await readFile(join(fixtures, 'raw', 'extracts.json'), 'utf8'))).toEqual({ [kept]: { old: true }, [fresh]: { url: fresh } })
+  for (const name of ['wikidata.json', 'commons.json']) await expect(readFile(join(fixtures, 'raw', name))).rejects.toThrow('ENOENT')
+})
+
 test('README et meta.json : sources datées, licences, mois en YYYY-MM', async () => {
   const text = fixturesReadme({ runDate: '2026-10-22', month: '2026-09', sources: [{ name: 'Dump `page`', url: 'https://dumps.wikimedia.org/x', date: '2026-10-01' }] })
   expect(text).toContain('| Dump `page` | https://dumps.wikimedia.org/x | 2026-10-01 |')

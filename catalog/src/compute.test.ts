@@ -231,6 +231,64 @@ test('cleanOpening : bandeaux relevés dans les tranches réelles de Cirrus', ()
   expect(cleanOpening('Cet article présente la liste des maires.')).toBe('Cet article présente la liste des maires.')
 })
 
+test('cleanOpening : « voire » et « voyez-vous » ne font pas un bandeau « Pour …, voir … »', () => {
+  for (const text of ['Pour la plupart des historiens, voire pour tous, Clovis est le premier roi.', 'Pour ses partisans, voyez-vous, la loi est juste.']) {
+    expect(cleanOpening(`${text} La suite.`)).toBe(`${text} La suite.`)
+  }
+  expect(cleanOpening('Pour Clovis, voir : Clovis Ier. Le roi.')).toBe('Le roi.')
+})
+
+test('cleanOpening : notes de maintenance entre crochets et « Écouter » retirées, crochets d’API gardés', () => {
+  const notes = [
+    'réf.\u00a0nécessaire', 'réf. souhaitée', 'Quoi\u00a0?', 'Lequel ?', 'Laquelle ?', 'Qui ?', 'Quand ?', 'Où ?', 'Comment ?',
+    'Pourquoi ?', 'source insuffisante', 'non neutre', 'interprétation personnelle', 'à vérifier', 'pas clair',
+  ]
+  for (const note of notes) expect(cleanOpening(`Il est fréquent en Suisse[${note}]. Employé seul, il désigne Hannah.`)).toBe('Il est fréquent en Suisse. Employé seul, il désigne Hannah.')
+  expect(cleanOpening('Responsable[Quoi\u00a0?] du département.')).toBe('Responsable du département.')
+  expect(cleanOpening('Il est connu [réf. nécessaire] partout.')).toBe('Il est connu partout.')
+  // « Écouter » collé au mot ou après l'API ; en tête de phrase, c'est un mot.
+  expect(cleanOpening("SankadiokroÉcouter est une localité de l'est de la Côte d'Ivoire.")).toBe("Sankadiokro est une localité de l'est de la Côte d'Ivoire.")
+  expect(cleanOpening('Saintes (/sɛ̃t/ Écouter) est une commune.')).toBe('Saintes (/sɛ̃t/) est une commune.')
+  expect(cleanOpening('Il dort. Écouter la radio est un plaisir.')).toBe('Il dort. Écouter la radio est un plaisir.')
+  for (const kept of ['Paris (prononcé [pa.ʁi]) est la capitale.', 'Baracs (hongrois : Baracs [ˈbɒrɒt͡ʃ]) est une localité.', 'Il veut adapter ces doctrines [pour des lecteurs occidentaux] sans trahir.']) {
+    expect(cleanOpening(kept)).toBe(kept)
+  }
+})
+
+test('hasOpening : ouverture d’infobox (M2-R5) refusée, vraie phrase d’ouverture gardée', () => {
+  const infobox: [string, string | undefined][] = [
+    ['René Guénon Photographie de 1925 (à 38 ans). Signature. René Guénon, né le 15 novembre 1886 à Blois.', 'René Guénon'],
+    ["Rhynchocalycaceae Fleur de Saltera (es) sarcocolla (Penaeaceae) Taxon inexistant en Classification de Cronquist.", 'Rhynchocalycaceae'],
+    ["Aaron Dundon Pas d'image ? Cliquez ici a Compétitions nationales. Aaron Dundon, né le 22 mai 1982.", 'Aaron Dundon'],
+    ['Harmony Harmony est une ville du comté de Fillmore.', 'Harmony (Minnesota)'],
+    ['Attaque de Tichla (1987) Guerre du Sahara occidental Batailles. L’attaque de Tichla.', 'Attaque de Tichla (1987)'],
+    ['Alex\u00a0D. Linz Alexander David Linz est un acteur américain.', 'Alex D. Linz'],
+    ['Kéran 3 Kéran 3 est une commune du Togo.', 'Kéran 3'],
+    // Sans titre ou titre différent : marqueurs d'infobox.
+    ['Formule 3 FIA 2022 Navigation Le Championnat de Formule 3 FIA 2022 est la quatrième saison.', 'Championnat de Formule 3 FIA 2022'],
+    ['Kompas modifier - modifier le code - voir Wikidata (aide) Kompas est un quotidien indonésien.', undefined],
+    ['Moyecques Localisation sur la carte de France Moyecques est un hameau.', undefined],
+    ['Apokal Pour plus de détails, voir Fiche technique et Distribution. Apokal est un film.', undefined],
+    ['Banksia rouge des marais Cet article est une ébauche concernant la flore. Le Banksia occidentalis est un arbuste.', undefined],
+    ['Placodermi Placodermi Restitution paléoartistique de divers placodermes.', undefined],
+    ["Chronologies Cet article présente les faits marquants de l'année 2020 en Arabie saoudite.", undefined],
+    // Faux positif accepté (un appel TextExtracts) : titre plus court que le nom de la phrase d'ouverture.
+    ['Rostom Khan (né à Ispahan en 1567) est un roi de Karthli.', 'Rostom (roi de Karthli)'],
+  ]
+  for (const [text, title] of infobox) expect(hasOpening(text, title)).toBe(false)
+  const leads: [string, string | undefined][] = [
+    ['Zakaria Amzil est un footballeur marocain.', 'Zakaria Amzil'],
+    ['Paris (prononcé [pa.ʁi]) est la capitale de la France.', 'Paris'],
+    ['Le Seigneur des anneaux est une trilogie cinématographique.', 'Le Seigneur des anneaux (série de films)'],
+    ['Cécile Cukierman, née le 26 avril 1976 à Bagneux, est une femme politique.', 'Cécile Cukierman'],
+    ['SLC29A1 est un gène situé sur le chromosome 6 humain.', 'SLC29A1'],
+    ["L'église Saint-Samson est une église catholique.", 'Église Saint-Samson de Bobital'],
+    ['René Guénon Photographie de 1925. René Guénon, né le 15 novembre 1886.', undefined],
+    ['Cet article présente la liste des maires de Dunkerque.', 'Liste des maires de Dunkerque'],
+  ]
+  for (const [text, title] of leads) expect(hasOpening(text, title)).toBe(true)
+})
+
 test('cleanOpening : bandeau dont le titre cité finit par « ! » ou « ? »', () => {
   expect(cleanOpening('Cet article concerne la chanson « Ça ira ! », pas le film. Le texte est connu.')).toBe('Le texte est connu.')
   expect(cleanOpening('Cet article concerne la collection « Que sais-je ? ». Le livre est court.')).toBe('Le livre est court.')

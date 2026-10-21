@@ -130,19 +130,38 @@ const STOPS = new RegExp(STOP, 'g')
 // une phrase jusqu'à la première fin de phrase, ou jusqu'à la fin du texte ; « (comment ?) » est pris dans le début
 // pour ne pas finir là. « Trouver des sources » et « Sur les autres projets » n'ont pas de fin de phrase : bornés à part.
 const BANNER = new RegExp(
-  String.raw`^(?:(?:Pour [^.!?]*?,\s?vo(?:ir|yez)|Ne doit pas être confondu|Ne pas confondre|Cet article (?:concerne|traite|est une ébauche|est orphelin|ne cite|ne s['’]appuie|peut contenir)|Cette page (?:d['’]homonymie|est une très courte ébauche|contient des caractères spéciaux)|Vous lisez un «|Vous pouvez (?:partager vos connaissances en l['’]améliorant \(comment\s?\?\)|aider en ajoutant|également enrichir les pages)|Articles? principa(?:l|ux)\s?:|Moins de trois articles lui sont liés|Si vous disposez d['’]ouvrages|En pratique\s?:\s?Quelles sources sont attendues\s?\?\s?Comment ajouter mes sources|À l['’]instar du célèbre «|L['’]article peut contenir des analyses|Pour améliorer la vérifiabilité|S['’]ils s['’]affichent mal|Voir la page de discussion pour plus de détails|Consultez la liste des tâches|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)|Trouver des sources sur «[^»]*»\s?:[^]*?\(wd\)\s?trouver des œuvres sur Wikidata|Sur les autres projets Wikimedia\s?:(?:[^,]*,\s?sur (?:le |la )?Wik\S*(?: Commons)?)+)\s*`,
+  String.raw`^(?:(?:Pour [^.!?]*?,\s?vo(?:ir|yez)(?![\w-])|Ne doit pas être confondu|Ne pas confondre|Cet article (?:concerne|traite|est une ébauche|est orphelin|ne cite|ne s['’]appuie|peut contenir)|Cette page (?:d['’]homonymie|est une très courte ébauche|contient des caractères spéciaux)|Vous lisez un «|Vous pouvez (?:partager vos connaissances en l['’]améliorant \(comment\s?\?\)|aider en ajoutant|également enrichir les pages)|Articles? principa(?:l|ux)\s?:|Moins de trois articles lui sont liés|Si vous disposez d['’]ouvrages|En pratique\s?:\s?Quelles sources sont attendues\s?\?\s?Comment ajouter mes sources|À l['’]instar du célèbre «|L['’]article peut contenir des analyses|Pour améliorer la vérifiabilité|S['’]ils s['’]affichent mal|Voir la page de discussion pour plus de détails|Consultez la liste des tâches|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)|Trouver des sources sur «[^»]*»\s?:[^]*?\(wd\)\s?trouver des œuvres sur Wikidata|Sur les autres projets Wikimedia\s?:(?:[^,]*,\s?sur (?:le |la )?Wik\S*(?: Commons)?)+)\s*`,
 )
 
-// shortcut: le texte d'infobox de opening_text (titre, légende, « Navigation ») et les bandeaux qui le suivent restent,
-// à reprendre si les résumés de la démo en souffrent (TextExtracts, plus propre, coûte un appel par lot de 20 pages).
+// Notes de maintenance entre crochets (liste fixe : l'API « [pa.ʁi] » reste) et « Écouter », collé au mot ou non.
+const NOISE =
+  /\[(?:réf\.\s?(?:nécessaire|souhaitée)|(?:Quoi|Lequel|Laquelle|Lesquels|Lesquelles|Qui|Quand|Où|Comment|Pourquoi|Combien)\s?\?|source\sinsuffisante|non\sneutre|interprétation\spersonnelle|à\svérifier|pas\sclair)\]|(?<=[\p{L}\p{M}/])\s?Écouter(?![\p{L}\p{M}])/gu
+
 export function cleanOpening(text: string): string {
   // Une espace insécable seule est gardée (typographie française) ; tabulations et sauts de ligne deviennent des espaces.
-  let t = text.replace(/\s{2,}|[\t\n\r]/g, ' ').trim()
+  let t = text.replace(NOISE, '').replace(/\s{2,}|[\t\n\r]/g, ' ').trim()
   while (BANNER.test(t)) t = t.replace(BANNER, '')
   return t
 }
 
-export const hasOpening = (text: string | undefined): boolean => cleanOpening(text ?? '') !== ''
+// Texte d'infobox repérable sans le titre : liens de modification, légendes de carte, fiche de film, bandeau resté
+// derrière une infobox, mots de tête répétés (« Placodermi Placodermi »).
+const INFOBOX =
+  /modifier - modifier le code|Localisation sur la carte|Pour plus de détails, voir Fiche technique|Pas d'image \? Cliquez ici| Navigation [\p{Lu}\d]|Cet article est une ébauche|Pour les articles homonymes, voir|» redirige ici|^Chronologies |^(\S+(?: \S+){0,5}) \1 /u
+
+// Ouverture utilisable comme résumé (sinon TextExtracts) : seule règle de cirrusCommand et de `fixtures fetch`.
+// M2-R5 : le titre (avec ou sans sa précision entre parenthèses) suivi d'une majuscule ou d'un chiffre ouvre un texte
+// d'infobox (« René Guénon Photographie de 1925… ») ; sans titre, seul INFOBOX joue. Un faux positif coûte un appel
+// TextExtracts, un faux négatif laisse passer l'infobox.
+// shortcut: une légende sans titre ni marqueur passe (« Cave Balve Entrée de la Balver Höhle… »), à reprendre si les
+// résumés de la démo en souffrent.
+export function hasOpening(text: string | undefined, title?: string): boolean {
+  // Insécables ramenées à l'espace pour comparer au titre.
+  const t = cleanOpening(text ?? '').replace(/\s/g, ' ')
+  if (t === '' || INFOBOX.test(t)) return false
+  const heads = title ? [title, title.replace(/ \([^()]*\)$/, '')].map((h) => `${h.replace(/\s/g, ' ')} `) : []
+  return !heads.some((h) => t.startsWith(h) && /^[\p{Lu}\d]/u.test(t.slice(h.length)))
+}
 
 export function cutSummary(text: string, max: number): string {
   if (text.length <= max) return text

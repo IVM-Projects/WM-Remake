@@ -9,8 +9,11 @@ export function extractsUrls(pageIds: number[]): string[] {
 }
 
 // query.pages[] de formatversion=2 ; page manquante, invalide ou sans extrait ignorée. L'appelant nettoie et coupe.
+// Une suite (`continue`) laisserait des pages du lot sans extrait : refusée plutôt que perdue en silence.
 export function parseExtracts(body: unknown): { page_id: number; extract: string }[] {
-  const pages = (body as { query?: { pages?: unknown } } | null)?.query?.pages
+  const b = body as { continue?: unknown; query?: { pages?: unknown } } | null
+  if (b?.continue !== undefined) throw new Error('Format TextExtracts inattendu : réponse incomplète (continue)')
+  const pages = b?.query?.pages
   if (!Array.isArray(pages)) throw new Error('Format TextExtracts inattendu : query.pages absent')
   return pages.flatMap((p: { pageid?: unknown; extract?: unknown }) =>
     Number.isInteger(p.pageid) && typeof p.extract === 'string' && p.extract.trim() ? [{ page_id: p.pageid as number, extract: p.extract }] : [],

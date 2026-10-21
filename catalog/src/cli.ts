@@ -56,7 +56,7 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
   'cirrus-list': () => cirrusListing(),
   cirrus: (v) => {
     // Options validées avant de lire stdin, comme pour pageviews ; part sans « / » : text-<part>.tsv reste dans --dir.
-    const o = { dir: need(v, 'dir'), part: matching(v, 'part', /^\w+$/), mode: mode(v) }
+    const o = { dir: need(v, 'dir'), part: matching(v, 'part', /^[\w.-]+$/), mode: mode(v) }
     // readline créé au premier tour de boucle, après la lecture de catalog.tsv : créé avant, il perdrait des lignes.
     const input = (async function* () {
       yield* createInterface({ input: process.stdin, crlfDelay: Infinity })
@@ -83,7 +83,10 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
     sliceSqlCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir'), fixtures: need(v, 'fixtures') }),
   'fixtures slice-pageviews': (v) => slicePageviewsCommand({ fixtures: need(v, 'fixtures'), input: process.stdin }),
   'fixtures slice-cirrus': (v) => sliceCirrusCommand({ fixtures: need(v, 'fixtures'), input: process.stdin, output: process.stdout }),
-  'fixtures fetch': (v) => fetchCommand({ dir: need(v, 'dir'), fixtures: need(v, 'fixtures'), client: createClient() }),
+  'fixtures fetch': (v) => {
+    if (v.only !== undefined && v.only !== 'extracts') throw new Error(`Option --only invalide : ${v.only} (extracts)`)
+    return fetchCommand({ dir: need(v, 'dir'), fixtures: need(v, 'fixtures'), client: createClient(), only: v.only })
+  },
   'fixtures readme': (v) =>
     readmeCommand({
       fixtures: need(v, 'fixtures'),
@@ -101,6 +104,7 @@ try {
       mode: { type: 'string' }, rate: { type: 'string' }, fixtures: { type: 'string' }, month: { type: 'string' },
       'cirrus-date': { type: 'string' }, 'dump-date': { type: 'string' }, part: { type: 'string' },
       'per-minute': { type: 'string' }, concurrency: { type: 'string' }, 'deadline-min': { type: 'string' },
+      only: { type: 'string' },
     },
   })
   const name = positionals.join(' ') // `fixtures pick` : commande en deux mots
