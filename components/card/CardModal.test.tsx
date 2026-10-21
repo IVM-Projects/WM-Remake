@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
 import { CardModal, type CatalogCard, type OwnedItem } from './CardModal'
+import { ImageCredit } from './ImageCredit'
 
 // Sans DOM (R18) : balisage initial seulement ; Échap, défausse et retrait d'étiquette sont couverts en e2e (Task 14).
 vi.mock('@/lib/prefs', () => ({ usePrefs: () => ({ sounds: true, hideSensitive: true, ready: true }) }))
@@ -76,6 +77,8 @@ describe('CardModal (R§6.5)', () => {
   test('lien Wikipédia et ligne de licence', () => {
     expect(h).toMatch(/<a href="https:\/\/fr.wikipedia.org\/wiki\/Chat" target="_blank" rel="noopener noreferrer"[^>]*>Voir l'article sur Wikipédia →<\/a>/)
     expect(text).toContain('Texte de l\'article : CC BY-SA 4.0 — crédits sur la page Wikipédia.')
+    // Crédit de l'image : rien tant que /api/cards/{id}/credits n'a pas répondu.
+    expect(textOf(html(<CardModal item={{ ...catalogue, image_url: 'https://upload.wikimedia.org/x.jpg' }} onClose={noop} />))).not.toContain('Image :')
   })
 
   test('pied : « Défausser », la pièce W et « +1 »', () => {
@@ -91,5 +94,20 @@ describe('CardModal (R§6.5)', () => {
     expect(t).not.toContain('Exemplaires')
     expect(c).toContain('glow-l')
     expect(t).toContain('Q-Score : 51.24')
+  })
+})
+
+describe('ImageCredit (M2-16)', () => {
+  const credit = { file: 'Test.jpg', image_author: 'Jean Dupont', image_license: 'CC BY-SA 4.0', license_url: 'https://creativecommons.org/licenses/by-sa/4.0' }
+
+  test('auteur, puis la licence en lien vers son texte, dans un nouvel onglet', () => {
+    expect(html(<ImageCredit credit={credit} />)).toMatch(
+      /^<p>Image : Jean Dupont, <a href="https:\/\/creativecommons.org\/licenses\/by-sa\/4.0" target="_blank" rel="noopener noreferrer"[^>]*>CC BY-SA 4.0<\/a><\/p>$/,
+    )
+  })
+
+  test('sans URL, la licence en texte simple ; sans auteur, « auteur inconnu »', () => {
+    expect(html(<ImageCredit credit={{ ...credit, license_url: null }} />)).toBe('<p>Image : Jean Dupont, CC BY-SA 4.0</p>')
+    expect(html(<ImageCredit credit={{ ...credit, image_author: null, license_url: null }} />)).toBe('<p>Image : auteur inconnu, CC BY-SA 4.0</p>')
   })
 })
