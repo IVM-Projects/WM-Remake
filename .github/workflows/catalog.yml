@@ -1,11 +1,13 @@
 name: Catalogue
 
-# Catalogue de cartes depuis les dumps et les API Wikimedia (M2), lancé à la main ou par l'API.
+# Catalogue de cartes depuis les dumps et les API Wikimedia (M2), lancé chaque mois, à la main ou par l'API.
 # Mode `fixtures` : tranches réelles d'environ 300 pages pour les tests (M2-7), en artefact `fixtures-raw`.
 # Modes `sample` et `full` : dumps → vues → échantillon → texte Cirrus (une part par job), Wikidata et Commons
 # (reprenables par le cache) → compute, en artefact `catalog-out` (cards.csv, media.csv, counts.json).
-# Pas de `schedule` avant le premier chargement réussi (P12).
+# Mensuel (P12) depuis le premier chargement réussi (run 39615766155) : échantillon Free, taux lu dans wm.config.
 on:
+  schedule:
+    - cron: '41 5 3 * *' # le 3 à 05:41 UTC, après les dumps du 1er
   workflow_dispatch:
     inputs:
       mode:
@@ -427,7 +429,7 @@ jobs:
     # text est sauté en repli extracts ; wikidata et commons doivent avoir fini (pas de code 3).
     if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && inputs.artifacts_run_id == '' && needs.select.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.wikidata.outputs.finished == 'true' && needs.commons.outputs.finished == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120 # ≈ 6 600 appels TextExtracts à l'échantillon 0,09, ≈ 35 min à 200/min
+    timeout-minutes: 120 # ≈ 3 200 appels TextExtracts à l'échantillon 0,045 : ≈ 55 min mesurées (≈ 58/min)
     permissions:
       contents: read
       actions: write # suppression des artefacts intermédiaires

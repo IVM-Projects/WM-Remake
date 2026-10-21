@@ -100,10 +100,79 @@ Format : ce qui a été tranché — coût si c'est faux.
 - R32 — Une vague de correction en trois agents successifs (ports du banc partagés) : A auth et navigation (`URL.canParse`, navigation de document après chaque succès d'auth, adresse hors de l'URL, codes d'erreur hébergés, boutons d'envoi `aria-disabled` après l'hydratation) ; B interface de jeu (`userMessage` pour les 5xx, une Idempotency-Key par intention, stock vide annoncé, défausse après fermeture, favori gardé sur grille périmée, ouvreur de modale par montage, en-tête animé une fois, lien Wikipédia de 44 px) ; C base, tests, CI et docs (`where true` pour pg-safeupdate, rejeu et concurrence des paquets Pro, spéciaux et de grâce, téléchargements réessayés et mis en cache, journaux de CI en échec, passation). Différé : `maskPath` sur segment littéral (journaux seulement). Base de démo (Step 4) avant la fusion (Step 3), sonde du cache de schéma au Step 7 — un cycle de revue de plus avant la démo.
 - R33 — Dernier tour de code avant la démo : focus gardé quand le dernier paquet part sans réponse, modale fermée seulement si c'est elle qui a lancé la défausse finie page masquée (comparaison par référence), formulaires d'auth en `method="post"`, limite par IP traduite, clé d'idempotence gardée tant qu'aucune réponse n'est lue et oubliée quand le stock est vide, solde relu après une défausse tardive, clés de lots valables seulement pour le reste laissé sélectionné, erreurs 5xx connues affichées avec leur texte. Différés : grep de garde contre un DML sans WHERE, statut du Pro du jour non relu après un échec incertain — une revue courte de plus.
 
+## Décisions du plan M2
+
+- M2-1 — Échantillon par quota exact par rareté : pages classées par FNV-1a 32 bits du `page_id`, on garde les `round(rate × n_r)` premières (au moins 1) : l'écart de part est ≤ 1 / n_r par construction, là où un seuil de hachage ferait varier les L d'environ 7,6 % relatif.
+- M2-2 — `pct()` sur le catalogue complet, avant l'échantillonnage : ATK, DEF et Q-Score d'une carte ne dépendent pas du mode, un passage `full` ultérieur donne les mêmes valeurs.
+- M2-3 — Taux d'échantillon mesuré sur le banc, pas supposé : base de démo ≤ 350 Mo, `load` refuse au-delà de 450 Mo hors cible `pro` ; le design visait ≈ 9 %, l'estimation dépassait les 500 Mo du plan Free (lecture seule, 25006).
+- M2-4 — Badge AdQ/BA lu dans `page_props` (`wikibase-badge-Q17437796` → 1, `…798` → 0,6) : pas de parseur de modèles ; Cirrus ne sert qu'à `text_bytes`, `incoming_links` et `opening_text`.
+- M2-5 — Cirrus lu en entier pour les nombres (21 parts en matrice), filtré pour le texte : `pct()` a besoin de toutes les pages, le texte seulement des pages retenues ; repli TextExtracts si le format change.
+- M2-6 — Wikidata et Commons seulement pour les pages retenues, 3 requêtes en vol et 200 démarrages par minute au plus, `maxlag=5`, reprise par `actions/cache` : l'étiquette Wikimedia est tenue et le mode `full` se découpe en runs reprenables.
+- M2-7 — Fixtures en deux couches, `raw/` (tranches cohérentes des vraies sources sur ≈ 300 `page_id`, produites une fois par Actions et commitées) et `expected/` (CSV de référence) : le bac à sable n'atteint pas les dumps, les tests rejouent de vraies données.
+- M2-8 — `catalog.yml` fusionné tôt dans `develop` : `workflow_dispatch` exige le fichier sur la branche par défaut ; `persist-credentials: false` sur chaque `checkout`.
+- M2-9 — Fusion par lots (`wm.catalog_merge(p_mode, p_limit)`, une transaction par lot), finalisation à part (`wm.catalog_finalize`) : un lot court ne tient pas de verrou longtemps, jamais de `delete` sur `public.cards`, `catalog_frozen` arrête tout.
+- M2-10 — Pool par *swap-with-last* (`wm.pool_add`, `wm.pool_remove`) dans la transaction du merge : le pool reste dense, `cards_page` et le tirage en dépendent.
+- M2-11 — Tirage pur `wm.pick_card` sorti de `draw_cards`, χ² déterministe par `setseed(0.42)` sur 100 000 appels dans `test:db`, et une fois sans `setseed` sur la démo : un test stable et une preuve sur les vraies données.
+- M2-12 — Cartes d'essai : hors du pool au premier vrai `catalog_finalize` sur la démo, gardées dans `public.cards` (copies d'un joueur : 18 à la décision, 80 au chargement du 2026-10-21 ; clés étrangères NO ACTION) ; leur suppression est une étape humaine différée ; le banc garde le seed comme catalogue de développement.
+- M2-13 — Catalogue = cartes du pool, recherche comprise : sinon cartes d'essai et cartes retirées resteraient visibles ; `rest/v1/cards` inchangé.
+- M2-14 — Cache de `/api/cards` : partie partagée `wm.cards_page_shared` en `'use cache: remote'` (tag `catalog`, une heure), overlay par joueur `wm.cards_overlay` non caché, chemin par joueur pour `wishlist` et `missing` ; contrat de réponse inchangé.
+- M2-15 — `POST /api/cron/revalidate` : `x-cron-secret` comparé en temps constant, secret absent → 503 (échec fermé), mauvais → 401, sinon `revalidateTag('catalog', 'max')` ; appelé en fin de `load`.
+- M2-16 — Crédits : `GET /api/cards/[id]/credits` depuis `wm.card_media`, caché au CDN ; la modale affiche « Image : <auteur>, <licence> » ; page `/credits` (sources, licences, `stats_v1`, mention d'indépendance), sans liste des images.
+- M2-17 — Secrets : GitHub `SUPABASE_DB_URL` (pooler en mode session, port 5432) et `CRON_SECRET`, Vercel `CRON_SECRET`, posés par l'humain ; essai `\copy` de 10 lignes avant le chargement, car le passage de `\copy` par le pooler n'était pas vérifié.
+- M2-18 — Migrations de démo : MCP sans `DELETE`, SQL Editor avec (`1500`, `1510`), puis ligne d'historique et `notify pgrst, 'reload schema'` ; migrations avant la fusion dans `develop` (R32).
+- M2-19 — Pipeline en TypeScript effaçable sous Node 24 (`node catalog/src/cli.ts <job>`), sans dépendance npm ; `lbzip2` pour le bz2 dans Actions ; tests vitest.
+- M2-20 — Hérités pris au M2 : `persist-credentials: false`, garde contre un `DELETE`/`UPDATE` sans `WHERE` dans les migrations (`scripts/check-dml.ts`, `test:db`), seuils de rareté dans `lib/rarity.ts` partagés par le pipeline et « Comment ça marche ? », renommage d'article non répercuté mais compté dans `catalog_runs`.
+
+## Décisions ajoutées par le plan M2
+
+- P1 — Job `select` entre `pageviews` et `text`/`wikidata`/`commons` : l'échantillon dépend des vues et les trois jobs en ont besoin.
+- P2 — `sample_rate` dans `wm.config` (C30), lu par `select` ; l'entrée de `catalog.yml` n'est qu'un forçage.
+- P3 — Deux tables de stage (`catalog_stage`, `catalog_stage_media`) et une table étroite `catalog_stage_result` (M2-R4) ; `catalog_finalize` refuse un stage vide ou inachevé (409), sinon un second appel viderait le pool.
+- P4 — Taille gardée avant le `\copy`, après le `\copy`, après chaque lot, avec les deux constantes mesurées (M2-3) ; cible `pro` jamais refusée.
+- P5 — Miniatures : image ≤ 330 px → original, nom > 160 octets → `330px-thumbnail.<ext>`, TIFF/PDF/DjVu → pas d'image (`shortcut:`).
+- P6 — Drapeau image du staff (`hide_image or nsfw_image`) : le merge ne touche ni `image_url` ni `card_media`.
+- P7 — Nouvelle page dont le titre appartient à une autre carte : pas insérée (`conflict`, compté) ; le renommage forcé est un outil staff (M6).
+- P8 — `wm.card_removals` créée vide et respectée par le merge et la finalisation ; son écriture arrive au M6.
+- P9 — Trois migrations selon le chemin de déploiement : `1500` et `1510` (avec `DELETE`), `1520` (sans le mot `delete`, même en commentaire).
+- P10 — `route()` gagne `call` (cache de `/api/cards`) et `headers` (posés sur un 200, crédits).
+- P11 — TextExtracts en complément (page sans ouverture utilisable) et en repli (`text_source: extracts`) ; `load` refuse le repli tant que `catalog_stats_frozen = false`, pour ne pas réécrire les stats avec des liens entrants absents.
+- P12 — `schedule` mensuel (le 3) ajouté seulement après le premier chargement réussi (ajouté le 2026-10-21 après le run 39615766155, actif dès la fusion dans `develop`).
+- P13 — Fichiers d'aide `tsv.ts` et `http.ts` : un seul format TSV, un seul client limité pour les trois API.
+- P14 — Erreurs P0001 de la partie partagée rendues, pas levées : une erreur levée dans `'use cache: remote'` perd son `code` et devient un 500.
+- P15 — Pas d'image sans licence : `image_url` nul et pas de ligne `media.csv` ; auteur = `Attribution`, sinon `Artist`, en texte brut ; `license_url` seulement en `http(s)`.
+- P16 — Budget d'API partagé entre `wikidata` et `commons` qui tournent ensemble (répartition finale 1 + 2 en vol, M2-R10), `maxlag` hors du compte des nouvelles tentatives.
+- P17 — User-Agent `WMRCatalog/1.0` avec l'URL du dépôt comme contact, sans la marque d'origine.
+
+## Rulings du M2
+
+Format : ce qui a été tranché — coût si c'est faux.
+
+- M2-R1 — Le dépôt reste **public** (décision de l'utilisateur du 2026-10-21 : Vercel Hobby ne déploie pas le dépôt privé d'une organisation). Les faits du plan pour un dépôt public tiennent (minutes Actions gratuites, pas de quota d'artefacts, artefacts et journaux visibles de tous) ; les nouveaux fichiers ne nomment ni la marque d'origine ni le pitch au-delà de ce que les docs disaient déjà ; C31 « dépôt privé » est remplacé — aucun (choix éclairé de l'utilisateur).
+- M2-R2 — Valeur de test du brief de la Task 2 corrigée : 130 + 5 vues ne font pas une R (seuil 250), le test prend 245 + 5 = 250 → R — aucun (test).
+- M2-R3 — Client Wikimedia : rejets réseau, corps coupés et 500/502/503/504 transitoires (5 s doublées jusqu'à 120 s, dans les 8 nouvelles tentatives) ; délai de 60 s par requête ; 429 et 503 avec `Retry-After` respectés exactement, hors du compte, sur un budget de 30 min par requête comme `maxlag`, chaque attente plafonnée à 15 min ; `Retry-After: 0` → attente croissante (sinon boucle infinie) ; qids `^Q\d+$` seulement ; sortie en code 1 qui arrête la file ; listing Cirrus réessayé 3 fois. Raison : un run de plusieurs heures ne doit pas mourir sur une coupure — un run plus long quand Wikimedia limite.
+- M2-R4 — `result` dans une table étroite `wm.catalog_stage_result` au lieu de la ligne du stage : écrire la ligne de 500 octets réécrivait tout le stage (98 Mo pour 100 k lignes au lieu de ≈ 50, pic invisible à une mesure faite après le `truncate`). Lots de 10 000 au lieu de 50 000 (chaîne de versions de `catalog_stats` courte par transaction), `p_limit` nul ou < 1 → 400 ; boucle du pool par carte gardée (`shortcut:`, insertion en masse si le mode `full` est trop lent) — une réécriture de migration avant application.
+- M2-R5 — Une ouverture Cirrus qui commence par le titre suivi d'une majuscule ou d'un chiffre, ou par un marqueur fixe d'infobox, compte comme absente et passe par TextExtracts ; un seul prédicat partagé par `cirrus` et `fixtures fetch` ; notes entre crochets et « Écouter » retirées. Raison : 35 % puis 48 % des ouvertures de la tranche commençaient par du texte d'infobox. Rejeté : couper à la seconde occurrence du titre (échoue sur les taxobox) — ≈ 53 % des pages par TextExtracts (≈ 6 600 appels à 0,09, ≈ 65 000 en mode `full`).
+- M2-R6 — Aucune image du dépôt local de frwiki : les 6 fichiers locaux de la tranche sont des logos de marque non libres ou sans licence, et `extmetadata` ne porte aucun drapeau NonFree pour les filtrer ; Commons n'héberge que du contenu libre — un rare fichier local libre (domaine public en France seulement) reste sans image.
+- M2-R7 — `incoming_links` absent = inconnu, pas zéro (il manque sur 33 des 40 pages de `page_id` ≥ 15 M de la tranche, sur aucune en dessous) : `\N` dans le TSV, percentile des liens calculé sur les valeurs connues, inconnu → 0,5 ; une page absente de Cirrus a `text_bytes = len` et des liens inconnus. Sans cela, tout article des deux dernières années recevait le plus bas percentile de liens — articles récents un peu sur- ou sous-notés sur un des trois poids.
+- M2-R8 — Commons avec 2 requêtes en vol (100 démarrages par minute restent le plafond) : à 1 en vol, un lot plus lent qu'≈ 6,6 s pousse ≈ 3 000 lots au-delà de l'échéance du job — 4 requêtes en vol au total, ramenées à 3 par M2-R10.
+- M2-R9 — Chargeur : les trois tables de stage vidées d'abord (un chargement interrompu bloquait tous les suivants) ; revalidation dès que l'étape de chargement a tourné (cache périmé sinon après un échec qui a écrit) ; écart de parts contrôlé avant toute écriture ; garde avant copie qui compte les nouvelles cartes ; mot de passe coupé au dernier `@`, `@ / ? #` non encodés refusés sans jamais être imprimés ; NaN refusé ; stderr journalisé ; `header match`. Ordre fixé : Task 13 (mesure, constantes, `sample_rate`) avant le premier chargement — un cycle de correction de plus.
+- M2-R10 — Vague finale après la revue de la branche : une continuation faite seulement de `{continue, iistart}` (titre seul dont le fichier a d'anciennes versions) acceptée, `iicontinue` reste fatale (sinon `commons` rouge à chaque relance du mois sur ≈ 0,5 à 1 % des runs) ; crédit d'image lié à la page du fichier Commons, « voir la page du fichier » sans auteur (CC BY-SA demande l'auteur et un lien vers l'œuvre), mots longs coupés ; `/credits` dit que les textes sont des extraits abrégés (CC BY-SA 4.0 §3(a)(1)(B)) ; Wikidata à 1 requête en vol (1 + 2 ≤ 3) ; User-Agent du projet sur chaque `curl` Wikimedia — un petit diff.
+
 ## Écart au design
 
 - Écart : tables miroir créées par domaine, au jalon qui les utilise (M0 cœur, M3 marché, M4 échanges et social, M5 batailles, guildes, progression) au lieu d'un seul `0001` complet : ne figer aucune colonne sans le contexte de son domaine.
 - C9 : échantillon de 0,045 au lieu de ≈ 9 % (M2-3, mesure du 2026-10-21).
+- C31 : dépôt **public** au lieu de « dépôt privé » (M2-R1, décision de l'utilisateur) ; minutes Actions gratuites, artefacts et journaux visibles de tous (aucun secret imprimé), marque d'origine et pitch absents des nouveaux fichiers.
+- C9 et D§10.2 : quota par rang de hachage au lieu de « hachage du `page_id` < 9 % » (M2-1).
+- D§10.2 : badge lu dans `page_props`, pas dans les modèles de Cirrus (M2-4) ; dump Cirrus au nouvel emplacement `other/cirrus_search_index/`, en 21 parts (M2-5) ; 3 requêtes en vol au lieu de 4 (M2-6, plafond 2026 de Wikimedia) ; `catalog_merge(p_mode, p_limit)` en boucle puis `catalog_finalize` au lieu d'un seul appel (M2-9) ; `cards.csv` sans `id`, `hide_image`, `nsfw_image` ni `created_at`, avec `page_id`, au lieu des « colonnes miroir exactes ».
+- D§10.2 et M2-6 : images locales de frwiki abandonnées, Commons seulement (M2-R6).
+- D§10.2 : les ouvertures d'infobox de Cirrus passent par TextExtracts (M2-R5), qui devient la source de ≈ 53 % des résumés au lieu d'un complément rare (55 % mesuré sur l'échantillon chargé le 2026-10-21).
+- D§10.1 : un `incoming_links` inconnu reçoit le percentile neutre 0,5 au lieu d'être lu comme 0 (M2-R7).
+- D§10.4 : tranches cohérentes sur un même ensemble de pages au lieu de la « tête de chaque vrai dump » (M2-7).
+- D§10.3.1 : un nouvel article dont le titre appartient déjà à une autre carte ne reçoit pas de carte (P7).
+- D§10.1 : en repli TextExtracts, `stats_v1` n'a plus les liens entrants ; le chargement l'interdit tant que les statistiques ne sont pas gelées (P11).
+- M1 → M2 : une carte hors pool n'apparaît plus en recherche, en liste de souhaits (ni dans son total) ni en « manquantes » (M2-13).
+- C24 : une partie des migrations passe par le SQL Editor, pas par le MCP (M2-18) ; au déploiement, `1500`, `1510` et `1520` sont passées ensemble par le SQL Editor.
 
 ## Résultats des vérifications du M0
 
