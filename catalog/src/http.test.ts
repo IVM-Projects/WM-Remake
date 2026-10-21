@@ -66,19 +66,84 @@ test('maxlag hors du compte des nouvelles tentatives, au moins 5 s, jusqu’à 3
   expect(sleep.mock.calls.reduce((sum, [ms]) => sum + ms, 0)).toBe(30 * 60_000)
 })
 
-test('une autre erreur dans un corps 200 est rejetée tout de suite', async () => {
+test('une autre erreur dans un corps 200 est rejetée tout de suite ; sans code → info, puis « erreur inconnue »', async () => {
   const fetchImpl = replies(() => json({ error: { code: 'toomanyvalues', info: 'Too many values' } }))
   const err = await settle(createClient({ fetchImpl, sleep }).get(URL_A))
   expect(err).toEqual(new Error(`Wikimedia : toomanyvalues sur ${URL_A}`))
   expect(sleep).not.toHaveBeenCalled()
+
+  const info = replies(() => json({ error: { info: 'Bad request' } }))
+  expect(await settle(createClient({ fetchImpl: info, sleep }).get(URL_A))).toEqual(new Error(`Wikimedia : Bad request sur ${URL_A}`))
+  const bare = replies(() => json({ error: {} }))
+  expect(await settle(createClient({ fetchImpl: bare, sleep }).get(URL_A))).toEqual(
+    new Error(`Wikimedia : erreur inconnue sur ${URL_A}`),
+  )
 })
 
-test('9 refus 429 → abandon après 8 nouvelles tentatives, attente plafonnée à 120 s ; 404 → rejet immédiat', async () => {
-  const refused = replies(() => json({}, 429))
-  const err = await settle(createClient({ fetchImpl: refused, sleep }).get(URL_A))
-  expect(err).toEqual(new Error(`Wikimedia : abandon après 8 nouvelles tentatives (429) sur ${URL_A}`))
-  expect(refused).toHaveBeenCalledTimes(9)
+test('fetch rejeté deux fois (réseau), puis 200 → résolu ; chaque requête porte un délai', async () => {
+  const fetchImpl = replies(
+    () => {
+      throw new TypeError('fetch failed')
+    },
+    () => {
+      throw new TypeError('fetch failed')
+    },
+    () => json({ ok: 1 }),
+  )
+  expect(await settle(createClient({ fetchImpl, sleep }).get(URL_A))).toEqual({ ok: 1 })
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([5000, 10000])
+  for (const [, init] of fetchImpl.mock.calls) expect(init?.signal).toBeInstanceOf(AbortSignal)
+})
+
+test('délai dépassé et corps coupé comptent comme des échecs réseau', async () => {
+  const timeout = replies(() => {
+    throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+  }, () => json({ ok: 1 }))
+  expect(await settle(createClient({ fetchImpl: timeout, sleep }).get(URL_A))).toEqual({ ok: 1 })
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([5000])
+
+  sleep.mockClear()
+  const cut = () =>
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode('{"ok"'))
+          c.error(new TypeError('terminated'))
+        },
+      }),
+      { status: 200 },
+    )
+  const cutBody = replies(cut, () => json({ ok: 1 }))
+  expect(await settle(createClient({ fetchImpl: cutBody, sleep }).get(URL_A))).toEqual({ ok: 1 })
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([5000])
+})
+
+test('200 qui n’est pas du JSON → « réponse illisible », sans nouvelle tentative', async () => {
+  const fetchImpl = replies(() => new Response('<html>Erreur</html>', { status: 200 }))
+  expect(await settle(createClient({ fetchImpl, sleep }).get(URL_A))).toEqual(new Error(`Wikimedia : réponse illisible sur ${URL_A}`))
+  expect(fetchImpl).toHaveBeenCalledTimes(1)
+  expect(sleep).not.toHaveBeenCalled()
+})
+
+test('500, 502, 503 et 504 sans Retry-After → réessayés (5 s doublées), puis OK', async () => {
+  const fetchImpl = replies(() => json({}, 502), () => json({}, 503), () => json({}, 504), () => json({}, 500), () => json({ ok: 1 }))
+  expect(await settle(createClient({ fetchImpl, sleep }).get(URL_A))).toEqual({ ok: 1 })
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([5000, 10000, 20000, 40000])
+})
+
+test('9 échecs passagers → abandon après 8 nouvelles tentatives, attente plafonnée à 120 s ; 404 → rejet immédiat', async () => {
+  const failing = replies(() => json({}, 500))
+  const err = await settle(createClient({ fetchImpl: failing, sleep }).get(URL_A))
+  expect(err).toEqual(new Error(`Wikimedia : abandon après 8 nouvelles tentatives (500) sur ${URL_A}`))
+  expect(failing).toHaveBeenCalledTimes(9)
   expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([5000, 10000, 20000, 40000, 80000, 120000, 120000, 120000])
+
+  const offline = replies(() => {
+    throw new TypeError('fetch failed')
+  })
+  expect(await settle(createClient({ fetchImpl: offline, sleep }).get(URL_A))).toEqual(
+    new Error(`Wikimedia : abandon après 8 nouvelles tentatives (réseau) sur ${URL_A}`),
+  )
 
   sleep.mockClear()
   const missing = replies(() => new Response('Not Found', { status: 404 }))
@@ -87,6 +152,40 @@ test('9 refus 429 → abandon après 8 nouvelles tentatives, attente plafonnée 
   )
   expect(missing).toHaveBeenCalledTimes(1)
   expect(sleep).not.toHaveBeenCalled()
+})
+
+test('rafale de 429 hors des 8 tentatives : Retry-After respecté, budget de 30 min, attente ≤ 15 min', async () => {
+  const throttled = (ra: string) => () => json({}, 429, { 'retry-after': ra })
+  const storm = replies(...Array.from({ length: 20 }, () => throttled('23')), () => json({ ok: 1 }))
+  expect(await settle(createClient({ fetchImpl: storm, sleep }).get(URL_A))).toEqual({ ok: 1 })
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual(Array(20).fill(23_000))
+
+  sleep.mockClear()
+  const endless = replies(throttled('23'))
+  expect(await settle(createClient({ fetchImpl: endless, sleep }).get(URL_A))).toEqual(
+    new Error(`Wikimedia : ralentissement persistant (429) sur ${URL_A}`),
+  )
+  const waits = sleep.mock.calls.map(([ms]) => ms)
+  expect(waits.reduce((sum, ms) => sum + ms, 0)).toBe(30 * 60_000)
+  expect(waits.at(-1)).toBe(30 * 60_000 - 78 * 23_000)
+
+  sleep.mockClear()
+  const hour = replies(throttled('3600'))
+  expect(await settle(createClient({ fetchImpl: hour, sleep }).get(URL_A))).toEqual(
+    new Error(`Wikimedia : ralentissement persistant (429) sur ${URL_A}`),
+  )
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([15 * 60_000, 15 * 60_000])
+})
+
+test('un appel rejeté rend sa place : 4 appels, le premier reçoit un 404, les 4 démarrent', async () => {
+  let i = 0
+  const fetchImpl = vi.fn(() => (i++ === 0 ? Promise.resolve(new Response('', { status: 404 })) : new Promise<Response>(() => {})))
+  const client = createClient({ fetchImpl, sleep })
+  const first = client.get(`${URL_A}0`).catch((err: Error) => err)
+  for (let n = 1; n < 4; n++) void client.get(`${URL_A}${n}`)
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(await first).toEqual(new Error(`Wikimedia : HTTP 404 sur ${URL_A}0`))
+  expect(fetchImpl).toHaveBeenCalledTimes(4)
 })
 
 test('10 appels lancés ensemble → jamais plus de requêtes en vol que permis', async () => {

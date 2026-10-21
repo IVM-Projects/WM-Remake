@@ -1,9 +1,14 @@
-// Client des API Wikimedia (Wikidata, Commons, frwiki) : concurrence, débit, 429/503, maxlag (Global Constraints, P16).
+// Client des API Wikimedia (Wikidata, Commons, frwiki) : concurrence, débit, échecs passagers, ralentissement, maxlag
+// (Global Constraints, P16, M2-R3).
 export const USER_AGENT = 'WMRCatalog/1.0 (https://github.com/IVM-Projects/wm-remake) node/24'
 
 export type Client = { get(url: string): Promise<unknown> }
 
-const MAXLAG_BUDGET_MS = 30 * 60_000
+const TIMEOUT_MS = 60_000
+const BUDGET_MS = 30 * 60_000 // par requête, pour le ralentissement (429, 503 avec Retry-After) comme pour maxlag
+const MAX_WAIT_MS = 15 * 60_000
+const TRANSIENT = new Set([500, 502, 503, 504])
+const backoff = (k: number) => Math.min(5000 * 2 ** k, 120_000)
 
 // Retry-After en secondes seulement ; une date HTTP est ignorée (repli sur l'attente par défaut).
 function retryAfterMs(res: Response): number | undefined {
@@ -41,34 +46,57 @@ export function createClient(o: {
   }
 
   async function attempt(url: string): Promise<unknown> {
-    let retries = 0
-    let lagged = 0
+    let retries = 0 // échecs passagers (réseau, délai, corps coupé, 5xx sans Retry-After) : comptés dans maxRetries
+    let throttles = 0
+    const left = { throttle: BUDGET_MS, maxlag: BUDGET_MS }
+
+    async function transient(what: string) {
+      if (retries >= maxRetries) throw new Error(`Wikimedia : abandon après ${maxRetries} nouvelles tentatives (${what}) sur ${url}`)
+      await sleep(backoff(retries++))
+    }
+    // Attente demandée par le serveur : hors maxRetries, ≤ 15 min, prise sur un budget de 30 min.
+    async function serverWait(kind: 'throttle' | 'maxlag', ms: number, message: string) {
+      if (left[kind] <= 0) throw new Error(message)
+      const wait = Math.min(ms, MAX_WAIT_MS, left[kind])
+      left[kind] -= wait
+      await sleep(wait)
+    }
+
     for (;;) {
       await startSlot()
-      const res = await fetchImpl(url, { headers: { 'User-Agent': USER_AGENT, 'Accept-Encoding': 'gzip' } })
-      if (res.status === 429 || res.status === 503) {
-        await res.body?.cancel()
-        if (retries >= maxRetries) {
-          throw new Error(`Wikimedia : abandon après ${maxRetries} nouvelles tentatives (${res.status}) sur ${url}`)
-        }
-        await sleep(retryAfterMs(res) ?? Math.min(5000 * 2 ** retries, 120_000))
-        retries++
+      let res: Response
+      let text = ''
+      try {
+        const init = { headers: { 'User-Agent': USER_AGENT, 'Accept-Encoding': 'gzip' }, signal: AbortSignal.timeout(TIMEOUT_MS) }
+        res = await fetchImpl(url, init)
+        if (res.ok) text = await res.text()
+        else await res.body?.cancel()
+      } catch {
+        await transient('réseau')
         continue
       }
-      if (!res.ok) {
-        await res.body?.cancel()
-        throw new Error(`Wikimedia : HTTP ${res.status} sur ${url}`)
-      }
-      const body = (await res.json()) as { error?: { code?: string } } | null
-      const code = body?.error?.code
-      if (code === 'maxlag') {
-        if (lagged >= MAXLAG_BUDGET_MS) throw new Error(`Wikimedia : maxlag persistant sur ${url}`)
-        const wait = Math.max(retryAfterMs(res) ?? 0, 5000)
-        lagged += wait
-        await sleep(wait)
+      const ra = retryAfterMs(res)
+      if (res.status === 429 || (res.status === 503 && ra !== undefined)) {
+        await serverWait('throttle', ra ?? backoff(throttles++), `Wikimedia : ralentissement persistant (${res.status}) sur ${url}`)
         continue
       }
-      if (body?.error) throw new Error(`Wikimedia : ${code} sur ${url}`)
+      if (TRANSIENT.has(res.status)) {
+        await transient(String(res.status))
+        continue
+      }
+      if (!res.ok) throw new Error(`Wikimedia : HTTP ${res.status} sur ${url}`)
+      let body: { error?: { code?: string; info?: string } } | null
+      try {
+        body = JSON.parse(text)
+      } catch {
+        throw new Error(`Wikimedia : réponse illisible sur ${url}`)
+      }
+      const error = body?.error
+      if (error?.code === 'maxlag') {
+        await serverWait('maxlag', Math.max(ra ?? 0, 5000), `Wikimedia : maxlag persistant sur ${url}`)
+        continue
+      }
+      if (error) throw new Error(`Wikimedia : ${error.code ?? error.info ?? 'erreur inconnue'} sur ${url}`)
       return body
     }
   }

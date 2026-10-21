@@ -54,5 +54,6 @@ try {
   if (result !== undefined) console.log(JSON.stringify(result))
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err))
-  process.exitCode = 1
+  // Arrêt net : les requêtes encore en file ne doivent pas continuer après l'échec.
+  process.exit(1)
 }

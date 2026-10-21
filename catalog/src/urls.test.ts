@@ -18,6 +18,9 @@ test('entitiesUrls : qids dédoublonnés, triés par valeur numérique, lots de 
   expect(urls[1]).toMatch(/&ids=Q51%7C/)
   expect(urls[2]).toMatch(/%7CQ120$/)
   expect(entitiesUrls([])).toEqual([])
+  expect(entitiesUrls(['Q42', 'q7', 'Q1a', '', 'P31', 'Q 5', 'Q1'])).toEqual([
+    'https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&maxlag=5&props=descriptions&languages=fr&ids=Q1%7CQ42',
+  ])
 })
 
 test('extractsUrls : page_id croissants, lots de 20', () => {
@@ -115,17 +118,34 @@ test('cirrusListing : le plus récent instantané avec _SUCCESS, 21 parts triée
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
-test('cirrusListing par défaut : User-Agent, dossier encore absent (404) sauté, autre erreur levée', async () => {
+test('cirrusListing par défaut : User-Agent et délai, 3 essais à 5 s sur réseau ou 5xx, dossier en 404 sauté', async () => {
+  vi.useFakeTimers({ now: 0 })
+  let rootCalls = 0
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     expect(new Headers(init?.headers).get('user-agent')).toBe(USER_AGENT)
+    expect(init?.signal).toBeInstanceOf(AbortSignal)
+    if (url === ROOT && ++rootCalls === 1) throw new TypeError('fetch failed')
+    if (url === ROOT && rootCalls === 2) return new Response('busy', { status: 503 })
     if (url.includes('20261018')) return new Response('Not Found', { status: 404 })
     return new Response(pages[url] ?? '', { status: url in pages ? 200 : 404 })
   })
   vi.stubGlobal('fetch', fetchMock)
-  expect(await cirrusListing()).toEqual({ date: '20261011', parts: PARTS('20261011') })
+  const listing = cirrusListing()
+  await vi.runAllTimersAsync()
+  expect(await listing).toEqual({ date: '20261011', parts: PARTS('20261011') })
+  expect(rootCalls).toBe(3)
+  expect(Date.now()).toBe(10_000)
 
-  vi.stubGlobal('fetch', vi.fn(async () => new Response('oops', { status: 500 })))
-  await expect(cirrusListing()).rejects.toThrow(`HTTP 500 sur ${ROOT}`)
+  const failing = vi.fn(async () => new Response('oops', { status: 500 }))
+  vi.stubGlobal('fetch', failing)
+  const down = cirrusListing().catch((err: Error) => err)
+  await vi.runAllTimersAsync()
+  expect(await down).toEqual(new Error(`Cirrus : HTTP 500 sur ${ROOT} après 3 essais`))
+  expect(failing).toHaveBeenCalledTimes(3)
+
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('Not Found', { status: 404 })))
+  await expect(cirrusListing()).rejects.toThrow(`Cirrus : listing des dumps introuvable sur ${ROOT}`)
 })
