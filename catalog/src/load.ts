@@ -15,10 +15,18 @@ type Target = 'free' | 'pro'
 
 // Supabase passe le plan Free en lecture seule à 500 Mo de cette somme : garde à 450 Mo (M2-3).
 export const MAX_BYTES = 450e6
-// shortcut: octets par carte (tas, index, pool, source, média) et par ligne de stage supposés, prudents ; remplacés par la mesure de la Task 13.
-export const BYTES_PER_CARD = 2_000
-export const STAGE_BYTES_PER_ROW = 1_500
+// Mesurés sur le banc (`measure`, Task 13, 2026-10-21 : 2 259 et 737 octets) + 10 % : carte avec tas, index, pool, source, média et
+// gonflement d'une mise à jour mensuelle ; ligne de stage avec son média.
+export const BYTES_PER_CARD = 2_485
+export const STAGE_BYTES_PER_ROW = 811
 export const SIZE_SQL = 'select sum(pg_database_size(datname))::bigint from pg_database'
+const VACUUM = 'vacuum (analyze) public.cards, wm.draw_pool, wm.card_source, wm.card_media'
+
+// Plus grand taux au pas de 0,005 : démo ≤ 350 Mo en régime établi, ≤ MAX_BYTES au pic du premier chargement (stage plein, M2-3).
+export function rateFor(o: { base: number; bytesPerCard: number; stageBytesPerRow: number; nFull: number }): number {
+  const cards = Math.min((350e6 - o.base) / o.bytesPerCard, (MAX_BYTES - o.base) / (o.bytesPerCard + o.stageBytesPerRow))
+  return Math.floor((cards / o.nFull) * 200) / 200
+}
 
 // `<=` : une taille illisible (NaN) est refusée.
 function guard(projection: number, target: Target): string | null {
@@ -155,7 +163,44 @@ export async function loadCommand(o: { dir: string; mode: Mode; target: Target; 
   const summary = JSON.parse(finalized) as Record<string, unknown> & { pool: Record<RarityCode, number>; frozen?: boolean }
   // Gel posé entre le dernier lot et la finalisation.
   if (summary.frozen) return frozen()
-  const [size2] = await psql(o.db, 'vacuum (analyze) public.cards, wm.draw_pool, wm.card_source, wm.card_media', SIZE_SQL)
+  const [size2] = await psql(o.db, VACUUM, SIZE_SQL)
   log(`base après chargement : ${size2} octets`)
   return { ...summary, share_gap: checkShares(summary.pool, counts.full) }
+}
+
+// Commande `measure` (M2-3) : fixtures répliquées `copies` fois et chargées comme par `load`, puis un passage « mensuel »
+// (pageviews + 1) dont le gonflement entre dans B ; pic = plus grande taille vue après \copy ou entre deux lots.
+export async function measureCommand(o: { db: string; csvDir: string; copies: number }) {
+  // Des centaines de milliers de cartes jamais supprimées (aucun delete sur public.cards) : jamais sur la démo.
+  if (!/\/wm_test(\?|$)/.test(o.db)) throw new Error('measure : base wm_test du banc seulement')
+  const [size0] = await psql(o.db, TRUNCATE, SIZE_SQL)
+  log(`base initiale : ${size0} octets`)
+  let peak = Number(size0)
+  // Sources en tables temporaires, supprimées avant la mesure ; page_id + k × 10^7, titre « (k) » : que des nouvelles cartes.
+  const pass = async (views: number) => {
+    const [staged, rows] = await psql(o.db,
+      'create temp table c (like wm.catalog_stage)', copy('c', CARD_CSV_COLUMNS, resolve(o.csvDir, 'cards.csv')),
+      'create temp table m (like wm.catalog_stage_media)', copy('m', MEDIA_CSV_COLUMNS, resolve(o.csvDir, 'media.csv')),
+      `insert into wm.catalog_stage select page_id + k * 10000000::bigint, wikipedia_title || ' (' || k || ')', wikipedia_url || '_(' || k || ')',
+        lang, rarity, atk, def, q_score, pageviews + ${views}, pageviews_refreshed_at, qscore_refreshed_at, category, summary, image_url
+        from c, generate_series(1, ${o.copies}) k order by k, page_id`,
+      `insert into wm.catalog_stage_media select page_id + k * 10000000::bigint, file, author, license, license_url
+        from m, generate_series(1, ${o.copies}) k order by k, page_id`,
+      'drop table c, m', SIZE_SQL, 'select count(*) from wm.catalog_stage')
+    log(`stage : ${rows} lignes, base ${staged} octets`)
+    peak = Math.max(peak, Number(staged))
+    for (;;) {
+      const [merged, size] = await psql(o.db, "select wm.catalog_merge('sample')", SIZE_SQL)
+      if ((JSON.parse(merged) as { processed: number }).processed === 0) break
+      peak = Math.max(peak, Number(size))
+    }
+    await psql(o.db, "select wm.catalog_finalize('sample')")
+    const [size] = await psql(o.db, VACUUM, SIZE_SQL)
+    log(`après fusion, finalisation et vacuum : base ${size} octets, pic ${peak} octets`)
+    return { rows: Number(rows), staged: Number(staged), size: Number(size) }
+  }
+  const first = await pass(0)
+  const { size } = await pass(1)
+  const perRow = (bytes: number) => Math.ceil((bytes - Number(size0)) / first.rows)
+  return { rows: first.rows, stageBytesPerRow: perRow(first.staged), bytesPerCard: perRow(size), peakBytesPerRow: perRow(peak) }
 }

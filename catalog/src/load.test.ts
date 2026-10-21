@@ -2,28 +2,28 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
-import { checkTextSource, firstCsvRecords, guardAfterCopy, guardBatch, guardBeforeCopy, maxShareGap } from './load.ts'
+import { checkTextSource, firstCsvRecords, guardAfterCopy, guardBatch, guardBeforeCopy, maxShareGap, measureCommand, rateFor } from './load.ts'
 
 const root = await mkdtemp(join(tmpdir(), 'wm-load-'))
 afterAll(() => rm(root, { recursive: true, force: true }))
 
 test('guardBeforeCopy : stage et cartes au-delà des pages liées projetés, cible pro sans garde', () => {
-  // Premier passage : 440e6 + 250 000 × (1 500 + 2 000).
-  expect(guardBeforeCopy(440e6, 250_000, 0, 'free')).toBe('Base trop pleine pour la cible free : 1315000000 octets projetés (limite 450000000)')
+  // Premier passage : 440e6 + 250 000 × (811 + 2 485).
+  expect(guardBeforeCopy(440e6, 250_000, 0, 'free')).toBe('Base trop pleine pour la cible free : 1264000000 octets projetés (limite 450000000)')
   // Le stage seul franchirait déjà 450e6, même sans nouvelle carte.
-  expect(guardBeforeCopy(440e6, 250_000, 250_000, 'free')).toBe('Base trop pleine pour la cible free : 815000000 octets projetés (limite 450000000)')
+  expect(guardBeforeCopy(440e6, 250_000, 250_000, 'free')).toBe('Base trop pleine pour la cible free : 642750000 octets projetés (limite 450000000)')
   // Second passage identique : aucune nouvelle carte, le stage seul passe ; au premier passage, 100 000 cartes franchiraient.
   expect(guardBeforeCopy(250e6, 100_000, 100_000, 'free')).toBeNull()
-  expect(guardBeforeCopy(250e6, 100_000, 0, 'free')).toBe('Base trop pleine pour la cible free : 600000000 octets projetés (limite 450000000)')
+  expect(guardBeforeCopy(250e6, 100_000, 0, 'free')).toBe('Base trop pleine pour la cible free : 579600000 octets projetés (limite 450000000)')
   // Plus de pages liées que de lignes : aucune carte retranchée de la projection.
-  expect(guardBeforeCopy(440e6, 10_000, 300_000, 'free')).toBe('Base trop pleine pour la cible free : 455000000 octets projetés (limite 450000000)')
+  expect(guardBeforeCopy(445e6, 10_000, 300_000, 'free')).toBe('Base trop pleine pour la cible free : 453110000 octets projetés (limite 450000000)')
   expect(guardBeforeCopy(440e6, 250_000, 0, 'pro')).toBeNull()
 })
 
 test('guardAfterCopy : stage compris dans la taille, seules les nouvelles cartes projetées', () => {
   expect(guardAfterCopy(440e6, 0, 'free')).toBeNull()
   expect(guardAfterCopy(250e6, 0, 'free')).toBeNull()
-  expect(guardAfterCopy(440e6, 10_000, 'free')).toBe('Base trop pleine pour la cible free : 460000000 octets projetés (limite 450000000)')
+  expect(guardAfterCopy(440e6, 10_000, 'free')).toBe('Base trop pleine pour la cible free : 464850000 octets projetés (limite 450000000)')
   expect(guardAfterCopy(440e6, 10_000, 'pro')).toBeNull()
 })
 
@@ -58,4 +58,15 @@ test('firstCsvRecords : en-tête et n enregistrements entiers, saut de ligne gui
   expect(await firstCsvRecords(path, 2)).toBe(header + records.slice(0, 2).join(''))
   expect(await firstCsvRecords(path, 3)).toBe(header + records.slice(0, 3).join(''))
   expect(await firstCsvRecords(path, 50)).toBe(header + records.join(''))
+})
+
+test('rateFor : plus grand taux au pas de 0,005 sous 350 Mo établis et 450 Mo au pic du premier chargement (M2-3)', () => {
+  // Pic : (450e6 − 16e6) / (1 400 + 900) = 188 695 cartes, soit 0,068 ; régime établi : 238 571 cartes.
+  expect(rateFor({ base: 16e6, bytesPerCard: 1400, stageBytesPerRow: 900, nFull: 2_773_461 })).toBe(0.065)
+  // Sans stage, le régime établi limite : 238 571 / 2 773 461 = 0,086.
+  expect(rateFor({ base: 16e6, bytesPerCard: 1400, stageBytesPerRow: 0, nFull: 2_773_461 })).toBe(0.085)
+})
+
+test('measureCommand : refusée hors de la base wm_test du banc, sans connexion', async () => {
+  await expect(measureCommand({ db: 'postgres://u:p@h:5432/postgres', csvDir: root, copies: 1 })).rejects.toThrow('measure : base wm_test du banc seulement')
 })

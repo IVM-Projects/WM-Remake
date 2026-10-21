@@ -68,7 +68,7 @@ do $$ begin
     and pg_temp.cols('wm.catalog_stage_result') = '{page_id,result}';
   assert pg_get_function_arguments('wm.catalog_merge'::regproc) = 'p_mode text, p_limit integer DEFAULT 10000';
   assert (select jsonb_object_agg(key, value) from wm.config where key in ('catalog_frozen', 'catalog_stats_frozen', 'sample_rate'))
-    = '{"catalog_frozen":false,"catalog_stats_frozen":false,"sample_rate":0.09}';
+    = '{"catalog_frozen":false,"catalog_stats_frozen":false,"sample_rate":0.045}';
 end $$;
 
 -- Premier passage : 6 cartes, 6 card_source, 3 card_media, une carte par rareté au pool, sans réécrire le stage (son tas doublerait) ;

@@ -115,3 +115,45 @@ Projet `iggurckxmoagsajzrnwd`, 2026-10-20. Ordre suivi (R32) : base, puis variab
 | Compte créé avant le trigger | `auth.users` sans `public.profiles` (inscription à 17:22 UTC sur la préversion de la branche, qui vise la même base, avant `1100` à 20:36) : `/pulls` affichait « Ton stock de paquets n'a pas pu être lu. » | Rattrapage par la règle de `wm.handle_new_user` (profil depuis `raw_user_meta_data` si consentement et pseudo valides, puis `wm.lock_user`) ; `sync_profile_packs` en `authenticated` rend 1/10, horloge démarrée ; plus aucun compte sans profil | 2026-10-20 |
 | Parcours d'un étudiant, mot de passe, déconnexion | après les étapes humaines de `docs/superpowers/HANDOFF.md` | *(à faire par un étudiant)* | … |
 | Clé JWT de la démo | en-tête `alg` d'une vraie session | *(après la première vraie inscription)* | … |
+
+## M2 — Task 13 : taille du catalogue
+
+Bac à sable, 2026-10-21, branche `claude/clever-cannon-59x0dj` (sur e2389cd). Banc : PG16 jetable de `scripts/db-test.sh --setup-only`, catalogue d'essai de 2 000 cartes compris (il s'annule dans les différences et sort du pool à la première finalisation). `measure` réplique 1 000 fois `catalog/fixtures/expected` (299 cartes, 181 médias) dans le stage (`page_id + k × 10^7`, titre suffixé de « (k) », URL de `_(k)`), fusionne par lots de 10 000, finalise et passe le `vacuum` du chargement, puis refait un passage « mensuel » où toutes les `pageviews` ont + 1.
+
+```bash
+eval "$(bash scripts/db-test.sh --setup-only)"
+node catalog/src/cli.ts measure --db "$DATABASE_URL" --csv-dir catalog/fixtures/expected --copies 1000
+bash scripts/db-test.sh --stop
+```
+
+Deux runs sur un banc neuf chacun (le second avec le code commité, qui ne relit plus la taille après le dernier `vacuum`) ; B varie avec l'autovacuum, le plus grand est retenu.
+
+```
+# run 1
+base initiale : 36625484 octets
+stage : 299000 lignes, base 256883788 octets
+après fusion, finalisation et vacuum : base 479681612 octets, pic 724204620 octets
+stage : 299000 lignes, base 699989068 octets
+après fusion, finalisation et vacuum : base 711826508 octets, pic 954334284 octets
+{"rows":299000,"stageBytesPerRow":737,"bytesPerCard":2259,"peakBytesPerRow":3070}
+# run 2
+base initiale : 36625484 octets
+stage : 299000 lignes, base 256883788 octets
+après fusion, finalisation et vacuum : base 480164940 octets, pic 724696140 octets
+stage : 299000 lignes, base 700472396 octets
+après fusion, finalisation et vacuum : base 702504012 octets, pic 954293324 octets
+{"rows":299000,"stageBytesPerRow":737,"bytesPerCard":2228,"peakBytesPerRow":3070}
+```
+
+| Élément | Méthode | Résultat | Date |
+|---|---|---|---|
+| Durée | `time` | 2 min 34 s et 2 min 37 s | 2026-10-21 |
+| Ligne de stage (S) | (taille après le stage − taille initiale) / lignes | 737 o, stage des médias compris ; 736,8 o au passage mensuel | 2026-10-21 |
+| Carte après le premier chargement | (taille après `vacuum` − taille initiale) / lignes | 1 482 o (run 2 : 1 483 o) | 2026-10-21 |
+| Carte après le passage mensuel (B) | même calcul après le second `vacuum` | 2 259 o (run 2 : 2 228 o), dont 776 o (744 o) de gonflement de la mise à jour complète (anciennes versions des lignes et des index : le `vacuum` rend la place sans réduire les fichiers) | 2026-10-21 |
+| Pic | plus grande `SIZE_SQL` vue après le stage et après chaque lot | premier chargement : 2 300 o/ligne (run 2 : 2 302 o), stage, cartes et résultats ; passage mensuel : 3 070 o/ligne aux deux runs, le maximum, couvert par B + S retenus (3 296 o) | 2026-10-21 |
+| Constantes | plus grandes mesures + 10 %, arrondies au-dessus | `BYTES_PER_CARD = 2_485`, `STAGE_BYTES_PER_ROW = 811` | 2026-10-21 |
+| `base` de la démo | `SIZE_SQL` relevé par le contrôleur (≈ 30 Mo) | 31 457 280 o (30 Mio) ; relu par le contrôleur avant le chargement | 2026-10-21 |
+| `nFull` | total du catalogue complet | 2 773 461 (ajusté par le contrôleur si le `counts.json` du run de la Task 9 diffère) | 2026-10-21 |
+| Taux | `rateFor` | régime établi : (350e6 − base) / 2 485 = 128 186 cartes ; pic : (450e6 − base) / 3 296 = 126 985 cartes, qui limite ; 126 985 / 2 773 461 = 0,0458 → `sample_rate` = 0,045 | 2026-10-21 |
+| Projection de la démo | 0,045 × 2 773 461 ≈ 124 806 cartes | avec les constantes : 341,6 Mo établis, 442,8 Mo au pic ; avec les mesures brutes : 313,4 Mo établis, 318,5 Mo au pic du premier chargement, 414,6 Mo au pic d'un passage mensuel | 2026-10-21 |
