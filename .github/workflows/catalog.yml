@@ -461,3 +461,52 @@ jobs:
               echo "Suppression de $name"
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
             done
+
+  # Chargement (M2-9, M2-17) puis revalidation du cache du catalogue (M2-15). Jamais deux chargements à la fois : le groupe
+  # `catalog` du workflow fait attendre tout autre run (un run en attente remplacé par un plus récent est annulé, pas lancé).
+  load:
+    needs: compute
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && (inputs.load || github.event_name == 'schedule') && (needs.compute.result == 'success' || inputs.artifacts_run_id != '') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      APP_URL: https://wmr-ivm.vercel.app
+    steps:
+      - name: Secrets
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          # Vérifiés avant de charger : sans CRON_SECRET, la base changerait sous un cache resté périmé.
+          [ -n "$SUPABASE_DB_URL" ] || { echo "::error::Secret SUPABASE_DB_URL absent (Settings → Secrets and variables → Actions)"; exit 1; }
+          [ -n "$CRON_SECRET" ] || { echo "::error::Secret CRON_SECRET absent (Settings → Secrets and variables → Actions)"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      # Par l'API : catalog-out de ce run, ou de artifacts_run_id (gardé 7 jours).
+      - uses: actions/download-artifact@v7
+        with:
+          name: catalog-out
+          path: out
+          run-id: ${{ inputs.artifacts_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Chargement
+        env:
+          MODE: ${{ inputs.mode || 'sample' }}
+          TARGET: ${{ inputs.target || 'free' }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          # Mot de passe masqué aussi seul : une erreur de psql peut citer un morceau de l'URL.
+          pw=${SUPABASE_DB_URL#*://*:}
+          echo "::add-mask::${pw%%@*}"
+          time node catalog/src/cli.ts load --dir out --mode "$MODE" --target "$TARGET" --db "$SUPABASE_DB_URL"
+
+      - name: Revalidation du cache du catalogue
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS --retry 3 --retry-all-errors --retry-delay 10 -X POST -H "x-cron-secret: $CRON_SECRET" "$APP_URL/api/cron/revalidate"

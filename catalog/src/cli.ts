@@ -7,6 +7,7 @@ import { computeCommand, selectCommand } from './compute.ts'
 import type { Mode } from './compute.ts'
 import { fetchCommand, pickCommand, readmeCommand, sliceCirrusCommand, slicePageviewsCommand, sliceSqlCommand } from './fixtures.ts'
 import { createClient } from './http.ts'
+import { loadCommand } from './load.ts'
 import { pageviewsCommand } from './pageviews.ts'
 import { dumpsCommand } from './sqldump.ts'
 import { wikidataCommand } from './wikidata.ts'
@@ -86,6 +87,12 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
     })
   },
   dumps: (v) => dumpsCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir') }),
+  load: (v) => {
+    const target = need(v, 'target')
+    if (target !== 'free' && target !== 'pro') throw new Error(`Option --target invalide : ${target} (free, pro)`)
+    // --db jamais cité dans un message : l'URL porte le mot de passe.
+    return loadCommand({ dir: need(v, 'dir'), mode: mode(v), target, db: need(v, 'db'), batch: positive(v, 'batch', 10_000) })
+  },
   pageviews: (v) => {
     // Options validées avant de lire stdin : sinon une option fausse attend la fin du flux.
     const dir = need(v, 'dir')
@@ -126,6 +133,7 @@ try {
       'cirrus-date': { type: 'string' }, 'dump-date': { type: 'string' }, part: { type: 'string' },
       'per-minute': { type: 'string' }, concurrency: { type: 'string' }, 'deadline-min': { type: 'string' },
       only: { type: 'string' }, out: { type: 'string' }, 'text-date': { type: 'string' }, 'text-source': { type: 'string' },
+      target: { type: 'string' }, db: { type: 'string' }, batch: { type: 'string' },
     },
   })
   const name = positionals.join(' ') // `fixtures pick` : commande en deux mots
