@@ -61,7 +61,8 @@ create table if not exists wm.grace_grants (
 );
 create index if not exists grace_grants_unclaimed_idx on wm.grace_grants (user_id, id) where claimed_at is null;
 
--- shortcut: reconstruction complète, ne sert plus qu'au seed du banc (ailleurs, pool_add et pool_remove de 1500) ; à retirer quand le seed passera par pool_add.
+-- shortcut: reconstruction complète, pour le seed du banc seulement (ailleurs, pool_add et pool_remove de 1500) ; jamais après un vrai
+-- chargement : elle remettrait au pool les cartes du seed et celles de card_removals. À retirer quand le seed passera par pool_add.
 create or replace function wm.rebuild_draw_pool()
 returns int language plpgsql security definer set search_path = '' as $$
 begin

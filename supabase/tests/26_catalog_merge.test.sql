@@ -33,11 +33,11 @@ create function pg_temp.restage() returns void language sql as $$
   select x.page_id, m.file, m.author, m.license, m.license_url from wm.card_source x join wm.card_media m on m.card_id = x.card_id;
 $$;
 create function pg_temp.card(p_page bigint) returns uuid language sql as $$ select card_id from wm.card_source where page_id = p_page $$;
-create function pg_temp.result(p_page bigint) returns text language sql as $$ select result from wm.catalog_stage where page_id = p_page $$;
+create function pg_temp.result(p_page bigint) returns text language sql as $$ select result from wm.catalog_stage_result where page_id = p_page $$;
 create function pg_temp.ids() returns uuid[] language sql as $$ select array_agg(card_id order by page_id) from wm.card_source $$;
 -- Colonnes de cards.csv où la carte diffère encore de sa ligne de stage.
 create function pg_temp.diff(p_page bigint) returns text[] language sql as $$
-  select array(select k from jsonb_each(to_jsonb(s) - 'page_id' - 'result') e (k, v) where v is distinct from to_jsonb(c) -> k order by k collate "C")
+  select array(select k from jsonb_each(to_jsonb(s) - 'page_id') e (k, v) where v is distinct from to_jsonb(c) -> k order by k collate "C")
   from wm.catalog_stage s, public.cards c where s.page_id = p_page and c.id = pg_temp.card(p_page)
 $$;
 create function pg_temp.media(p_card uuid) returns jsonb language sql as $$ select to_jsonb(m) - 'card_id' from wm.card_media m where card_id = p_card $$;
@@ -57,32 +57,39 @@ create function pg_temp.dense() returns boolean language sql as $$
   from unnest(enum_range(null::public.rarity)) r
 $$;
 
--- Interface du chargement (Task 12) : colonnes des stages dans l'ordre des CSV (result en dernier) ; clés de wm.config.
+-- Interface du chargement (Task 12) : colonnes des stages = celles des CSV, dans leur ordre ; lots de 10 000 par défaut ; clés de wm.config.
+create function pg_temp.cols(p_table regclass) returns text[] language sql as $$
+  select array(select attname::text from pg_attribute where attrelid = p_table and attnum > 0 and not attisdropped order by attnum)
+$$;
 do $$ begin
-  assert array(select attname::text from pg_attribute where attrelid = 'wm.catalog_stage'::regclass and attnum > 0 and not attisdropped
-               order by attnum) = '{page_id,wikipedia_title,wikipedia_url,lang,rarity,atk,def,q_score,pageviews,pageviews_refreshed_at,qscore_refreshed_at,category,summary,image_url,result}';
-  assert array(select attname::text from pg_attribute where attrelid = 'wm.catalog_stage_media'::regclass and attnum > 0 and not attisdropped
-               order by attnum) = '{page_id,file,author,license,license_url}';
+  assert pg_temp.cols('wm.catalog_stage')
+    = '{page_id,wikipedia_title,wikipedia_url,lang,rarity,atk,def,q_score,pageviews,pageviews_refreshed_at,qscore_refreshed_at,category,summary,image_url}';
+  assert pg_temp.cols('wm.catalog_stage_media') = '{page_id,file,author,license,license_url}'
+    and pg_temp.cols('wm.catalog_stage_result') = '{page_id,result}';
+  assert pg_get_function_arguments('wm.catalog_merge'::regproc) = 'p_mode text, p_limit integer DEFAULT 10000';
   assert (select jsonb_object_agg(key, value) from wm.config where key in ('catalog_frozen', 'catalog_stats_frozen', 'sample_rate'))
     = '{"catalog_frozen":false,"catalog_stats_frozen":false,"sample_rate":0.09}';
 end $$;
 
--- Premier passage : 6 cartes, 6 card_source, 3 card_media, une carte par rareté au pool ; finalize compte 6 insertions,
--- l'écrit dans catalog_runs et vide le stage.
-do $$ declare m jsonb; f jsonb; begin
+-- Premier passage : 6 cartes, 6 card_source, 3 card_media, une carte par rareté au pool, sans réécrire le stage (son tas doublerait) ;
+-- finalize compte 6 insertions, l'écrit dans catalog_runs et vide le stage.
+do $$ declare m jsonb; f jsonb; w bigint; begin
   perform pg_temp.base();
+  w := pg_stat_get_xact_tuples_updated('wm.catalog_stage'::regclass);
   m := wm.catalog_merge('sample');
   assert m = '{"processed":6,"frozen":false}', m::text;
+  assert pg_stat_get_xact_tuples_updated('wm.catalog_stage'::regclass) = w, 'stage réécrit';
   assert (select count(*) from public.cards) = 6 and (select count(*) from wm.card_source) = 6 and (select count(*) from wm.card_media) = 3,
     'cartes, sources ou médias manquants';
-  assert (select bool_and(pg_temp.diff(page_id) = '{}' and result = 'inserted') from wm.catalog_stage), 'carte insérée différente du stage';
+  assert (select bool_and(pg_temp.diff(page_id) = '{}' and pg_temp.result(page_id) = 'inserted') from wm.catalog_stage), 'carte insérée différente du stage';
   assert (select bool_and(pg_temp.media(pg_temp.card(page_id)) = to_jsonb(s) - 'page_id') from wm.catalog_stage_media s), 'média différent';
   assert (select jsonb_object_agg(rarity, n) from wm.catalog_stats) = '{"L":1,"UR":1,"SR":1,"R":1,"PC":1,"C":1}'
     and not exists (select from public.cards c where pg_temp.pooled(c.id) is distinct from c.rarity) and pg_temp.dense(), 'pool';
   f := wm.catalog_finalize('sample');
   assert f = '{"mode":"sample","staged":6,"inserted":6,"updated":0,"unchanged":0,"renamed":0,"conflicts":0,"pool_out":0,
                "pool":{"L":1,"UR":1,"SR":1,"R":1,"PC":1,"C":1}}', f::text;
-  assert not exists (select from wm.catalog_stage) and not exists (select from wm.catalog_stage_media), 'stage non vidé';
+  assert not exists (select from wm.catalog_stage) and not exists (select from wm.catalog_stage_media)
+    and not exists (select from wm.catalog_stage_result), 'stage non vidé';
   assert (select jsonb_agg(jsonb_build_array(mode, summary)) from wm.catalog_runs) = jsonb_build_array(jsonb_build_array('sample', f)), 'catalog_runs';
 end $$;
 
@@ -141,8 +148,18 @@ do $$ declare m2 jsonb := pg_temp.media(pg_temp.card(2)); m3 jsonb := pg_temp.me
   assert pg_temp.diff(3) = '{image_url}' and pg_temp.media(pg_temp.card(3)) = m3 and pg_temp.media(pg_temp.card(2)) = m2, 'drapeau image ignoré';
   assert pg_temp.media(pg_temp.card(1)) is null
     and pg_temp.media(pg_temp.card(5)) = '{"file":"Fusion_5.jpg","author":"Auteur 5","license":"CC0","license_url":null}', 'médias';
-  assert (select array_agg(result order by page_id) from wm.catalog_stage) = '{updated,unchanged,unchanged,unchanged,updated,unchanged}',
-    (select array_agg(result order by page_id) from wm.catalog_stage)::text;
+  assert (select array_agg(result order by page_id) from wm.catalog_stage_result) = '{updated,unchanged,unchanged,unchanged,updated,unchanged}',
+    (select array_agg(result order by page_id) from wm.catalog_stage_result)::text;
+  perform wm.catalog_finalize('sample');
+end $$;
+
+-- Média modifié d'une carte sans drapeau image (auteur, licence) : card_media suit le stage, et la carte compte comme mise à jour.
+do $$ begin
+  perform pg_temp.restage();
+  update wm.catalog_stage_media set author = 'Nouvel auteur', license = 'CC BY 4.0' where page_id = 5;
+  perform wm.catalog_merge('sample');
+  assert pg_temp.media(pg_temp.card(5)) = '{"file":"Fusion_5.jpg","author":"Nouvel auteur","license":"CC BY 4.0","license_url":null}'
+    and pg_temp.result(5) = 'updated' and pg_temp.diff(5) = '{}', coalesce(pg_temp.media(pg_temp.card(5))::text, 'aucun média');
   perform wm.catalog_finalize('sample');
 end $$;
 
@@ -220,7 +237,7 @@ do $$ declare s text; r bigint := (select count(*) from wm.catalog_runs); begin
   s := pg_temp.state();
   assert wm.catalog_merge('sample') = '{"processed":0,"frozen":true}' and wm.catalog_finalize('sample') = '{"frozen":true}', 'gel ignoré';
   assert pg_temp.state() = s and (select count(*) from wm.catalog_runs) = r
-    and (select count(*) > 0 and bool_and(result is null) from wm.catalog_stage), 'gel : quelque chose a changé';
+    and exists (select from wm.catalog_stage) and not exists (select from wm.catalog_stage_result), 'gel : quelque chose a changé';
   update wm.config set value = 'false' where key = 'catalog_frozen';
   truncate wm.catalog_stage, wm.catalog_stage_media;
 end $$;
@@ -252,9 +269,13 @@ do $$ declare g uuid; n bigint; o uuid[]; d jsonb; f jsonb; begin
     coalesce(d::text, 'accepté');
 end $$;
 
--- Mode inconnu ou absent → 400, pour la fusion comme pour la finalisation.
+-- Mode inconnu ou absent → 400, pour la fusion comme pour la finalisation ; taille de lot absente ou < 1 → 400.
 do $$ declare d jsonb := pg_temp.err($q$select wm.catalog_merge('x')$q$); begin
   assert d = '{"status":400,"code":"invalid_request","error":"Mode de chargement inconnu","message":"Mode de chargement inconnu"}',
     coalesce(d::text, 'accepté');
   assert pg_temp.err('select wm.catalog_merge(null)') = d and pg_temp.err($q$select wm.catalog_finalize('x')$q$) = d, 'mode absent accepté';
+  d := pg_temp.err($q$select wm.catalog_merge('sample', null)$q$);
+  assert d = '{"status":400,"code":"invalid_request","error":"Taille de lot invalide","message":"Taille de lot invalide"}', coalesce(d::text, 'accepté');
+  assert pg_temp.err($q$select wm.catalog_merge('sample', 0)$q$) = d and pg_temp.err($q$select wm.catalog_merge('sample', -1)$q$) = d,
+    'taille de lot < 1 acceptée';
 end $$;
