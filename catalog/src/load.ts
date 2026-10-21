@@ -26,8 +26,10 @@ function guard(projection: number, target: Target): string | null {
   return `Base trop pleine pour la cible ${target} : ${Math.round(projection)} octets projetés (limite ${MAX_BYTES})`
 }
 
-// Avant \copy : seul le stage est projeté ; les nouvelles cartes se comptent une fois le stage en base.
-export const guardBeforeCopy = (size: number, rows: number, target: Target): string | null => guard(size + rows * STAGE_BYTES_PER_ROW, target)
+// Avant \copy : le stage, et une carte par ligne au-delà des pages déjà liées (`linked` = lignes de card_source) ; la garde
+// d'après \copy compte les nouvelles pages exactement.
+export const guardBeforeCopy = (size: number, rows: number, linked: number, target: Target): string | null =>
+  guard(size + rows * STAGE_BYTES_PER_ROW + Math.max(0, rows - linked) * BYTES_PER_CARD, target)
 export const guardAfterCopy = (size: number, newRows: number, target: Target): string | null => guard(size + newRows * BYTES_PER_CARD, target)
 export const guardBatch = (size: number, target: Target): string | null => guard(size, target)
 
@@ -65,13 +67,23 @@ export async function firstCsvRecords(path: string, n: number): Promise<string> 
   return out
 }
 
+// `<=` : un écart illisible (NaN, pool vide) est refusé.
+function checkShares(pool: Record<RarityCode, number>, full: Record<RarityCode, number>): { points: number; relative: number } {
+  const gap = maxShareGap(pool, full)
+  if (!(gap.points <= 1)) throw new Error(`Parts de rareté hors tolérance : ${gap.points.toFixed(2)} points`)
+  return gap
+}
+
 const run = promisify(execFile)
+const log = (line: string) => console.error(line)
 
 // Une session par appel, sans délai d'instruction (M2-17) ; une ligne par résultat. Le message d'erreur d'execFile cite la
 // ligne de commande, donc l'URL : seule la sortie d'erreur de psql remonte.
 async function psql(db: string, ...commands: string[]): Promise<string[]> {
   try {
-    const { stdout } = await run('psql', [db, '-qAtX', '-v', 'ON_ERROR_STOP=1', '-c', 'set statement_timeout = 0', ...commands.flatMap((c) => ['-c', c])])
+    const { stdout, stderr } = await run('psql', [db, '-qAtX', '-v', 'ON_ERROR_STOP=1', '-c', 'set statement_timeout = 0', ...commands.flatMap((c) => ['-c', c])])
+    // Avertissements d'un appel réussi (vacuum « skipping », NOTICE) : jamais l'URL.
+    if (stderr.trim()) log(stderr.trim())
     return stdout.split('\n').slice(0, -1)
   } catch (err) {
     const e = err as { stderr?: string; code?: unknown }
@@ -79,31 +91,37 @@ async function psql(db: string, ...commands: string[]): Promise<string[]> {
   }
 }
 
-// Nom de fichier entre apostrophes pour \copy, apostrophe doublée.
+// Nom de fichier entre apostrophes pour \copy, apostrophe doublée ; header match (PG15+) : une colonne déplacée est refusée.
 const copy = (table: string, columns: readonly string[], file: string) =>
-  `\\copy ${table} (${columns.join(', ')}) from '${file.replaceAll("'", "''")}' with (format csv, header true)`
+  `\\copy ${table} (${columns.join(', ')}) from '${file.replaceAll("'", "''")}' with (format csv, header match)`
 // Les trois tables partout où le stage est vidé : un résultat resté d'un chargement interrompu ferait sauter sa page (M2-R4).
 const TRUNCATE = 'truncate wm.catalog_stage, wm.catalog_stage_media, wm.catalog_stage_result'
-const log = (line: string) => console.error(line)
 
 export async function loadCommand(o: { dir: string; mode: Mode; target: Target; db: string; batch?: number }): Promise<Record<string, unknown>> {
   const counts = JSON.parse(await readFile(join(o.dir, 'counts.json'), 'utf8')) as Counts & { text_source: 'cirrus' | 'extracts'; cards: number }
   // Artefacts d'un autre run possibles (artifacts_run_id).
   if (counts.mode !== o.mode) throw new Error(`Mode ${o.mode} différent de celui de catalog-out (${counts.mode})`)
-  const [statsFrozen, size0, walOk] = await psql(o.db, "select value from wm.config where key = 'catalog_stats_frozen'", SIZE_SQL,
-    "select has_function_privilege('pg_ls_waldir()', 'execute')")
+  // Échantillon hors tolérance refusé avant toute écriture ; le contrôle sur le pool, après finalisation, reste l'alarme.
+  checkShares(counts.selected, counts.full)
+  // Stage vidé avant de mesurer : laissé plein par un chargement interrompu, il compterait deux fois et bloquerait toute
+  // cible free. Sans risque : jamais deux chargements à la fois (groupe catalog) et un stage ne sert qu'à un chargement.
+  const [statsFrozen, size0, linked, walOk] = await psql(o.db, TRUNCATE,
+    "select coalesce((select value from wm.config where key = 'catalog_stats_frozen'), 'false')", SIZE_SQL,
+    'select count(*) from wm.card_source', "select has_function_privilege('pg_ls_waldir()', 'execute')")
   log(`base avant chargement : ${size0} octets`)
-  const refused = checkTextSource(counts.text_source, statsFrozen === 'true') ?? guardBeforeCopy(Number(size0), counts.cards, o.target)
+  const refused = checkTextSource(counts.text_source, statsFrozen === 'true') ??
+    guardBeforeCopy(Number(size0), counts.cards, Number(linked), o.target)
   if (refused) throw new Error(refused)
 
-  // Essai de 10 lignes (le passage de \copy par le pooler n'est pas vérifié, M2-17) sur un stage vidé : sinon 23505.
+  // Essai de 10 lignes : le passage de \copy par le pooler n'est pas vérifié (M2-17).
   const cards = resolve(o.dir, 'cards.csv')
   const tmp = await mkdtemp(join(tmpdir(), 'wm-load-'))
   const probe = join(tmp, 'probe.csv')
   const [probed] = await writeFile(probe, await firstCsvRecords(cards, 10))
-    .then(() => psql(o.db, TRUNCATE, copy('wm.catalog_stage', CARD_CSV_COLUMNS, probe), 'select count(*) from wm.catalog_stage', TRUNCATE))
+    .then(() => psql(o.db, copy('wm.catalog_stage', CARD_CSV_COLUMNS, probe), 'select count(*) from wm.catalog_stage', TRUNCATE))
     .finally(() => rm(tmp, { recursive: true, force: true }))
-  if (Number(probed) !== Math.min(10, counts.cards)) throw new Error(`Essai \\copy : ${probed} lignes au lieu de 10`)
+  const want = Math.min(10, counts.cards)
+  if (Number(probed) !== want) throw new Error(`Essai \\copy : ${probed} lignes au lieu de ${want}`)
   log(`essai \\copy : ${probed} lignes`)
 
   const [size1, staged, fresh] = await psql(o.db, copy('wm.catalog_stage', CARD_CSV_COLUMNS, cards),
@@ -116,16 +134,17 @@ export async function loadCommand(o: { dir: string; mode: Mode; target: Target; 
     throw new Error(full)
   }
 
-  // Un lot par transaction ; arrêt sur la garde : le stage reste inachevé, le chargement suivant le vide.
+  const frozen = async () => {
+    await psql(o.db, TRUNCATE)
+    log('Catalogue gelé : rien chargé')
+    return { frozen: true }
+  }
+  // Un lot par transaction ; arrêt sur la garde : le stage reste inachevé, vidé en tête du chargement suivant.
   const wal = walOk === 't' ? ['select sum(size) from pg_ls_waldir()'] : []
   for (;;) {
     const [merged, size, walBytes] = await psql(o.db, `select wm.catalog_merge('${o.mode}', ${o.batch ?? 10_000})`, SIZE_SQL, ...wal)
     const m = JSON.parse(merged) as { processed: number; frozen: boolean }
-    if (m.frozen) {
-      await psql(o.db, TRUNCATE)
-      log('Catalogue gelé : rien chargé')
-      return { frozen: true }
-    }
+    if (m.frozen) return frozen()
     if (m.processed === 0) break
     log(`lot de ${m.processed} pages : base ${size} octets${walBytes ? `, WAL ${walBytes} octets` : ''}`)
     const over = guardBatch(Number(size), o.target)
@@ -133,10 +152,10 @@ export async function loadCommand(o: { dir: string; mode: Mode; target: Target; 
   }
 
   const [finalized] = await psql(o.db, `select wm.catalog_finalize('${o.mode}')`)
-  const summary = JSON.parse(finalized) as Record<string, unknown> & { pool: Record<RarityCode, number> }
+  const summary = JSON.parse(finalized) as Record<string, unknown> & { pool: Record<RarityCode, number>; frozen?: boolean }
+  // Gel posé entre le dernier lot et la finalisation.
+  if (summary.frozen) return frozen()
   const [size2] = await psql(o.db, 'vacuum (analyze) public.cards, wm.draw_pool, wm.card_source, wm.card_media', SIZE_SQL)
   log(`base après chargement : ${size2} octets`)
-  const gap = maxShareGap(summary.pool, counts.full)
-  if (gap.points > 1) throw new Error(`Parts de rareté hors tolérance : ${gap.points.toFixed(2)} points`)
-  return { ...summary, share_gap: gap }
+  return { ...summary, share_gap: checkShares(summary.pool, counts.full) }
 }

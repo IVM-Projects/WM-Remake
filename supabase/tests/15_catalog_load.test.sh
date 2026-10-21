@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Chargement de bout en bout (catalog/src/load.ts, cible free) sur catalog/fixtures/expected : premier passage (insertions,
-# essai \copy, comptes du pool) ; second passage identique (mêmes ids, même état) ; reprise après une fusion interrompue
-# (v2 : résumés changés, 10 paires de raretés échangées), sous des tirages continus d'une autre session (aucun null) ;
-# invariants vides. Sources, médias, cartes, runs et stages supprimés à la sortie, pool reconstruit.
+# Chargement de bout en bout (catalog/src/load.ts, cible free) sur catalog/fixtures/expected : refus sans écriture (colonnes
+# déplacées, parts hors tolérance) ; premier passage (insertions, essai \copy, comptes du pool) ; second passage identique
+# derrière un stage laissé plein (mêmes ids, même état) ; reprise après une fusion interrompue (v2 : résumés changés,
+# 10 paires de raretés échangées), sous des tirages continus d'une autre session (aucun null) ; invariants vides.
+# Sources, médias, cartes, runs et stages supprimés à la sortie, pool reconstruit.
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fx="$root/catalog/fixtures/expected"
 tmp="$(mktemp -d)"
 runs="$(q -c 'select coalesce(max(id), 0) from wm.catalog_runs')"
+pid=
 cleanup() {
+  if [[ -n $pid ]]; then kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null || true; fi
   if [[ -n "${PICK_PID:-}" ]]; then kill "$PICK_PID" 2>/dev/null || true; fi
   # Clés étrangères NO ACTION vers public.cards : pool, médias et sources d'abord.
   q -c 'create temp table gone as select card_id from wm.card_source' \
@@ -23,6 +26,7 @@ cleanup() {
 trap cleanup EXIT
 load() { node "$root/catalog/src/cli.ts" load --mode sample --target free --db "$DATABASE_URL" "$@"; }
 fail() { echo "$1" >&2; cat "$tmp"/log* >&2 2>/dev/null || true; exit 1; }
+size() { q -c 'select sum(pg_database_size(datname))::bigint from pg_database'; }
 ids() { q -c "select string_agg(card_id || ':' || page_id, ',' order by page_id) from wm.card_source"; }
 state() {
   q -c "select concat_ws(' ', (select md5(string_agg(c::text, ',' order by c.id)) from public.cards c),
@@ -46,6 +50,19 @@ cp "$fx/media.csv" "$fx/counts.json" "$tmp/v2/"
   -c "select string_agg(page_id || ':' || rarity, ',' order by page_id) from sw having count(*) = 20")"
 [[ -n $moved ]] || fail "v2 : 20 échanges de rareté attendus"
 
+# Refus sans écriture : deux colonnes échangées dans l'en-tête (header match, dès l'essai) ; parts de l'échantillon hors
+# tolérance (avant le premier appel psql).
+mkdir "$tmp/cols" "$tmp/skew"
+cp "$fx/media.csv" "$fx/counts.json" "$tmp/cols/"
+sed '1s/,atk,def,/,def,atk,/' "$fx/cards.csv" >"$tmp/cols/cards.csv"
+! load --dir "$tmp/cols" >/dev/null 2>"$tmp/log0" || fail "colonnes déplacées acceptées"
+grep -q 'column name mismatch' "$tmp/log0" || fail "colonnes déplacées : refus inattendu"
+cp "$fx/cards.csv" "$fx/media.csv" "$tmp/skew/"
+jq '.selected.C = 0' "$fx/counts.json" >"$tmp/skew/counts.json"
+! load --dir "$tmp/skew" >/dev/null 2>"$tmp/log0" || fail "parts hors tolérance acceptées"
+[[ "$(cat "$tmp/log0")" == 'Parts de rareté hors tolérance : 57.19 points' ]] || fail "parts hors tolérance : refus inattendu"
+[[ "$(q -c 'select (select count(*) from wm.card_source) + (select count(*) from wm.catalog_stage)')" == 0 ]] || fail "refus avec écriture"
+
 # Premier passage : une carte par ligne, pool aux comptes de cards.csv à l'unité (taux 1, D§10.4).
 load --dir "$fx" >"$tmp/out1" 2>"$tmp/log1" || fail "premier chargement en échec"
 [[ "$(jq .inserted "$tmp/out1")" == "$rows" ]] || fail "insertions : $(cat "$tmp/out1") ($rows attendues)"
@@ -54,8 +71,14 @@ grep -qF 'essai \copy : 10 lignes' "$tmp/log1" || fail "journal sans essai \\cop
 ids1="$(ids)"
 state1="$(state)"
 
-# Second passage identique : rien ne change, ni id ni octet.
+# Second passage identique derrière un stage laissé plein (\copy sans fusion) : vidé avant la mesure, il ne compte pas
+# dans la taille ; rien ne change, ni id ni octet.
+q -c "\copy wm.catalog_stage from '$fx/cards.csv' with (format csv, header true)" \
+  -c "\copy wm.catalog_stage_media from '$fx/media.csv' with (format csv, header true)" >/dev/null
+left="$(size)"
 load --dir "$fx" >"$tmp/out2" 2>"$tmp/log2" || fail "second chargement en échec"
+before="$(sed -n 's/^base avant chargement : \([0-9]*\) octets$/\1/p' "$tmp/log2")"
+((before < left)) || fail "stage laissé compté dans la taille : $before ≥ $left"
 [[ "$(jq -c '[.unchanged, .inserted]' "$tmp/out2")" == "[$rows,0]" ]] || fail "second passage : $(cat "$tmp/out2")"
 [[ "$(ids)" == "$ids1" && "$(state)" == "$state1" ]] || fail "second passage : ids ou état changés"
 
@@ -76,6 +99,7 @@ while kill -0 "$pid" 2>/dev/null; do
   lots=$((lots + 1))
 done
 wait "$pid" || fail "chargement de v2 en échec"
+pid=
 exec {PICK[1]}>&-
 wait "$PICK_PID"
 ! grep -qE '23505|duplicate key' "$tmp/log3" || fail "23505 au chargement de v2"

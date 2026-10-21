@@ -7,10 +7,17 @@ import { checkTextSource, firstCsvRecords, guardAfterCopy, guardBatch, guardBefo
 const root = await mkdtemp(join(tmpdir(), 'wm-load-'))
 afterAll(() => rm(root, { recursive: true, force: true }))
 
-test('guardBeforeCopy : le stage seul projeté, cible pro sans garde', () => {
-  expect(guardBeforeCopy(440e6, 250_000, 'free')).toBe('Base trop pleine pour la cible free : 815000000 octets projetés (limite 450000000)')
-  expect(guardBeforeCopy(250e6, 100_000, 'free')).toBeNull()
-  expect(guardBeforeCopy(440e6, 250_000, 'pro')).toBeNull()
+test('guardBeforeCopy : stage et cartes au-delà des pages liées projetés, cible pro sans garde', () => {
+  // Premier passage : 440e6 + 250 000 × (1 500 + 2 000).
+  expect(guardBeforeCopy(440e6, 250_000, 0, 'free')).toBe('Base trop pleine pour la cible free : 1315000000 octets projetés (limite 450000000)')
+  // Le stage seul franchirait déjà 450e6, même sans nouvelle carte.
+  expect(guardBeforeCopy(440e6, 250_000, 250_000, 'free')).toBe('Base trop pleine pour la cible free : 815000000 octets projetés (limite 450000000)')
+  // Second passage identique : aucune nouvelle carte, le stage seul passe ; au premier passage, 100 000 cartes franchiraient.
+  expect(guardBeforeCopy(250e6, 100_000, 100_000, 'free')).toBeNull()
+  expect(guardBeforeCopy(250e6, 100_000, 0, 'free')).toBe('Base trop pleine pour la cible free : 600000000 octets projetés (limite 450000000)')
+  // Plus de pages liées que de lignes : aucune carte retranchée de la projection.
+  expect(guardBeforeCopy(440e6, 10_000, 300_000, 'free')).toBe('Base trop pleine pour la cible free : 455000000 octets projetés (limite 450000000)')
+  expect(guardBeforeCopy(440e6, 250_000, 0, 'pro')).toBeNull()
 })
 
 test('guardAfterCopy : stage compris dans la taille, seules les nouvelles cartes projetées', () => {

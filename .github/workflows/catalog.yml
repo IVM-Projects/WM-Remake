@@ -480,6 +480,16 @@ jobs:
           # Vérifiés avant de charger : sans CRON_SECRET, la base changerait sous un cache resté périmé.
           [ -n "$SUPABASE_DB_URL" ] || { echo "::error::Secret SUPABASE_DB_URL absent (Settings → Secrets and variables → Actions)"; exit 1; }
           [ -n "$CRON_SECRET" ] || { echo "::error::Secret CRON_SECRET absent (Settings → Secrets and variables → Actions)"; exit 1; }
+          # Dépôt public : mot de passe (jusqu'au dernier @) masqué pour tout le job, et refusé non encodé, car un @ / ? # y
+          # déplacerait la coupure de libpq, qui citerait alors un morceau du mot de passe comme nom d'hôte.
+          pw=${SUPABASE_DB_URL#*://*:}
+          pw=${pw%@*}
+          echo "::add-mask::$pw"
+          echo "::add-mask::$SUPABASE_DB_URL"
+          if [[ $pw == *[@/?#]* ]]; then
+            echo "::error::Le mot de passe de SUPABASE_DB_URL doit être encodé (%40, %2F, %3F, %23)"
+            exit 1
+          fi
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -495,17 +505,17 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Chargement
+        id: load
         env:
           MODE: ${{ inputs.mode || 'sample' }}
           TARGET: ${{ inputs.target || 'free' }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          # Mot de passe masqué aussi seul : une erreur de psql peut citer un morceau de l'URL.
-          pw=${SUPABASE_DB_URL#*://*:}
-          echo "::add-mask::${pw%%@*}"
           time node catalog/src/cli.ts load --dir out --mode "$MODE" --target "$TARGET" --db "$SUPABASE_DB_URL"
 
+      # Aussi après un chargement en échec : des lots ou la finalisation ont pu être validés ; sans écriture, sans effet.
       - name: Revalidation du cache du catalogue
+        if: ${{ !cancelled() && steps.load.outcome != 'skipped' }}
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
