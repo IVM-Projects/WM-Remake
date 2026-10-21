@@ -13,6 +13,7 @@ export const INTERNAL = 'Erreur interne, réessaie dans un instant.'
 
 export type RouteCtx = { uid: string | null; tz: string; idem: string | null; params: Record<string, string> }
 export type HttpError = { status: number; body: Record<string, unknown>; retryAfter?: number }
+export type RpcResult = { data: unknown; error: { code?: string; message?: string; details?: string | null } | null }
 
 // Corps D§8.2 ; aussi pour les hooks `pre`.
 export const fail = (status: number, message: string, code?: string): HttpError =>
@@ -81,6 +82,10 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
   idem?: boolean
   pre?: (input: I, req: NextRequest) => Promise<HttpError | void>
   args?: (input: I, ctx: RouteCtx & { params: P }) => Record<string, unknown>
+  // Remplace la RPC (cache de /api/cards) ; `fn` reste le nom journalisé.
+  call?: (args: Record<string, unknown>) => Promise<RpcResult>
+  // Posés sur un 200 seulement.
+  headers?: Record<string, string>
 }): (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response> {
   const auth = opts.auth ?? true
 
@@ -119,7 +124,7 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
       ...(opts.idem && { p_idem: ctx.idem }),
       ...(auth && { p_uid: ctx.uid }),
     }
-    const { data, error } = await createAdminClient().schema('wm').rpc(opts.fn, args)
+    const { data, error } = opts.call ? await opts.call(args) : await createAdminClient().schema('wm').rpc(opts.fn, args)
     if (error) return { ...toHttpError(error), pgCode: error.code }
     return { status: 200, body: data ?? null }
   }
@@ -150,7 +155,7 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
     }))
     // 429/503 sans échéance connue (un `pre` compris) : Retry-After: 1 quand même, les clients l'attendent.
     const retryAfter = out.retryAfter || (out.status === 429 || out.status === 503 ? 1 : undefined)
-    const headers = retryAfter ? { 'Retry-After': String(retryAfter) } : undefined
+    const headers = retryAfter ? { 'Retry-After': String(retryAfter) } : out.status === 200 ? opts.headers : undefined
     return Response.json(out.body, { status: out.status, headers })
   }
 }
