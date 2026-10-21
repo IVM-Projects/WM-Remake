@@ -33,6 +33,8 @@ export async function pageviewsCommand(o: {
   if (lines < minLines) throw new Error(`Format des vues inattendu : ${lines} lignes (${minLines} attendues au moins)`)
   if (malformed > lines / 100) throw new Error(`Format des vues inattendu : ${malformed} lignes mal formées sur ${lines}`)
 
+  // views.tsv : page_id|\N, title|\N, views ; d'abord une ligne par page_id (title \N, somme des accès),
+  // puis une par titre des lignes sans page_id (page_id \N).
   function* rows(): Generator<Field[]> {
     for (const [id, views] of byId) yield [id, null, views]
     for (const [title, views] of byTitle) yield [null, title, views]

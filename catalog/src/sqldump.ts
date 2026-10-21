@@ -18,6 +18,7 @@ export const PROPS_COLUMNS = ['pp_page', 'pp_propname', 'pp_value', 'pp_sortkey'
 const COLUMNS: Record<'page' | 'page_props', readonly string[]> = { page: PAGE_COLUMNS, page_props: PROPS_COLUMNS }
 // \' \" \\ (et tout autre caractère échappé) donnent le caractère lui-même.
 const ESCAPES: Record<string, string> = { '0': '\0', b: '\b', n: '\n', r: '\r', t: '\t', Z: '\x1a' }
+const NUMBER = /^-?\d+(\.\d+)?(e[-+]?\d+)?$/i
 // AdQ et BA (M2-4).
 const BADGES = new Map([['wikibase-badge-Q17437796', 1], ['wikibase-badge-Q17437798', 0.6]])
 
@@ -36,9 +37,8 @@ export async function* sqlTuples(lines: AsyncIterable<string>, table: 'page' | '
 
   const value = (t: string): SqlValue => {
     if (t === 'NULL') return null
-    const n = Number(t)
-    if (Number.isNaN(n)) throw new Error(`Valeur inattendue pour ${table} : ${t}`)
-    return n
+    if (!NUMBER.test(t)) throw new Error(`Valeur inattendue pour ${table} : ${t}`)
+    return Number(t)
   }
 
   for await (const raw of lines) {
@@ -55,7 +55,12 @@ export async function* sqlTuples(lines: AsyncIterable<string>, table: 'page' | '
         continue
       }
       if (raw.startsWith(create)) schema = []
-      if (schema || !raw.startsWith(insert)) continue
+      if (schema || !raw.startsWith('INSERT')) continue
+      // `INSERT IGNORE …` ou `INSERT INTO \`page\` (colonnes) VALUES` : sauter ces lignes rendrait 0 ligne sans erreur.
+      if (!raw.startsWith(insert)) {
+        if (raw.includes(`\`${table}\``)) throw new Error(`Format INSERT inattendu pour ${table}`)
+        continue
+      }
       if (!checked) throw new Error(`CREATE TABLE absent pour ${table}`)
       inInsert = true
       i = insert.length
@@ -102,13 +107,21 @@ export async function* sqlTuples(lines: AsyncIterable<string>, table: 'page' | '
   if (inInsert) throw new Error(`Dump tronqué pour ${table}`)
 }
 
-export function openLines(path: string): AsyncIterable<string> {
+export async function* openLines(path: string): AsyncIterable<string> {
   const file = createReadStream(path)
+  const gunzip = path.endsWith('.gz') ? createGunzip() : null
   // pipeline propage une erreur de lecture ou de gzip à readline, donc à la boucle qui lit.
-  const input = path.endsWith('.gz') ? pipeline(file, createGunzip(), () => {}) : file
-  return createInterface({ input, crlfDelay: Infinity })
+  const input = gunzip ? pipeline(file, gunzip, () => {}) : file
+  try {
+    yield* createInterface({ input, crlfDelay: Infinity })
+  } finally {
+    // Lecteur sorti tôt (erreur du parseur) : sans cela, une erreur de zlib plus tardive n'a plus d'écouteur.
+    file.destroy()
+    gunzip?.destroy()
+  }
 }
 
+// pages.tsv : page_id, title (avec les `_` du dump), len ; espace 0 hors redirections, aucune valeur nulle.
 async function* articles(tuples: AsyncIterable<SqlValue[]>) {
   // page_id, page_namespace, page_title, page_is_redirect, page_len : index 0, 1, 2, 3, 9 de PAGE_COLUMNS.
   for await (const t of tuples) if (t[1] === 0 && t[3] === 0) yield [t[0], t[2], t[9]]
@@ -116,7 +129,7 @@ async function* articles(tuples: AsyncIterable<SqlValue[]>) {
 
 export async function dumpsCommand(o: { page: string; props: string; dir: string }): Promise<{ pages: number; props: number }> {
   const pages = await writeTsv(join(o.dir, 'pages.tsv'), articles(sqlTuples(openLines(o.page), 'page')))
-  // page_id, image, qid, badge, disambig
+  // props.tsv : page_id, image|\N, qid|\N, badge (0|0.6|1), disambig (0|1) ; une ligne par page portant une propriété utile.
   const byPage = new Map<number, [number, string | null, string | null, number, number]>()
   for await (const [page, name, value] of sqlTuples(openLines(o.props), 'page_props')) {
     const badge = BADGES.get(name as string)

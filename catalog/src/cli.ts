@@ -21,12 +21,12 @@ function count(v: Values, name: string): number | undefined {
 
 const commands: Record<string, (v: Values) => Promise<unknown>> = {
   dumps: (v) => dumpsCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir') }),
-  pageviews: (v) =>
-    pageviewsCommand({
-      input: createInterface({ input: process.stdin, crlfDelay: Infinity }),
-      dir: need(v, 'dir'),
-      minLines: count(v, 'min-lines'),
-    }),
+  pageviews: (v) => {
+    // Options validées avant de lire stdin : sinon une option fausse attend la fin du flux.
+    const dir = need(v, 'dir')
+    const minLines = count(v, 'min-lines')
+    return pageviewsCommand({ input: createInterface({ input: process.stdin, crlfDelay: Infinity }), dir, minLines })
+  },
 }
 
 try {
@@ -36,7 +36,9 @@ try {
   })
   const name = positionals[0] ?? ''
   if (!Object.hasOwn(commands, name)) throw new Error(`Commande inconnue : ${name} (${Object.keys(commands).join(', ')})`)
-  console.log(JSON.stringify(await commands[name](values)))
+  const result = await commands[name](values)
+  // Rien sur stdout pour une commande sans résultat : elle peut écrire son flux sur stdout.
+  if (result !== undefined) console.log(JSON.stringify(result))
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err))
   process.exitCode = 1

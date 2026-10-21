@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { afterAll, expect, test } from 'vitest'
-import { dumpsCommand, sqlTuples } from './sqldump.ts'
+import { dumpsCommand, openLines, sqlTuples } from './sqldump.ts'
 import { readTsv } from './tsv.ts'
 
 const dir = await mkdtemp(join(tmpdir(), 'wm-sqldump-'))
@@ -127,4 +127,38 @@ test('format inattendu : colonnes, nombre de valeurs, table absente, dump tronqu
   await expect(tuples(dump('page_props', PROPS_CREATE, PROPS_TUPLES))).rejects.toThrow('CREATE TABLE absent pour page')
   const cut = dump('page', PAGE_CREATE, PAGE_TUPLES).split('\n').slice(0, -3).join('\n')
   await expect(tuples(cut)).rejects.toThrow('Dump tronqué pour page')
+})
+
+test('INSERT d’une autre forme pour la table, nombre non décimal', async () => {
+  const head = dump('page', PAGE_CREATE, []).split('INSERT')[0]
+  const withColumns = `${head}INSERT INTO \`page\` (\`page_id\`) VALUES (3);\n`
+  await expect(tuples(withColumns)).rejects.toThrow('Format INSERT inattendu pour page')
+  await expect(tuples(`${head}INSERT IGNORE INTO \`page\` VALUES ${PAGE_TUPLES[0]};\n`)).rejects.toThrow('Format INSERT inattendu pour page')
+  for (const bad of ['0x1F', 'Infinity', '1e', '+1']) {
+    const tuple = PAGE_TUPLES[0].replace(',16467,', `,${bad},`)
+    await expect(tuples(dump('page', PAGE_CREATE, [tuple]))).rejects.toThrow(`Valeur inattendue pour page : ${bad}`)
+  }
+  const ok = PAGE_TUPLES[0].replace(',16467,', ',-1.5e+3,')
+  expect((await tuples(dump('page', PAGE_CREATE, [ok])))[0][9]).toBe(-1500)
+})
+
+// Assez de tuples pour que zlib n'ait pas fini de lire quand le parseur lève (2 000 tuples, octet à 30 %).
+const bigDump = (create: string[]) =>
+  dump('page', create, Array.from({ length: 2000 }, (_, i) => PAGE_TUPLES[0].replace('(3,', `(${i},`).replace('16467', String((i * 2654435761) % 1e9))))
+
+test('gzip tronqué : erreur propre', async () => {
+  const gz = gzipSync(bigDump(PAGE_CREATE))
+  const path = join(dir, 'truncated.sql.gz')
+  await writeFile(path, gz.subarray(0, gz.length - 100))
+  await expect(Array.fromAsync(sqlTuples(openLines(path), 'page'))).rejects.toThrow('unexpected end of file')
+})
+
+test('gzip corrompu après une erreur du parseur : flux fermés, aucune erreur non gérée', async () => {
+  const gz = gzipSync(bigDump(PAGE_CREATE.map((l) => l.replace('`page_len`', '`page_length`'))))
+  gz[Math.floor(gz.length * 0.3)] ^= 0xff
+  const path = join(dir, 'corrupt.sql.gz')
+  await writeFile(path, gz)
+  await expect(Array.fromAsync(sqlTuples(openLines(path), 'page'))).rejects.toThrow('Colonnes inattendues pour page')
+  // Laisse à zlib le temps d'atteindre l'octet corrompu : sans fermeture, son 'error' sans écouteur fait tomber le processus.
+  await new Promise((resolve) => setTimeout(resolve, 200))
 })
