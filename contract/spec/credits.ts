@@ -13,25 +13,31 @@ export const credits: RouteSpec = {
   confidence: 'ajouté',
   cases: [
     {
-      name: 'carte avec média → 200 { file, image_author, image_license, license_url } et Cache-Control du CDN, sans session',
+      name: 'carte avec média → 200 { file, image_author, image_license, license_url }, Cache-Control du CDN et Vercel-Cache-Tag, sans session',
       run: async (env) => {
         const id = psql(env.backend.databaseUrl, `insert into wm.card_media (card_id, file, author, license, license_url)
 select id, :'file', :'author', :'license', :'url' from public.cards order by wikipedia_title limit 1
-on conflict (card_id) do update set file = excluded.file, author = excluded.author, license = excluded.license, license_url = excluded.license_url
 returning card_id`, { file: MEDIA.file, author: MEDIA.image_author, license: MEDIA.image_license, url: MEDIA.license_url })
-        const res = await api(env, `/api/cards/${id}/credits`)
-        assert.equal(res.status, 200)
-        assert.equal(res.headers.get('cache-control'), CDN)
-        assert.deepEqual(await res.json(), MEDIA)
+        try {
+          const res = await api(env, `/api/cards/${id}/credits`)
+          assert.equal(res.status, 200)
+          assert.equal(res.headers.get('cache-control'), CDN)
+          assert.equal(res.headers.get('vercel-cache-tag'), 'catalog')
+          assert.deepEqual(await res.json(), MEDIA)
+        } finally {
+          // Les specs suivantes voient le seed tel quel.
+          psql(env.backend.databaseUrl, `delete from wm.card_media where card_id = :'id'`, { id })
+        }
       },
     },
     {
-      name: 'carte sans média → 404 « Carte introuvable », sans le Cache-Control du CDN',
+      name: 'carte sans média → 404 « Carte introuvable », sans le Cache-Control du CDN ni Vercel-Cache-Tag',
       run: async (env) => {
         const id = psql(env.backend.databaseUrl, `select id from public.cards c
 where not exists (select from wm.card_media m where m.card_id = c.id) order by wikipedia_title limit 1`)
         const res = await api(env, `/api/cards/${id}/credits`)
         assert.notEqual(res.headers.get('cache-control'), CDN)
+        assert.equal(res.headers.get('vercel-cache-tag'), null)
         assert.equal((await failed(res, 404)).error, 'Carte introuvable')
       },
     },

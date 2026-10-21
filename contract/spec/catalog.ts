@@ -86,16 +86,18 @@ insert into public.wishlist_items (user_id, card_id) values (:'uid', :'wished')`
       name: 'page partagée en cache jusqu\'à POST /api/cron/revalidate (M2-14, M2-15)',
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl)
-        const before = await firstCard(env, uid)
+        const { id, summary: original } = await firstCard(env, uid)
+        // psql rogne sa sortie : un résumé nul ou bordé de blancs ne se relirait ni ne se restaurerait à l'identique.
+        assert.ok(original && original === original.trim(), `résumé inutilisable pour ce cas : ${JSON.stringify(original)}`)
         const edit = (summary: string) => psql(env.backend.databaseUrl,
-          `update public.cards set summary = :'summary' where id = :'id' returning summary`, { id: before.id, summary })
-        const fresh = edit(`${before.summary} (revalidé)`)
+          `update public.cards set summary = :'summary' where id = :'id' returning summary`, { id, summary })
+        const fresh = edit(`${original} (revalidé)`)
         try {
-          assert.equal((await firstCard(env, uid)).summary, before.summary)
+          assert.equal((await firstCard(env, uid)).summary, original)
           assert.equal((await revalidate(env)).status, 200)
           // Profil max : la première lecture sert encore la page périmée pendant que le cache se recharge.
           const end = Date.now() + 5_000
-          let seen = before.summary
+          let seen: string | null = original
           while (seen !== fresh && Date.now() < end) {
             await sleep(250)
             seen = (await firstCard(env, uid)).summary
@@ -103,7 +105,7 @@ insert into public.wishlist_items (user_id, card_id) values (:'uid', :'wished')`
           assert.equal(seen, fresh)
         } finally {
           // Sans assertion : un échec ici masquerait celui du cas.
-          edit(String(before.summary))
+          edit(original)
           await revalidate(env)
         }
       },

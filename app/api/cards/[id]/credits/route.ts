@@ -7,5 +7,6 @@ export const GET = route({
   auth: false,
   params: z.object({ id: z.uuid() }),
   args: (_, { params }) => ({ p_card_id: params.id }),
-  headers: { 'Cache-Control': 'public, max-age=86400, s-maxage=2592000' },
+  // Vercel-Cache-Tag : revalidateTag('catalog', 'max') du cron purge aussi la copie de 30 jours du CDN.
+  headers: { 'Cache-Control': 'public, max-age=86400, s-maxage=2592000', 'Vercel-Cache-Tag': 'catalog' },
 })

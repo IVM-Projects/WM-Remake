@@ -17,7 +17,11 @@ export async function sharedCardsPage(page: number, sort: 'rarity', q: string | 
   // P14 : une erreur levée ici perdrait code et details en traversant le cache ; un P0001 est déterministe, donc rendu (et caché).
   if (error?.code === 'P0001') return { data: null, error: { code: error.code, message: error.message, details: error.details } }
   // shortcut: toute autre erreur, 55P03 et 57014 compris, devient un 500 et non un 503 BUSY ; la rendre sous cacheLife('seconds') si des 500 apparaissent sous charge.
-  if (error) throw new Error(`cards_page_shared : ${error.code}`)
+  if (error) {
+    // Le catch-all de route() journalise pg_code: null ; ce code-là décide du passage au shortcut ci-dessus.
+    console.error(JSON.stringify({ rpc: 'cards_page_shared', pg_code: error.code ?? null }))
+    throw new Error(`cards_page_shared : ${error.code}`)
+  }
   return { data, error: null }
 }
 

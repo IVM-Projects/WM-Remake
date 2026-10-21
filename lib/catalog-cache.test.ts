@@ -45,9 +45,11 @@ describe('cardsCall', () => {
     expect(rpc.mock.calls.map((c) => c[0])).not.toContain('cards_overlay')
   })
 
-  it('autre erreur de la page partagée (08006) → levée', async () => {
+  it('autre erreur de la page partagée (08006) → une ligne de log avec pg_code, puis levée', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     rpc.mockResolvedValue({ data: null, error: pgError('08006') })
     await expect(sharedCardsPage(0, 'rarity', null, null)).rejects.toThrow()
+    expect(log.mock.calls).toStrictEqual([[JSON.stringify({ rpc: 'cards_page_shared', pg_code: '08006' })]])
   })
 })
 
