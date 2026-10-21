@@ -240,7 +240,7 @@
   - `selectSample(rows: CatalogRow[], rate: number): Set<number>` (M2-1 ; tri par `(fnv1a32(String(page_id)), page_id)` ; `rate >= 1` → toutes) ;
   - `pct(values: number[]): number[]` (M2-2) ;
   - `statsV1(rows: { text_bytes: number; incoming_links: number; badge: number }[]): { atk: number; def: number; q_score: number }[]` (D§10.1 ; `pct` de DEF calculé sur les `q_score` arrondis) ;
-  - `cleanOpening(text: string): string` ; `cutSummary(text: string, max: number): string` ; `hasOpening(text: string | undefined): boolean` = `cleanOpening(text ?? '') !== ''` (seule règle de « page sans résumé ») ;
+  - `cleanOpening(text: string): string` ; `cutSummary(text: string, max: number): string` ; `hasOpening(text: string | undefined, title?: string): boolean` = `cleanOpening(text ?? '') !== ''` et pas une ouverture d'infobox (M2-R5 : marqueurs fixes, ou titre suivi d'une majuscule ou d'un chiffre) ; seule règle de « page sans résumé », partagée par `cirrus` et `fixtures fetch` ;
   - `selectCommand(o: { dir: string; mode: Mode; rate: number }): Promise<Counts>` écrit `catalog.tsv` (`page_id, title, len, views, rarity, image, qid, badge, selected` en 0/1) et `counts.json` (`Counts`) ; mode `full` → toutes les pages retenues, quel que soit `rate`. CLI : `select --dir <d> --mode <m> --rate <r>`.
 
 - [ ] **Step 1: Tests qui échouent** (`compute.test.ts`)
@@ -388,7 +388,7 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
 - Consumes : `catalog.tsv` et `cleanOpening`, `cutSummary`, `hasOpening`, `SUMMARY_MAX`, `Mode` (Task 2) ; `fixtures/raw/cirrus.ndjson`, `extracts.json` (Task 5).
 - Produces :
   - `cirrus.ts` : `type CirrusDoc = { page_id: number; namespace: number; page_type?: string; opening_text?: string; text_bytes: number; incoming_links?: number }` ; `cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<CirrusDoc>` ; `cirrusCommand(o: { dir: string; part: string; mode: Mode; input: AsyncIterable<string> }): Promise<{ docs: number; rows: number }>` écrit `text-<part>.tsv` (`page_id, text_bytes, incoming_links, summary|\N`) pour les documents de l'espace 0 qui ne sont pas des redirections ; `summary` seulement pour une page `selected` qui passe `hasOpening`, égal à `cutSummary(cleanOpening(opening_text), SUMMARY_MAX[mode])`.
-  - Garde de format : une ligne impaire qui n'est pas `{"index": {"_id": …}}` lève `Format Cirrus inattendu : ligne d'index <n>` ; moins de 95 % de documents avec `page_id` et `text_bytes` entiers lève `Format Cirrus inattendu : <k> documents sur <n> sans text_bytes`.
+  - Garde de format : une ligne impaire qui n'est pas `{"index": {"_id": …}}` lève `Format Cirrus inattendu : ligne d'index <n>` ; moins de 95 % de documents avec `page_id`, `namespace` et `text_bytes` entiers et un `title` lève `Format Cirrus inattendu : …` ; part vide, ligne d'index sans document, ligne non JSON et plus de la moitié des lignes sans `incoming_links` lèvent aussi. `incoming_links` absent (pages récentes) → `\N`, valeur inconnue (M2-R7).
   - `extracts.ts` : `parseExtracts(body: unknown): { page_id: number; extract: string }[]` (`query.pages[]` de `formatversion=2` ; pages manquantes ou sans extrait ignorées). L'appelant applique `cutSummary(cleanOpening(extract), SUMMARY_MAX[mode])`.
 
 - [ ] **Step 1: Tests qui échouent**
@@ -471,7 +471,7 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
     - **pas d'image sans licence** (P15) : `image_url` et la ligne de `media.csv` viennent de la ligne `media.tsv` de l'image seulement si elle a une `license` non vide et un `image_url` ; sinon `image_url` nul et pas de ligne ;
     - complément (P11) : pages `selected` sans résumé Cirrus → TextExtracts selon les Règles de lots, écrit en ajout dans `extracts.tsv`, puis `cutSummary(cleanOpening(extract), SUMMARY_MAX[mode])` ;
     - `textSource: 'extracts'` : `text_bytes` = `len`, `incoming_links` = 0, tous les résumés viennent de TextExtracts ; page absente de Cirrus : `text_bytes` = `len` (`shortcut:` unités différentes, rare) ;
-    - `statsV1` sur **toutes** les lignes de `catalog.tsv` (M2-2), sortie pour les seules lignes `selected` ;
+    - `statsV1` sur **toutes** les lignes de `catalog.tsv` (M2-2), sortie pour les seules lignes `selected` ; `incoming_links` inconnu (absent de Cirrus ou de la page, M2-R7) → rang percentile neutre 0,5, le `pct` des liens étant calculé sur les seules valeurs connues ;
     - écrit `out/cards.csv`, `out/media.csv` et `out/counts.json` (`Counts` + `month`, `text_date`, `text_source`).
   - CLI : `compute --dir <d> --out <o> --mode <m> --month <YYYY-MM> --text-date <YYYY-MM-DD> --text-source <s>`.
 
