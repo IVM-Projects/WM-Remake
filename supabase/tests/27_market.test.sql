@@ -315,14 +315,6 @@ declare k public.user_cards := wm.grant_copy(p_seller, p_card, false); begin
   return wm.create_auction(p_seller, k.id, p_base, p_minutes) ->> 'auction_id';
 end $$;
 
--- Première mise posée à la main (place_bid : Task 4), avec sa réservation au grand livre (bid:<id>) que les invariants exigent.
-create function pg_temp.bid(p_auction uuid, p_bidder uuid, p_amount int) returns void language plpgsql as $$
-declare m uuid; begin
-  insert into public.auction_bids (auction_id, bidder_id, amount) values (p_auction, p_bidder, p_amount) returning id into m;
-  perform wm.wallet_apply(p_bidder, -p_amount, 'bid', 'bid:' || m);
-  update public.auctions set current_bid = p_amount, current_bidder_id = p_bidder, bids_count = bids_count + 1 where id = p_auction;
-end $$;
-
 -- create_auction par id de copie (M3-14) : réponse {auction_id, id, end_at}, end_at = clock_timestamp() + durée (M3-11), snapshots et
 -- brillance de la copie, document de recherche titre ‖ catégorie ‖ 300 premiers caractères du résumé, prix d'origine gardé, copie au
 -- séquestre, une ligne de file d'alertes, rafale comptée.
@@ -430,7 +422,7 @@ do $$ declare s uuid := pg_temp.player('Retrait1'); o uuid := pg_temp.player('Re
   d := pg_temp.err(format(q, o, x));
   assert d = '{"status":403,"error":"Seul le vendeur peut modifier cette enchère","message":"Seul le vendeur peut modifier cette enchère"}',
     coalesce(d::text, 'autre joueur accepté');
-  perform pg_temp.bid(y, o, 15);
+  perform wm.place_bid(o, y, 15);
   d := pg_temp.err(format(q, s, y));
   assert d = '{"status":409,"error":"Une enchère en cours ne peut pas être retirée","message":"Une enchère en cours ne peut pas être retirée"}',
     coalesce(d::text, 'retrait avec mise accepté');
@@ -488,7 +480,7 @@ do $$ declare s uuid := pg_temp.player('Baisse1'); o uuid := pg_temp.player('Bai
   d := pg_temp.err(format(q, s, x, 10));
   assert d = '{"status":409,"error":"Le prix a déjà été baissé une fois","message":"Le prix a déjà été baissé une fois"}',
     coalesce(d::text, 'seconde baisse acceptée');
-  perform pg_temp.bid(x, o, 12);
+  perform wm.place_bid(o, x, 12);
   d := pg_temp.err(format(q, s, x, 10));
   assert d = '{"status":409,"error":"Une enchère en cours ne peut pas être modifiée","message":"Une enchère en cours ne peut pas être modifiée"}',
     coalesce(d::text, 'baisse avec mise acceptée');
@@ -497,4 +489,148 @@ do $$ declare s uuid := pg_temp.player('Baisse1'); o uuid := pg_temp.player('Bai
   perform wm.cancel_auction(s, y);
   assert pg_temp.err(format(q, s, y, 5)) ->> 'error' = 'Cette enchère est terminée', 'retirée acceptée';
   perform pg_temp.inv('baisse de prix');
+end $$;
+
+-- Mise (1620, M3-15).
+-- A (100) mise 10 sur une base de 10 : réponse exacte, débit immédiat, placed_at = clock_timestamp() (P7). B (100) surenchérit à 11 :
+-- A remboursé, minimum suivant 13 (ceil(12,1)), grand livre exact (débit de B, puis remboursement de A), une auction_outbid pour A.
+do $$ declare s uuid := pg_temp.player('Mise1'); a uuid := pg_temp.player('Mise2', 100); b uuid := pg_temp.player('Mise3', 100);
+  x uuid := pg_temp.listing(s, pg_temp.card('Mise marché')); t0 timestamptz; r jsonb; m1 uuid; m2 uuid; au public.auctions; begin
+  t0 := clock_timestamp();
+  r := wm.place_bid(a, x, 10);
+  select * into au from public.auctions where id = x;
+  assert r = jsonb_build_object('current_bid', 10, 'bidder_balance', 90, 'balance', 90, 'end_at', au.end_at, 'min_next_bid', 11), r::text;
+  assert au.current_bid = 10 and au.current_bidder_id = a and au.bids_count = 1, to_jsonb(au)::text;
+  select id into m1 from public.auction_bids where auction_id = x;
+  assert (select bidder_id = a and amount = 10 and placed_at > t0 and placed_at < clock_timestamp() from public.auction_bids where id = m1),
+    'ligne de mise ou placed_at';
+  assert (select wikibidous_balance from public.profiles where id = a) = 90, 'solde de A';
+  assert not exists (select from public.notifications where data ->> 'auction_id' = x::text), 'notification sans ancien meneur';
+  r := wm.place_bid(b, x, 11);
+  select * into au from public.auctions where id = x;
+  assert r = jsonb_build_object('current_bid', 11, 'bidder_balance', 89, 'balance', 89, 'end_at', au.end_at, 'min_next_bid', 13), r::text;
+  assert au.current_bid = 11 and au.current_bidder_id = b and au.bids_count = 2, to_jsonb(au)::text;
+  select id into m2 from public.auction_bids where auction_id = x and bidder_id = b;
+  assert (select array_agg(wikibidous_balance order by username) from public.profiles where id in (a, b)) = array[100, 89], 'soldes';
+  assert (select jsonb_agg(jsonb_build_array(user_id, reason, ref, delta) order by id) from wm.wb_ledger
+          where ref in ('bid:' || m1, 'refund:' || m1, 'bid:' || m2, 'refund:' || m2))
+    = jsonb_build_array(jsonb_build_array(a, 'bid', 'bid:' || m1, -10), jsonb_build_array(b, 'bid', 'bid:' || m2, -11),
+      jsonb_build_array(a, 'refund', 'refund:' || m1, 10)), 'grand livre';
+  assert (select jsonb_agg(jsonb_build_array(user_id, data -> 'amount')) from public.notifications
+          where type = 'auction_outbid' and data ->> 'auction_id' = x::text) = jsonb_build_array(jsonb_build_array(a, 11)), 'auction_outbid';
+  perform pg_temp.inv('surenchère');
+end $$;
+
+-- Review Focus, montants (P6) : base 100 sans mise → 99 refusé (minimum 100) ; après 100 → 109 refusé (minimum 110), 110 passe ;
+-- 1 → minimum 2 (mise nulle comprise).
+do $$ declare s uuid := pg_temp.player('Montant1'); a uuid := pg_temp.player('Montant2', 1000); b uuid := pg_temp.player('Montant3', 1000);
+  c uuid := pg_temp.card('Montant marché'); x uuid := pg_temp.listing(s, c, 100); y uuid := pg_temp.listing(s, c, 1);
+  q text := 'select wm.place_bid(%L, %L, %L)'; d jsonb; begin
+  d := pg_temp.err(format(q, a, x, 99));
+  assert d = '{"status":409,"code":"bid_too_low","error":"Mise trop basse (minimum 100 wikibidous)","message":"Mise trop basse (minimum 100 wikibidous)","min":100}',
+    coalesce(d::text, '99 accepté');
+  assert wm.place_bid(a, x, 100) -> 'min_next_bid' = '110', 'minimum après 100';
+  d := pg_temp.err(format(q, b, x, 109));
+  assert d = '{"status":409,"code":"bid_too_low","error":"Mise trop basse (minimum 110 wikibidous)","message":"Mise trop basse (minimum 110 wikibidous)","min":110}',
+    coalesce(d::text, '109 accepté');
+  assert wm.place_bid(b, x, 110) -> 'current_bid' = '110', '110 refusé';
+  assert wm.place_bid(a, y, 1) -> 'min_next_bid' = '2', 'minimum après 1';
+  assert pg_temp.err(format(q, b, y, 1)) -> 'min' = '2' and pg_temp.err(format(q, b, y, null)) -> 'min' = '2', '1 ou null acceptés';
+  assert wm.place_bid(b, y, 2) -> 'current_bid' = '2', '2 refusé';
+  perform pg_temp.inv('montants');
+end $$;
+
+-- Refus exacts, dans l'ordre de M3-15 : inconnue → 404 ; échue ou invendue → 409 « terminée », avant le vendeur ; vendeur → 409 ; meneur
+-- → 409, avant le minimum ; minimum avant la vérification humaine ; jamais vérifié → 403. Aucun n'écrit.
+do $$ declare s uuid := pg_temp.player('Refus1'); a uuid := pg_temp.player('Refus2', 100); n uuid := tests.make_user('Refus3', 100);
+  c uuid := pg_temp.card('Refus marché'); x uuid := pg_temp.listing(s, c); y uuid := pg_temp.listing(s, c); z uuid := pg_temp.listing(s, c);
+  q text := 'select wm.place_bid(%L, %L, %L)'; d jsonb;
+  fin jsonb := '{"status":409,"error":"Cette enchère est terminée","message":"Cette enchère est terminée"}'; begin
+  d := pg_temp.err(format(q, a, gen_random_uuid(), 10));
+  assert d = '{"status":404,"error":"Enchère introuvable","message":"Enchère introuvable"}', coalesce(d::text, 'inconnue acceptée');
+  update public.auctions set end_at = now() - interval '1 minute' where id = y;
+  assert pg_temp.err(format(q, a, y, 10)) = fin and pg_temp.err(format(q, s, y, 10)) = fin, 'échue acceptée';
+  perform wm.escrow_release(z, s);
+  update public.auctions set status = 'settled_unsold', settled_at = now() where id = z;
+  assert pg_temp.err(format(q, a, z, 10)) = fin, 'invendue acceptée';
+  d := pg_temp.err(format(q, s, x, 10));
+  assert d = '{"status":409,"error":"Tu ne peux pas enchérir sur ta propre vente","message":"Tu ne peux pas enchérir sur ta propre vente"}',
+    coalesce(d::text, 'vendeur accepté');
+  perform wm.place_bid(a, x, 10);
+  d := pg_temp.err(format(q, a, x, 1));
+  assert d = '{"status":409,"error":"Tu es déjà en tête","message":"Tu es déjà en tête"}', coalesce(d::text, 'meneur accepté');
+  assert pg_temp.err(format(q, n, x, 10)) ->> 'code' = 'bid_too_low', 'vérification avant le minimum';
+  d := pg_temp.err(format(q, n, x, 11));
+  assert d = '{"status":403,"code":"human_verification_required","error":"Vérification anti-bot requise pour continuer.","message":"Vérification anti-bot requise pour continuer.","human_verification_required":true}',
+    coalesce(d::text, 'jamais vérifié accepté');
+  assert (select count(*) from public.auction_bids where auction_id in (x, y, z)) = 1
+    and (select current_bidder_id = a and current_bid = 10 from public.auctions where id = x)
+    and (select wikibidous_balance from public.profiles where id = n) = 100, 'refus qui écrit';
+  perform pg_temp.inv('refus de mise');
+end $$;
+
+-- Review Focus, mise refusée à mi-chemin : C (solde 5) mise 13, le minimum, alors que B mène à 11 → 409 insufficient_balance, et rien ne
+-- reste : aucune ligne de mise, B en tête, aucun refund:<m2>, soldes, grand livre et notifications inchangés.
+do $$ declare s uuid := pg_temp.player('MiChemin1'); b uuid := pg_temp.player('MiChemin2', 100); c uuid := pg_temp.player('MiChemin3', 5);
+  x uuid := pg_temp.listing(s, pg_temp.card('Mi-chemin marché')); m2 uuid; l jsonb; d jsonb; begin
+  perform wm.place_bid(b, x, 11);
+  select id into m2 from public.auction_bids where auction_id = x;
+  l := (select jsonb_agg(to_jsonb(w) order by id) from wm.wb_ledger w where user_id in (b, c));
+  d := pg_temp.err(format('select wm.place_bid(%L, %L, 13)', c, x));
+  assert d = '{"status":409,"code":"insufficient_balance","error":"Solde insuffisant","message":"Solde insuffisant"}', coalesce(d::text, 'acceptée');
+  assert (select count(*) from public.auction_bids where auction_id = x) = 1, 'ligne de mise restée';
+  assert (select current_bidder_id = b and current_bid = 11 and bids_count = 1 from public.auctions where id = x), 'meneur changé';
+  assert not exists (select from wm.wb_ledger where ref = 'refund:' || m2), 'B remboursé';
+  assert (select jsonb_agg(to_jsonb(w) order by id) from wm.wb_ledger w where user_id in (b, c)) = l, 'grand livre changé';
+  assert (select array_agg(wikibidous_balance order by username) from public.profiles where id in (b, c)) = array[89, 5], 'soldes changés';
+  assert not exists (select from public.notifications where data ->> 'auction_id' = x::text), 'notification restée';
+  perform pg_temp.inv('mise refusée à mi-chemin');
+end $$;
+
+-- Anti-snipe (M3-15, M3-11) : à 5 s de la fin, end_at = ancien + 60 s exactement, et encore à la mise suivante ; à 30 s, inchangé.
+do $$ declare s uuid := pg_temp.player('Snipe1'); a uuid := pg_temp.player('Snipe2', 100); b uuid := pg_temp.player('Snipe3', 100);
+  x uuid := pg_temp.listing(s, pg_temp.card('Snipe marché')); e timestamptz; r jsonb; begin
+  update public.auctions set end_at = clock_timestamp() + interval '5 seconds' where id = x returning end_at into e;
+  r := wm.place_bid(a, x, 10);
+  assert (select end_at from public.auctions where id = x) = e + interval '60 seconds' and (r ->> 'end_at')::timestamptz = e + interval '60 seconds',
+    r::text;
+  update public.auctions set end_at = clock_timestamp() + interval '5 seconds' where id = x returning end_at into e;
+  perform wm.place_bid(b, x, 11);
+  assert (select end_at from public.auctions where id = x) = e + interval '60 seconds', 'seconde mise dans la fenêtre';
+  update public.auctions set end_at = clock_timestamp() + interval '30 seconds' where id = x returning end_at into e;
+  r := wm.place_bid(a, x, 13);
+  assert (select end_at from public.auctions where id = x) = e and (r ->> 'end_at')::timestamptz = e, '30 s restantes';
+  perform pg_temp.inv('anti-snipe');
+end $$;
+
+-- Review Focus, rafale (M3-13, P3) : D (vérifié) mise sur 10 enchères, la 10e retire la vérification ; la 11e → 403 sans rien écrire, et les
+-- paquets sont verrouillés avec ; vérifié à nouveau, elle passe. Deux vendeurs : 10 enchères actives au plus pour un Pro.
+do $$ declare p uuid := pg_temp.player('RafaleMise1', 0, true); o uuid := pg_temp.player('RafaleMise2'); v uuid := pg_temp.player('RafaleMise3', 1000);
+  c uuid := pg_temp.card('Rafale mise marché'); x uuid; d jsonb; begin
+  for i in 1 .. 10 loop
+    perform wm.place_bid(v, pg_temp.listing(p, c), 10);
+    assert (select (human_verified_until is null) = (i = 10) from wm.user_state where user_id = v), 'vérification après la mise ' || i;
+  end loop;
+  x := pg_temp.listing(o, c);
+  d := pg_temp.err(format('select wm.place_bid(%L, %L, 10)', v, x));
+  assert d ->> 'code' = 'human_verification_required' and d -> 'human_verification_required' = 'true', coalesce(d::text, '11e acceptée');
+  assert not exists (select from public.auction_bids where auction_id = x), '11e écrite';
+  d := pg_temp.err(format('select wm.open_pack(%L, %L)', v, 'Europe/Paris'));
+  assert d ->> 'status' = '403' and d ->> 'code' = 'human_verification_required', coalesce(d::text, 'paquet accepté');
+  perform wm.set_human_verified(v);
+  assert wm.place_bid(v, x, 10) -> 'current_bid' = '10', '11e refusée après vérification';
+  assert (select count(*) from public.auction_bids where bidder_id = v) = 11 and (select wikibidous_balance from public.profiles where id = v) = 890,
+    'mises de D';
+  perform pg_temp.inv('rafale de mises');
+end $$;
+
+-- Même Idempotency-Key : même réponse, une seule ligne de mise, un seul débit (sans clé, la seconde serait « Tu es déjà en tête »).
+do $$ declare s uuid := pg_temp.player('IdemMise1'); a uuid := pg_temp.player('IdemMise2', 100);
+  x uuid := pg_temp.listing(s, pg_temp.card('Idem mise marché')); r jsonb; begin
+  r := wm.place_bid(a, x, 10, 'mise-1');
+  assert wm.place_bid(a, x, 10, 'mise-1') = r, 'réponse rejouée différente';
+  assert (select count(*) from public.auction_bids where auction_id = x) = 1
+    and (select count(*) from wm.wb_ledger where user_id = a and reason = 'bid') = 1
+    and (select wikibidous_balance from public.profiles where id = a) = 90, 'mise rejouée';
+  perform pg_temp.inv('mise idempotente');
 end $$;
