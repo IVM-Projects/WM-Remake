@@ -33,9 +33,10 @@ export function fnv1a32(s: string): number {
 }
 
 // Champ numérique d'un TSV du pipeline : une ligne tronquée ou mal formée arrête le job au lieu de donner NaN.
+const NUMBER = /^-?\d+(\.\d+)?(e[-+]?\d+)?$/i
 function num(f: (string | null)[], i: number, file: string, line: number): number {
   const v = f[i]
-  if (!v || !Number.isFinite(Number(v))) {
+  if (!v || !NUMBER.test(v)) {
     throw new Error(`Nombre attendu dans ${file}, ligne ${line}, colonne ${i + 1} : ${v === undefined ? '(absent)' : (v ?? '\\N')}`)
   }
   return Number(v)
@@ -122,7 +123,8 @@ export function statsV1(
 }
 
 // Fin de phrase : ponctuation, puis « » » (après un blanc éventuel) ou « ) » éventuels, puis un blanc ou la fin du texte.
-const STOP = String.raw`[.!?…](?:\s?»|\))?(?=\s|$)`
+// Une ponctuation suivie de « » » ne finit la phrase qu'avec ce guillemet : « Ça ira ! », dit-il ne s'arrête pas à « ! ».
+const STOP = String.raw`[.!?…](?:\s?»|\)|(?!\s?»))(?=\s|$)`
 const STOPS = new RegExp(STOP, 'g')
 // Bandeau de tête : une phrase jusqu'à la première fin de phrase, ou jusqu'à la fin du texte.
 const BANNER = new RegExp(
@@ -142,14 +144,18 @@ export function cutSummary(text: string, max: number): string {
   if (text.length <= max) return text
   // Dernière fin de phrase (guillemet fermant compris) qui tient dans les max premiers caractères ; le blanc qui la
   // suit est lu dans le texte entier, donc un « » » au-delà de max écarte la phrase au lieu de couper la citation.
+  // Une fin de phrase à l'intérieur d'une citation (plus de « que de ») avant elle) ne compte pas.
   let end = 0
   for (const m of text.matchAll(STOPS)) {
-    if (m.index + m[0].length > max) break
-    end = m.index + m[0].length
+    const e = m.index + m[0].length
+    if (e > max) break
+    const head = text.slice(0, e)
+    if ((head.match(/«/g)?.length ?? 0) <= (head.match(/»/g)?.length ?? 0)) end = e
   }
   if (end) return text.slice(0, end)
   const head = text.slice(0, max)
-  return (head.match(/^[^]*\S(?=\s)/)?.[0] ?? head.slice(0, max - 1)) + '…'
+  // Coupe au dernier blanc ordinaire : jamais sur l'insécable qui suit « ou précède ».
+  return (head.match(/^[^]*\S(?=[^\S\u00a0\u202f])/)?.[0] ?? head.slice(0, max - 1)) + '…'
 }
 
 const zero = () => Object.fromEntries(RARITY.map((r) => [r.code, 0])) as Record<RarityCode, number>

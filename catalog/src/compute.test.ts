@@ -132,6 +132,15 @@ test('joinCatalog : une ligne tronquée ou un nombre mal formé arrête la joint
   await expect(run({ 'props.tsv': [[1, 'Chat.jpg', 'Q146', 1]] })).rejects.toThrow(
     'Nombre attendu dans props.tsv, ligne 1, colonne 5 : (absent)',
   )
+  // Nombres stricts (comme le parseur du dump) : ni blanc, ni hexadécimal ; page_id et badge de props.tsv, page_id de views.tsv.
+  await expect(run({ 'pages.tsv': [[' ', 'Chat', 1000]] })).rejects.toThrow('Nombre attendu dans pages.tsv, ligne 1, colonne 1 :  ')
+  await expect(run({ 'props.tsv': [['0x1F', 'Chat.jpg', 'Q146', 1, 0]] })).rejects.toThrow(
+    'Nombre attendu dans props.tsv, ligne 1, colonne 1 : 0x1F',
+  )
+  await expect(run({ 'props.tsv': [[1, 'Chat.jpg', 'Q146', 'oui', 0]] })).rejects.toThrow(
+    'Nombre attendu dans props.tsv, ligne 1, colonne 4 : oui',
+  )
+  await expect(run({ 'views.tsv': [['un', null, 245]] })).rejects.toThrow('Nombre attendu dans views.tsv, ligne 1, colonne 1 : un')
 })
 
 test('cleanOpening : bandeaux de tête retirés, espaces réduits', () => {
@@ -180,6 +189,20 @@ test('cutSummary : fin de phrase dans les max premiers caractères, sinon dernie
   expect(cutSummary('Il dit «Bonjour.» puis part. Et la suite.', 22)).toBe('Il dit «Bonjour.»')
   expect(cutSummary(quote, 17)).not.toContain('Bonjour.')
   expect(cutSummary('Né à Paris (en 1900.) Puis Lyon. Etc.', 25)).toBe('Né à Paris (en 1900.)')
+  // « ! » ou « ? » suivi de « » » puis d'une ponctuation : pas une fin de phrase ; citation de plusieurs phrases jamais coupée.
+  const cry = "Il s'écria « Au secours ! », puis partit. Et la suite."
+  expect(cutSummary(cry, 45)).toBe("Il s'écria « Au secours ! », puis partit.")
+  expect(cutSummary(cry, 30)).toBe("Il s'écria « Au secours ! »,…")
+  const two = 'Il dit « Bonjour. Au revoir. » puis part. Et la suite.'
+  expect(cutSummary(two, 45)).toBe('Il dit « Bonjour. Au revoir. » puis part.')
+  expect(cutSummary(two, 25)).toBe('Il dit « Bonjour. Au…')
+  // Repli : coupe au dernier blanc ordinaire, jamais sur l'insécable qui suit « .
+  expect(cutSummary(quote, 17)).toBe('Il dit…')
+})
+
+test('cleanOpening : bandeau dont le titre cité finit par « ! » ou « ? »', () => {
+  expect(cleanOpening('Cet article concerne la chanson « Ça ira ! », pas le film. Le texte est connu.')).toBe('Le texte est connu.')
+  expect(cleanOpening('Cet article concerne la collection « Que sais-je ? ». Le livre est court.')).toBe('Le livre est court.')
 })
 
 test('selectCommand : catalog.tsv et counts.json cohérents ; mode full retient tout', async () => {
