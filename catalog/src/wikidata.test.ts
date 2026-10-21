@@ -4,7 +4,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll, expect, test } from 'vitest'
+import { afterAll, expect, test, vi } from 'vitest'
 import { selectCommand } from './compute.ts'
 import { batchValues } from './http.ts'
 import type { Client } from './http.ts'
@@ -128,6 +128,29 @@ test('wikidataCommand : délai dépassé après le premier lot → finished: fal
   const rows = await descTsv(dir)
   expect(new Set(rows.map((f) => f[0])).size).toBe(rows.length)
   expect(rows).toHaveLength(new Set(qids).size)
+})
+
+test('wikidataCommand : des requêtes sans réponse sont abandonnées à l’échéance, rien n’est écrit pour leurs lots', async () => {
+  const dir = await work('hung')
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    let started!: () => void
+    const first = new Promise<void>((resolve) => (started = resolve))
+    const client: Client = {
+      get() {
+        started()
+        return new Promise(() => {})
+      },
+    }
+    const run = wikidataCommand({ dir, client, deadlineMin: 30, now: () => 0 })
+    await first
+    await vi.advanceTimersByTimeAsync(30 * 60_000)
+    expect(await run).toEqual({ done: 0, skipped: 0, finished: false })
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+  expect(existsSync(join(dir, 'desc.tsv'))).toBe(false)
 })
 
 // Sans réseau : --deadline-min 0 arrête avant la première requête, et un desc.tsv complet saute tous les lots.

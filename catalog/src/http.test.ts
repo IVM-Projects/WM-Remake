@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createClient, USER_AGENT } from './http.ts'
+import { createClient, deadline, fetchBatches, USER_AGENT } from './http.ts'
+import type { Client } from './http.ts'
 
 const URL_A = 'https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q1'
 
@@ -236,4 +237,40 @@ test('perMinute: 2 → démarrages à 0, 30 s et 60 s ; options invalides refus�
 
   expect(() => createClient({ concurrency: 0 })).toThrow('Client Wikimedia : concurrency et perMinute doivent être > 0')
   expect(() => createClient({ perMinute: 0 })).toThrow('Client Wikimedia : concurrency et perMinute doivent être > 0')
+})
+
+test('fetchBatches : une requête sans réponse est abandonnée à l’échéance, rien pour son lot ; minuteurs effacés', async () => {
+  const got: string[] = []
+  const client: Client = { get: (url) => (url === 'b' ? new Promise(() => {}) : Promise.resolve({ url })) }
+  const run = fetchBatches(client, ['a', 'b', 'c', 'd'], deadline({ deadlineMin: 1 }), async (url) => void got.push(url))
+  await vi.advanceTimersByTimeAsync(59_999)
+  expect(got).toEqual(['a', 'c', 'd'])
+  expect(vi.getTimerCount()).toBe(1)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(await run).toBe(false)
+  expect(got).toEqual(['a', 'c', 'd'])
+  expect(vi.getTimerCount()).toBe(0)
+
+  // Échéance passée : aucun appel ; tout servi avant : true.
+  const get = vi.fn(client.get)
+  expect(await fetchBatches({ get }, ['a'], deadline({ deadlineMin: 0 }), async () => {})).toBe(false)
+  expect(get).not.toHaveBeenCalled()
+  expect(await fetchBatches({ get }, ['a', 'c'], deadline({ deadlineMin: 1 }), async () => {})).toBe(true)
+  expect(vi.getTimerCount()).toBe(0)
+
+  // Sans délai : une réponse au bout d'une heure arrive (un setTimeout au-delà de 2^31 - 1 ms partirait à 1 ms).
+  const slow: Client = { get: () => new Promise((resolve) => setTimeout(resolve, 3600_000, { ok: 1 })) }
+  const patient = fetchBatches(slow, ['x'], deadline({}), async (url) => void got.push(url))
+  await vi.advanceTimersByTimeAsync(3600_000)
+  expect(await patient).toBe(true)
+  expect(got).toContain('x')
+})
+
+test('fetchBatches : une réponse avec `continue` arrête tout, rien pour son lot', async () => {
+  const got: string[] = []
+  const client: Client = { get: async () => ({ continue: { iicontinue: 'x', continue: '||' }, query: { pages: [] } }) }
+  await expect(fetchBatches(client, ['u'], deadline({}), async (url) => void got.push(url))).rejects.toThrow(
+    'Wikimedia : réponse incomplète (continue) sur u',
+  )
+  expect(got).toEqual([])
 })

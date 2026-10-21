@@ -1,9 +1,8 @@
 // Wikidata : descriptions FR des éléments des pages retenues (catégorie de la carte), reprenables par lots.
-import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { batchUrls, batchValues, deadline, fetchBatches } from './http.ts'
 import type { Client } from './http.ts'
-import { readTsv, writeTsv } from './tsv.ts'
+import { readTsv, writeTsv, writtenIds } from './tsv.ts'
 
 const ENTITIES = 'https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&formatversion=2&maxlag=5&props=descriptions&languages=fr&ids='
 
@@ -34,8 +33,7 @@ export async function wikidataCommand(o: {
   // catalog.tsv : qid en colonne 7, selected en colonne 9.
   for await (const f of readTsv(join(o.dir, 'catalog.tsv'))) if (f[8] === '1' && f[6] !== null) qids.push(f[6])
   const path = join(o.dir, 'desc.tsv')
-  const written = new Set<string>()
-  if (existsSync(path)) for await (const f of readTsv(path)) written.add(String(f[0]))
+  const written = await writtenIds(path)
 
   const urls = entitiesUrls(qids)
   const todo = urls.filter((url) => !batchValues(url).every((q) => written.has(q)))

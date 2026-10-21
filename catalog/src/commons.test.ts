@@ -202,17 +202,24 @@ test('thumbUrl rejoint la miniature que l’API rend pour chaque fichier de la t
   }
 })
 
-test('commonsCommand : Commons puis frwiki sur les tranches, sans URL inconnue ; second run tout sauté', async () => {
+// Réponses Commons seules (M2-R6) : les corps frwiki de raw/commons.json restent dans la fixture, inutilisés.
+const commonsBodies = Object.fromEntries(Object.entries(bodies).filter(([url]) => repoOf(url) === 'commons'))
+const empty = (file: string) => [file, null, null, null, null]
+
+test('commonsCommand : Commons seul sur les tranches, sans URL inconnue, absent → ligne vide ; second run tout sauté', async () => {
   const dir = await work('full')
-  const { client, urls } = fixtureClient()
-  expect(await commonsCommand({ dir, client })).toEqual({ done: 5, skipped: 0, finished: true })
-  expect(urls.toSorted()).toEqual(Object.keys(bodies).toSorted())
+  const { client, urls } = fixtureClient(commonsBodies)
+  expect(await commonsCommand({ dir, client })).toEqual({ done: 4, skipped: 0, finished: true })
+  expect(urls.toSorted()).toEqual(Object.keys(commonsBodies).toSorted())
   const rows = await mediaTsv(dir)
   expect(rows.map((f) => f[0]).toSorted()).toEqual([...images].toSorted())
-  const byFile = new Map(media.map((m) => [m.file, [m.file, m.author, m.license, m.license_url, m.image_url]]))
-  for (const row of rows) expect(row).toEqual(byFile.get(row[0]!))
+  const found = Object.values(commonsBodies).flatMap((body) => parseImageInfo(body, 'commons').media)
+  const byFile = new Map(found.map((m) => [m.file, [m.file, m.author, m.license, m.license_url, m.image_url]]))
+  for (const row of rows) expect(row).toEqual(byFile.get(row[0]!) ?? empty(row[0]!))
+  expect(rows.filter((f) => f[4] === null)).toHaveLength(images.size - found.length)
+  expect(found).toHaveLength(181)
 
-  const again = fixtureClient()
+  const again = fixtureClient(commonsBodies)
   expect(await commonsCommand({ dir, client: again.client })).toEqual({ done: 0, skipped: 4, finished: true })
   expect(again.urls).toEqual([])
   expect(await mediaTsv(dir)).toEqual(rows)
@@ -220,36 +227,36 @@ test('commonsCommand : Commons puis frwiki sur les tranches, sans URL inconnue ;
 
 test('commonsCommand : un lot dont chaque fichier est dans media.tsv est sauté', async () => {
   const dir = await work('resume')
-  const commonsUrls = imageInfoUrls([...images], 'commons.wikimedia.org')
-  const last = commonsUrls.at(-1)!
+  const last = imageInfoUrls([...images], 'commons.wikimedia.org').at(-1)!
   await writeTsv(join(dir, 'media.tsv'), batchValues(last).map((v) => [v.slice('File:'.length), 'déjà là', 'CC0', null, null]))
-  const { client, urls } = fixtureClient()
-  expect(await commonsCommand({ dir, client })).toEqual({ done: 4, skipped: 1, finished: true })
+  const { client, urls } = fixtureClient(commonsBodies)
+  expect(await commonsCommand({ dir, client })).toEqual({ done: 3, skipped: 1, finished: true })
   expect(urls).not.toContain(last)
   const rows = await mediaTsv(dir)
   expect(rows).toHaveLength(images.size)
   expect(rows.filter((f) => f[1] === 'déjà là')).toHaveLength(batchValues(last).length)
 })
 
-test('commonsCommand : délai dépassé après le premier lot → finished: false ; la reprise redemande le lot au fichier en attente', async () => {
+test('commonsCommand : délai dépassé après le premier lot → finished: false ; son fichier absent est écrit, le lot n’est plus redemandé', async () => {
   const dir = await work('deadline')
   let t = 0
-  const { client, urls } = fixtureClient(bodies, () => (t = 31 * 60_000))
+  const { client, urls } = fixtureClient(commonsBodies, () => (t = 31 * 60_000))
   expect(await commonsCommand({ dir, client, deadlineMin: 30, now: () => t })).toEqual({ done: 1, skipped: 0, finished: false })
   expect(urls).toHaveLength(1)
-  // Le premier lot a un fichier absent de Commons, en attente de frwiki : pas de ligne pour lui.
+  // Le premier lot a un fichier absent de Commons : sa ligne vide est écrite avec le lot.
   const first = await mediaTsv(dir)
-  expect(first).toHaveLength(batchValues(urls[0]).length - 1)
-  expect(first.every((f) => f[4] !== null)).toBe(true)
+  expect(first).toHaveLength(batchValues(urls[0]).length)
+  expect(first.filter((f) => f[4] === null)).toEqual([empty('ASC_Remire_logo.png')])
 
-  const next = fixtureClient()
-  expect(await commonsCommand({ dir, client: next.client, deadlineMin: 30, now: () => 0 })).toEqual({ done: 5, skipped: 0, finished: true })
+  const next = fixtureClient(commonsBodies)
+  expect(await commonsCommand({ dir, client: next.client, deadlineMin: 30, now: () => 0 })).toEqual({ done: 3, skipped: 1, finished: true })
+  expect(next.urls).not.toContain(urls[0])
   const rows = await mediaTsv(dir)
   expect(new Set(rows.map((f) => f[0])).size).toBe(rows.length)
   expect(rows).toHaveLength(images.size)
 })
 
-test('commonsCommand : pages selected seulement ; introuvable partout → ligne vide, plus redemandée', async () => {
+test('commonsCommand : pages selected seulement ; absent, invalide ou sans imageinfo → ligne vide, plus redemandée', async () => {
   const dir = join(base, 'gone')
   await mkdir(dir)
   // catalog.tsv : page_id, title, len, views, rarity, image|\N, qid|\N, badge, selected.
@@ -258,13 +265,15 @@ test('commonsCommand : pages selected seulement ; introuvable partout → ligne 
     [2, 'Disparu', 100, 10, 'C', 'Disparu.png', 'Q2', 0, 1],
     [3, 'Ailleurs', 100, 10, 'C', 'Ailleurs.jpg', 'Q3', 0, 0],
     [4, 'Sans image', 100, 10, 'C', null, 'Q4', 0, 1],
+    [5, 'Invalide', 100, 10, 'C', 'Bad<x>.png', 'Q5', 0, 1],
+    [6, 'Vide', 100, 10, 'C', 'Vide.jpg', 'Q6', 0, 1],
   ])
-  const [commons] = imageInfoUrls(['Ici.jpg', 'Disparu.png'], 'commons.wikimedia.org')
-  const [fr] = imageInfoUrls(['Disparu.png'], 'fr.wikipedia.org')
+  const [commons] = imageInfoUrls(['Ici.jpg', 'Disparu.png', 'Bad<x>.png', 'Vide.jpg'], 'commons.wikimedia.org')
   const served = {
     [commons]: {
       query: {
         pages: [
+          { title: 'File:Bad<x>.png', invalidreason: 'Le titre contient des caractères non valides.', invalid: true },
           { ns: 6, title: 'File:Disparu.png', missing: true, imagerepository: '' },
           {
             pageid: 9, ns: 6, title: 'File:Ici.jpg', imagerepository: 'local',
@@ -273,22 +282,19 @@ test('commonsCommand : pages selected seulement ; introuvable partout → ligne 
               extmetadata: { Artist: { value: 'Moi' }, LicenseShortName: { value: 'CC0' } },
             }],
           },
+          { pageid: 10, ns: 6, title: 'File:Vide.jpg', imagerepository: 'local' },
         ],
-      },
-    },
-    [fr]: {
-      query: {
-        normalized: [{ from: 'File:Disparu.png', to: 'Fichier:Disparu.png' }],
-        pages: [{ ns: 6, title: 'Fichier:Disparu.png', missing: true, imagerepository: '' }],
       },
     },
   }
   const { client, urls } = fixtureClient(served)
-  expect(await commonsCommand({ dir, client })).toEqual({ done: 2, skipped: 0, finished: true })
-  expect(urls).toEqual([commons, fr])
+  expect(await commonsCommand({ dir, client })).toEqual({ done: 1, skipped: 0, finished: true })
+  expect(urls).toEqual([commons])
   expect(await mediaTsv(dir)).toEqual([
+    empty('Bad<x>.png'),
+    empty('Disparu.png'),
     ['Ici.jpg', 'Moi', 'CC0', null, thumbUrl('Ici.jpg', { repo: 'commons', mime: 'image/jpeg', width: 100 })],
-    ['Disparu.png', null, null, null, null],
+    empty('Vide.jpg'),
   ])
   const again = fixtureClient(served)
   expect(await commonsCommand({ dir, client: again.client })).toEqual({ done: 0, skipped: 1, finished: true })

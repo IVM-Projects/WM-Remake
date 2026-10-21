@@ -1,11 +1,10 @@
-// Commons (et frwiki pour les fichiers locaux) : imageinfo + extmetadata des images retenues, miniatures 330 px,
-// auteur et licence en texte brut (M2-6, P5, P15), reprenables par lots.
+// Commons : imageinfo + extmetadata des images retenues, miniatures 330 px, auteur et licence en texte brut (M2-6, P5,
+// P15), reprenables par lots. L'hôte frwiki reste au constructeur et au parseur, hors de la commande (M2-R6).
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { batchUrls, batchValues, deadline, fetchBatches } from './http.ts'
 import type { Client } from './http.ts'
-import { readTsv, writeTsv } from './tsv.ts'
+import { readTsv, writeTsv, writtenIds } from './tsv.ts'
 
 const imageInfoBase = (host: string) =>
   `https://${host}/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=330&iiextmetadatafilter=Artist|Attribution|LicenseShortName|LicenseUrl&iiextmetadatalanguage=fr&titles=`
@@ -102,9 +101,9 @@ export function parseImageInfo(body: unknown, repo: 'commons' | 'fr'): { media: 
 
 const names = (url: string) => batchValues(url).map((v) => v.slice('File:'.length))
 
-// media.tsv : file, author|\N, license|\N, license_url|\N, image_url|\N ; écrit en ajout lot par lot. Commons d'abord,
-// puis frwiki pour l'union des fichiers absents de Commons ; introuvable partout → ligne `file` seule (\N ailleurs).
-// Un lot Commons dont chaque fichier y est déjà est sauté ; celui qui attend encore frwiki est redemandé.
+// media.tsv : file, author|\N, license|\N, license_url|\N, image_url|\N ; écrit en ajout, lot par lot, avec une ligne
+// pour chaque fichier du lot : absent de Commons, invalide ou sans imageinfo → ligne `file` seule (\N ailleurs).
+// Un lot dont chaque fichier y est déjà est sauté.
 export async function commonsCommand(o: {
   dir: string
   client: Client
@@ -115,35 +114,19 @@ export async function commonsCommand(o: {
   // catalog.tsv : image en colonne 6, selected en colonne 9.
   for await (const f of readTsv(join(o.dir, 'catalog.tsv'))) if (f[8] === '1' && f[5] !== null) files.push(f[5])
   const path = join(o.dir, 'media.tsv')
-  const written = new Set<string>()
-  if (existsSync(path)) for await (const f of readTsv(path)) written.add(String(f[0]))
-  async function write(media: Media[]) {
-    const fresh = media.filter((m) => !written.has(m.file))
-    for (const m of fresh) written.add(m.file)
-    await writeTsv(path, fresh.map((m) => [m.file, m.author, m.license, m.license_url, m.image_url]), { append: true })
-  }
+  const written = await writtenIds(path)
 
-  const late = deadline(o)
+  // Commons seul (M2-R6) : les fichiers locaux de frwiki sont des logos non libres ou sans licence, sans drapeau NonFree.
   const urls = imageInfoUrls(files, 'commons.wikimedia.org')
   const todo = urls.filter((url) => !names(url).every((f) => written.has(f)))
-  const asked: string[] = []
-  const missing: string[] = []
   let done = 0
-  let finished = await fetchBatches(o.client, todo, late, async (url, body) => {
+  const finished = await fetchBatches(o.client, todo, deadline(o), async (url, body) => {
     done++
-    const r = parseImageInfo(body, 'commons')
-    asked.push(...names(url))
-    missing.push(...r.missing)
-    await write(r.media)
+    const found = new Map(parseImageInfo(body, 'commons').media.map((m) => [m.file, m]))
+    const media = names(url).map((file) => found.get(file) ?? { file, author: null, license: null, license_url: null, image_url: null })
+    // Lignes d'un lot à moitié écrit (run tué) pas répétées.
+    const fresh = media.filter((m) => !written.has(m.file))
+    await writeTsv(path, fresh.map((m) => [m.file, m.author, m.license, m.license_url, m.image_url]), { append: true })
   })
-  if (finished) {
-    const local = imageInfoUrls(missing.filter((f) => !written.has(f)), 'fr.wikipedia.org')
-    finished = await fetchBatches(o.client, local, late, async (_, body) => {
-      done++
-      await write(parseImageInfo(body, 'fr').media)
-    })
-  }
-  // Ligne vide pour l'introuvable (manquant, invalide ou sans imageinfo) : son lot n'est plus redemandé.
-  if (finished) await write(asked.map((file) => ({ file, author: null, license: null, license_url: null, image_url: null })))
   return { done, skipped: urls.length - todo.length, finished }
 }
