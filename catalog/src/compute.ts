@@ -141,11 +141,11 @@ const BANNER = new RegExp(
   String.raw`^(?:(?:Pour [^.!?]*?,\s?vo(?:ir|yez)(?![\w-])|Ne doit pas être confondu|Ne pas confondre|Cet article (?:concerne|traite|est une ébauche|est orphelin|ne cite|ne s['’]appuie|peut contenir)|Cette page (?:d['’]homonymie|est une très courte ébauche|contient des caractères spéciaux)|Vous lisez un «|Vous pouvez (?:partager vos connaissances en l['’]améliorant \(comment\s?\?\)|aider en ajoutant|également enrichir les pages)|Articles? principa(?:l|ux)\s?:|Moins de trois articles lui sont liés|Si vous disposez d['’]ouvrages|En pratique\s?:\s?Quelles sources sont attendues\s?\?\s?Comment ajouter mes sources|À l['’]instar du célèbre «|L['’]article peut contenir des analyses|Pour améliorer la vérifiabilité|S['’]ils s['’]affichent mal|Voir la page de discussion pour plus de détails|Consultez la liste des tâches|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)|Trouver des sources sur «[^»]*»\s?:[^]*?\(wd\)\s?trouver des œuvres sur Wikidata|Sur les autres projets Wikimedia\s?:(?:[^,]*,\s?sur (?:le |la )?Wik\S*(?: Commons)?)+)\s*`,
 )
 
-// Notes de maintenance entre crochets (liste fixe : l'API « [pa.ʁi] » reste) et « Écouter » collé au mot ou après la
-// barre de l'API ; après une espace ordinaire, « Écouter » est un vrai mot (« Son album Écouter… »). Barre de portails
-// en dernière ligne : TextExtracts la garde dans l'intro d'un article sans section.
+// Notes de maintenance entre crochets (liste fixe : l'API « [pa.ʁi] » reste) et « Écouter » collé au mot ou entre la
+// barre de l'API et « ) , ; » ; après une espace, « Écouter » est un vrai mot (« Son album Écouter… », « Lire / Écouter »).
+// Barre de portails en dernière ligne : TextExtracts la garde dans l'intro d'un article sans section.
 const NOISE =
-  /\[(?:réf\.\s?(?:nécessaire|souhaitée)|(?:Quoi|Lequel|Laquelle|Lesquels|Lesquelles|Qui|Quand|Où|Comment|Pourquoi|Combien)\s?\?|source\sinsuffisante|non\sneutre|interprétation\spersonnelle|à\svérifier|pas\sclair)\]|(?<=[\p{L}\p{M}])Écouter(?![\p{L}\p{M}])|(?<=\/)\s?Écouter(?![\p{L}\p{M}])|\n[^\S\n]*Portail [^\n]*$/gu
+  /\[(?:réf\.\s?(?:nécessaire|souhaitée)|(?:Quoi|Lequel|Laquelle|Lesquels|Lesquelles|Qui|Quand|Où|Comment|Pourquoi|Combien)\s?\?|source\sinsuffisante|non\sneutre|interprétation\spersonnelle|à\svérifier|pas\sclair)\]|(?<=[\p{L}\p{M}])Écouter(?![\p{L}\p{M}])|(?<=\/)\s?Écouter(?=\s?[),;])|\n[^\S\n]*Portail [^\n]*\s*$/gu
 
 export function cleanOpening(text: string): string {
   // Une espace insécable seule est gardée (typographie française) ; tabulations et sauts de ligne deviennent des espaces.
@@ -235,8 +235,13 @@ async function extractSummaries(dir: string, pageIds: number[], mode: Mode, clie
   return out
 }
 
+// Description Wikidata d'une page de service (« page d'homonymie de Wikimedia », « page de liste de Wikipédia ») : l'élément
+// lié n'est pas l'article ; « cofondateur de Wikipédia » reste.
+const META = /^(?:page|catégorie|modèle)\b.*\bWiki(?:m[ée]dia|pédia)\s*$/i
+
 // out/cards.csv et out/media.csv des pages retenues, out/counts.json ; stats_v1 sur tout catalog.tsv (M2-2).
-// shortcut: textes et lignes gardés en mémoire (≈ 0,1 Go pour l'échantillon), à lire en flux si le mode full (M8) dépasse le tas.
+// shortcut: textes et lignes gardés en mémoire (2,77 M lignes : ≈ 1,8 Go de tas en sample, ≈ 5,2 Go en full, 85 % des
+// 6 Go du job), le mode full (M8) doit lire en flux.
 export async function computeCommand(o: {
   dir: string
   out: string
@@ -285,6 +290,10 @@ export async function computeCommand(o: {
     if ((t?.incoming_links ?? null) === null) unknown++
     return { text_bytes: t?.text_bytes ?? r.len, incoming_links: t?.incoming_links ?? null, badge: r.badge }
   }))
+  // Une part text-*.tsv manquante passerait pour des pages absentes, et des milliers d'appels TextExtracts.
+  if (absent > Math.max(1, rows.length / 100)) {
+    throw new Error(`Pages absentes de Cirrus : ${absent} sur ${rows.length} (plus de 1 %), une part text-*.tsv manque-t-elle ?`)
+  }
 
   // Pages retenues sans résumé Cirrus (ouvertures d'infobox comprises, M2-R5 ; toutes en repli) : même sélection que
   // `fixtures fetch`, d'où les mêmes URL (Règles de lots).
@@ -316,7 +325,8 @@ export async function computeCommand(o: {
       if (image) credits.push([r.page_id, file, author, license, licenseUrl])
       const title = r.title.replaceAll('_', ' ')
       const { atk, def, q_score } = stats[i]
-      const category = r.qid === null ? null : (desc.get(r.qid) ?? null)
+      const description = r.qid === null ? null : (desc.get(r.qid) ?? null)
+      const category = description !== null && META.test(description) ? null : description
       yield [r.page_id, title, wikipediaUrl(title), 'fr', r.rarity, atk, def, q_score, r.views, viewsAt, statsAt, category, summary, image]
     }
   })())

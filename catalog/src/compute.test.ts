@@ -1,6 +1,8 @@
+import { spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterAll, expect, test } from 'vitest'
 import { RARITY } from '../../lib/rarity.ts'
 import type { RarityCode } from '../../lib/rarity.ts'
@@ -263,6 +265,9 @@ test('cleanOpening : notes de maintenance entre crochets et « Écouter » retir
   // « Écouter » collé au mot ou après l'API ; en tête de phrase, c'est un mot.
   expect(cleanOpening("SankadiokroÉcouter est une localité de l'est de la Côte d'Ivoire.")).toBe("Sankadiokro est une localité de l'est de la Côte d'Ivoire.")
   expect(cleanOpening('Saintes (/sɛ̃t/ Écouter) est une commune.')).toBe('Saintes (/sɛ̃t/) est une commune.')
+  expect(cleanOpening('Paris (/pa.ʁi/ Écouter, ou /paʁi/) est une ville.')).toBe('Paris (/pa.ʁi/, ou /paʁi/) est une ville.')
+  // Après une barre qui n'est pas celle de l'API (pas de « ) , ; » derrière), « Écouter » reste.
+  for (const text of ['Le site /Écouter/ est un dossier.', 'Lire / Écouter.', 'Lire / Écouter']) expect(cleanOpening(text)).toBe(text)
   for (const word of ['Il dort. Écouter la radio est un plaisir.', 'Son album Écouter sort en 2010.', 'Il aime le film Écouter le temps.']) {
     expect(cleanOpening(word)).toBe(word)
   }
@@ -318,7 +323,7 @@ test('hasOpening : infobox V3 ou en Lua dans les modèles → légende en tête,
 
 test('cleanOpening : barre de portails en dernière ligne retirée (TextExtracts), « Portail » dans le texte gardé', () => {
   const extract = 'Pierfrancesco Chili est un pilote de moto italien.\n\n Portail des sports motocyclistes   Portail de l’Italie'
-  expect(cleanOpening(extract)).toBe('Pierfrancesco Chili est un pilote de moto italien.')
+  for (const end of ['', '\n', ' \n  ']) expect(cleanOpening(extract + end)).toBe('Pierfrancesco Chili est un pilote de moto italien.')
   expect(cleanOpening('Le portail est en fer.\nPortail de l’église, il date de 1600.\nIl est classé.')).toBe(
     'Le portail est en fer. Portail de l’église, il date de 1600. Il est classé.',
   )
@@ -371,11 +376,12 @@ async function computeDir(): Promise<string> {
   await writeTsv(join(dir, 'catalog.tsv'), [
     [1, 'Chat_noir', 1000, 30000, 'L', 'Libre.jpg', 'Q1', 1, 1],
     [2, 'Sans_licence', 2000, 10, 'C', 'Sans.jpg', 'Q2', 0, 1],
-    [3, 'Absente', 500, 300, 'R', null, null, 0, 1],
+    [3, 'Absente', 500, 300, 'R', null, 'Q3', 0, 1],
     [4, 'Hors', 100, 0, 'C', null, null, 0, 0],
   ])
   await writeTsv(join(dir, 'text-00000.tsv'), [[1, 5000, 10, 'Le chat noir est un chat.'], [2, 3000, null, null], [4, 100, 0, null]])
-  await writeTsv(join(dir, 'desc.tsv'), [['Q1', 'chat'], ['Q2', null]])
+  // Q2 : libellé d'une page de service, jamais montré ; Q3 : vraie description qui finit par « Wikipédia ».
+  await writeTsv(join(dir, 'desc.tsv'), [['Q1', 'chat'], ['Q2', "page d'homonymie de Wikimedia"], ['Q3', 'mascotte de Wikipédia']])
   await writeTsv(join(dir, 'media.tsv'), [
     ['Libre.jpg', 'Auteur', 'CC BY-SA 4.0', 'https://creativecommons.org/licenses/by-sa/4.0', 'https://upload.wikimedia.org/x/Libre.jpg'],
     ['Sans.jpg', 'Auteur', null, null, 'https://upload.wikimedia.org/x/Sans.jpg'],
@@ -411,7 +417,7 @@ test('computeCommand : pas d’image sans licence, complément TextExtracts, pag
     HEADER,
     `1,Chat noir,https://fr.wikipedia.org/wiki/Chat_noir,fr,L,10000,10000,100,30000,${dates},chat,Le chat noir est un chat.,https://upload.wikimedia.org/x/Libre.jpg`,
     `2,Sans licence,https://fr.wikipedia.org/wiki/Sans_licence,fr,C,7000,7000,47.5,10,${dates},,Texte de la page deux.,`,
-    `3,Absente,https://fr.wikipedia.org/wiki/Absente,fr,R,4000,4000,32.5,300,${dates},,"Une page, absente de Cirrus.",`,
+    `3,Absente,https://fr.wikipedia.org/wiki/Absente,fr,R,4000,4000,32.5,300,${dates},mascotte de Wikipédia,"Une page, absente de Cirrus.",`,
     '',
   ].join('\n'))
   expect(await readFile(join(out, 'media.csv'), 'utf8')).toBe(
@@ -436,6 +442,31 @@ test('computeCommand, repli extracts : text_bytes = len, liens à 0, tous les r�
   expect(rows.map((r) => r.split(',').slice(5, 8))).toEqual([['7000', '10000', '67.5'], ['10000', '7000', '62.5'], ['4000', '4000', '32.5']])
   expect(rows[0]).toContain('"Le chat noir, vu par TextExtracts."')
   expect(counts).toMatchObject({ text_source: 'extracts', cirrus_absent: 0, links_unknown: 0, summaries: { cirrus: 0, extracts: 3, none: 0 } })
+})
+
+test('computeCommand : plus de 1 % des pages absentes de Cirrus (part text-*.tsv manquante) refusé', async () => {
+  const dir = await computeDir()
+  await writeTsv(join(dir, 'text-00000.tsv'), [[2, 3000, null, null], [4, 100, 0, null]])
+  const o = { dir, out: join(dir, 'out'), mode: 'sample', month: '2026-09', textDate: '2026-10-18', textSource: 'cirrus' } as const
+  await expect(computeCommand({ ...o, client: { get: () => Promise.reject(new Error('appel inattendu')) } })).rejects.toThrow(
+    'Pages absentes de Cirrus : 2 sur 4 (plus de 1 %), une part text-*.tsv manque-t-elle ?',
+  )
+})
+
+test('CLI compute : --text-date doit être un jour réel', async () => {
+  const cli = fileURLToPath(new URL('./cli.ts', import.meta.url))
+  const run = (date: string) =>
+    spawnSync(process.execPath, [cli, 'compute', '--dir', join(root, 'absent'), '--out', join(root, 'absent-out'), '--mode', 'sample',
+      '--month', '2026-09', '--text-date', date, '--text-source', 'cirrus'], { encoding: 'utf8' })
+  for (const date of ['2026-02-30', '2026-04-31', '2026-13-01', '2026-1-01']) {
+    const bad = run(date)
+    expect(bad.status).toBe(1)
+    expect(bad.stderr.trim()).toBe(`Option --text-date invalide : ${date}`)
+  }
+  // Un vrai jour passe la validation : l'échec vient ensuite de counts.json absent.
+  const ok = run('2024-02-29')
+  expect(ok.status).toBe(1)
+  expect(ok.stderr).toContain('counts.json')
 })
 
 test('computeCommand : mode différent de celui de select refusé', async () => {

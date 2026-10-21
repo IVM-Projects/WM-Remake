@@ -56,6 +56,10 @@ export type CirrusDoc = {
   template?: string[]
 }
 
+// Modèles d'un document, lus de la même façon par cirrusCommand et `fixtures fetch` (règle d'infobox de usableOpening).
+export const templateList = (v: unknown): string[] | undefined =>
+  Array.isArray(v) ? v.filter((m): m is string => typeof m === 'string') : undefined
+
 const parse = (line: string): unknown => {
   try {
     return JSON.parse(line)
@@ -103,7 +107,7 @@ export async function* cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<
       opening_text: typeof d.opening_text === 'string' ? d.opening_text : undefined,
       text_bytes: d.text_bytes as number,
       incoming_links: Number.isInteger(d.incoming_links) ? (d.incoming_links as number) : undefined,
-      template: Array.isArray(d.template) ? d.template.filter((m): m is string => typeof m === 'string') : undefined,
+      template: templateList(d.template),
     }
   }
   // Flux coupé ou vide : jamais une part sans erreur.
@@ -118,23 +122,31 @@ export async function* cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<
 
 // text-<part>.tsv : page_id, text_bytes, incoming_links|\N, summary|\N ; espace 0 hors redirections.
 // M2-R7 : incoming_links absent = inconnu (pages récentes), jamais 0.
-// Résumé seulement pour une page selected qui passe hasOpening : les autres reçoivent TextExtracts (Règles de lots).
+// Résumé seulement pour une page selected dont l'ouverture nettoyée passe usableOpening (titre et modèles) : les autres
+// reçoivent TextExtracts (Règles de lots).
 export async function cirrusCommand(o: { dir: string; part: string; mode: Mode; input: AsyncIterable<string> }): Promise<{ docs: number; rows: number }> {
   const selected = new Set<number>()
   // catalog.tsv : page_id, title, len, views, rarity, image|\N, qid|\N, badge, selected (0|1).
   for await (const f of readTsv(join(o.dir, 'catalog.tsv'))) if (f[8] === '1') selected.add(Number(f[0]))
   let docs = 0
   let noLinks = 0
+  let noTemplate = 0
   const rows = await writeTsv(join(o.dir, `text-${o.part}.tsv`), (async function* (): AsyncGenerator<Field[]> {
     for await (const d of cirrusDocs(o.input)) {
       docs++
       if (d.namespace !== 0 || d.page_type === 'redirect') continue
       if (d.incoming_links === undefined) noLinks++
+      if (d.template === undefined) noTemplate++
       const text = selected.has(d.page_id) ? cleanOpening(d.opening_text ?? '') : ''
       yield [d.page_id, d.text_bytes, d.incoming_links ?? null, usableOpening(text, d.title, d.template) ? cutSummary(text, SUMMARY_MAX[o.mode]) : null]
     }
   })())
-  // Le champ manque sur les pages récentes (environ 12 % du slice) ; sur la plupart des lignes, il a été renommé.
+  // Le champ manque sur les pages récentes (environ 11 % du slice) ; sur la plupart des lignes, il a été renommé.
   if (noLinks > rows / 2) throw new Error(`Format Cirrus inattendu : ${noLinks} documents sur ${rows} sans incoming_links`)
+  // Chaque page de la tranche a ses modèles ; sans eux, la règle d'infobox V3 ou Lua s'éteint en silence. Le minimum de
+  // 100 lignes laisse passer les petits flux écrits à la main.
+  if (rows >= 100 && noTemplate > rows / 2) {
+    throw new Error(`Format Cirrus inattendu : ${noTemplate} documents sur ${rows} sans template`)
+  }
   return { docs, rows }
 }

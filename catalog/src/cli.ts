@@ -32,6 +32,14 @@ function matching(v: Values, name: string, format: RegExp): string {
   return value
 }
 
+// Jour réel en YYYY-MM-DD : Date reporte le 30 février au 2 mars, que \copy refuserait seulement au chargement.
+function day(v: Values, name: string): string {
+  const value = matching(v, name, /^\d{4}-\d{2}-\d{2}$/)
+  const t = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(t.getTime()) || !t.toISOString().startsWith(value)) throw new Error(`Option --${name} invalide : ${value}`)
+  return value
+}
+
 // Entier ≥ 1, `fallback` si l'option manque.
 function positive(v: Values, name: string, fallback: number): number {
   const value = count(v, name) ?? fallback
@@ -72,7 +80,7 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
       out: need(v, 'out'),
       mode: mode(v),
       month: matching(v, 'month', /^\d{4}-(0[1-9]|1[0-2])$/),
-      textDate: matching(v, 'text-date', /^\d{4}-\d{2}-\d{2}$/),
+      textDate: day(v, 'text-date'),
       textSource,
       client: createClient(),
     })

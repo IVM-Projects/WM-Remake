@@ -3,6 +3,7 @@ import { once } from 'node:events'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
+import { templateList } from './cirrus.ts'
 import { imageInfoUrls, missingFiles } from './commons.ts'
 import { fnv1a32, hasOpening, joinCatalog } from './compute.ts'
 import type { CatalogRow } from './compute.ts'
@@ -221,11 +222,13 @@ export async function fetchCommand(o: {
   const rows: { id: number; image: string | null; qid: string | null }[] = []
   // catalog.tsv : page_id, title, len, views, rarity, image|\N, qid|\N, badge, selected (0|1).
   for await (const f of readTsv(join(o.dir, 'catalog.tsv'))) if (f[8] === '1') rows.push({ id: Number(f[0]), image: f[5], qid: f[6] })
-  // Résumé Cirrus utilisable : document de l'espace 0, pas une redirection, qui passe hasOpening (règle de cirrusCommand).
+  // Résumé Cirrus utilisable : document de l'espace 0 avec un title (cirrusDocs saute les autres), pas une redirection,
+  // qui passe hasOpening avec ses modèles lus comme dans cirrus.ts (règle de cirrusCommand).
   const opening = new Set<number>()
   for await (const line of openLines(join(raw, 'cirrus.ndjson'))) {
-    const d = JSON.parse(line) as { page_id?: number; namespace?: number; title?: string; page_type?: string; opening_text?: string; template?: string[] }
-    if (d.page_id !== undefined && d.namespace === 0 && d.page_type !== 'redirect' && hasOpening(d.opening_text, d.title, d.template)) opening.add(d.page_id)
+    const d = JSON.parse(line) as { page_id?: number; namespace?: number; title?: unknown; page_type?: string; opening_text?: string; template?: unknown }
+    if (d.page_id === undefined || typeof d.title !== 'string' || d.namespace !== 0 || d.page_type === 'redirect') continue
+    if (hasOpening(d.opening_text, d.title, templateList(d.template))) opening.add(d.page_id)
   }
   const ids = rows.map((r) => r.id)
   const extractUrls = [...new Set([...extractsUrls(ids.filter((id) => !opening.has(id))), ...extractsUrls(ids.slice(0, 40))])]
