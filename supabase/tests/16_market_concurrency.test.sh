@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Marché en parallèle (joueurs et cartes supprimés à la sortie, config restaurée). Partout : aucun 40P01 ni 55P03, M = Σ soldes des quatre
 # joueurs + Σ current_bid de leurs enchères actives menées, conservé à l'unité, invariants vides.
-# 1. Surenchères croisées : 100 mises de A et B sur X et Y, lâchées d'un coup → seuls refus bid_too_low et « Tu es déjà en tête », chaque
+# 1. Surenchères croisées : 60 mises de A et B sur X et Y, lâchées d'un coup → seuls refus bid_too_low et « Tu es déjà en tête », chaque
 #    mise remboursée au plus une fois.
 # 2. Double règlement : 20 settle_auction(X) et 20 settle_due_auctions() → une seule ligne settle: par enchère, une seule copie gagnée.
 # 3. Mise contre règlement à la fin de Z, sur 5 tours : jamais une mise acceptée après settled_at ; prolongée au 1er tour, réglée au 5e.
@@ -60,13 +60,14 @@ check() {
   [[ "$(q -c 'select wm.check_invariants()')" == '[]' ]] || fail "$1 : invariants violés $(q -c 'select wm.check_invariants()')"
 }
 
-# 1. Surenchères croisées : X et Y sont tenues 1 s (la moitié du lock_timeout) le temps de lancer les 100 mises.
+# 1. Surenchères croisées : X et Y sont tenues 1 s (la moitié du lock_timeout) le temps de lancer les 60 mises. 60 et pas 100 : toutes
+# attendent le bloqueur, et 100 connexions de plus que lui dépassaient le max_connections de 100 du banc et de la CI (« too many clients »).
 x="$(list "$v" "$cx")"; y="$(list "$v" "$cy")"
 m0="$(money)"
 q -c "begin; select from public.auctions where id in ('$x', '$y') for update; select pg_sleep(1); commit;" >/dev/null &
 blocker=$!
 until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do kill -0 "$blocker"; done
-for i in $(seq 25); do
+for i in $(seq 15); do
   bg "1ax$i" "select wm.place_bid('$a', '$x', $((100 + 4 * i)))"
   bg "1bx$i" "select wm.place_bid('$b', '$x', $((102 + 4 * i)))"
   bg "1by$i" "select wm.place_bid('$b', '$y', $((100 + 4 * i)))"
@@ -75,7 +76,7 @@ done
 wait "$blocker"
 waitall
 refusals 'bid_too_low|Tu es déjà en tête' "$tmp"/1*
-(( fails > 0 && fails < 100 )) || fail "surenchères : $fails échecs"
+(( fails > 0 && fails < 60 )) || fail "surenchères : $fails échecs"
 [[ -z "$(q -c "select count(*) from wm.wb_ledger where reason = 'refund' group by ref having count(*) > 1")" ]] || fail "remboursement en double"
 check surenchères
 
