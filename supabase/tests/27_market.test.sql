@@ -306,3 +306,195 @@ do $$ declare s uuid := pg_temp.player('Inv1'); b uuid := pg_temp.player('Inv2',
   delete from public.user_cards where id = (e.user_card ->> 'id')::uuid;
   perform pg_temp.inv('invariants rétablis');
 end $$;
+
+-- Mise en vente, retrait, baisse de prix (1610).
+-- Copie neuve mise en vente, fenêtre de rafale remise à zéro (la 5e mise en vente retirerait la vérification) ; renvoie l'id de l'enchère.
+create function pg_temp.listing(p_seller uuid, p_card uuid, p_base int default 10, p_minutes int default 60) returns uuid language plpgsql as $$
+declare k public.user_cards := wm.grant_copy(p_seller, p_card, false); begin
+  update wm.user_state set list_window_count = 0 where user_id = p_seller;
+  return wm.create_auction(p_seller, k.id, p_base, p_minutes) ->> 'auction_id';
+end $$;
+
+-- Première mise posée à la main (place_bid : Task 4), avec sa réservation au grand livre (bid:<id>) que les invariants exigent.
+create function pg_temp.bid(p_auction uuid, p_bidder uuid, p_amount int) returns void language plpgsql as $$
+declare m uuid; begin
+  insert into public.auction_bids (auction_id, bidder_id, amount) values (p_auction, p_bidder, p_amount) returning id into m;
+  perform wm.wallet_apply(p_bidder, -p_amount, 'bid', 'bid:' || m);
+  update public.auctions set current_bid = p_amount, current_bidder_id = p_bidder, bids_count = bids_count + 1 where id = p_auction;
+end $$;
+
+-- create_auction par id de copie (M3-14) : réponse {auction_id, id, end_at}, end_at = clock_timestamp() + durée (M3-11), snapshots et
+-- brillance de la copie, document de recherche titre ‖ catégorie ‖ 300 premiers caractères du résumé, prix d'origine gardé, copie au
+-- séquestre, une ligne de file d'alertes, rafale comptée.
+do $$ declare s uuid := pg_temp.player('Vente1'); c uuid := pg_temp.card('Vente marché', 'SR', repeat('x', 400));
+  k public.user_cards := wm.grant_copy(s, c, true); t0 timestamptz; t1 timestamptz; r jsonb; a public.auctions; begin
+  t0 := clock_timestamp();
+  r := wm.create_auction(s, k.id, 25, 60);
+  t1 := clock_timestamp();
+  assert (select array_agg(x order by x) from jsonb_object_keys(r) x) = array['auction_id', 'end_at', 'id'] and r -> 'id' = r -> 'auction_id',
+    r::text;
+  select * into a from public.auctions where id = (r ->> 'auction_id')::uuid;
+  assert (r ->> 'end_at')::timestamptz = a.end_at and a.end_at between t0 + interval '60 minutes' and t1 + interval '60 minutes', r::text;
+  assert a.seller_id = s and a.card_id = c and a.user_card_id = k.id and a.status = 'active' and a.snapshot_rarity = k.snapshot_rarity
+    and a.snapshot_atk = k.snapshot_atk and a.snapshot_def = k.snapshot_def and a.is_shiny = k.is_shiny and a.is_shiny, to_jsonb(a)::text;
+  assert a.snapshot_search_document = 'Vente marché Catégorie marché ' || repeat('x', 300)
+    and length(a.snapshot_search_document) = length(k.snapshot_title) + 1 + length(k.snapshot_category) + 1 + 300, a.snapshot_search_document;
+  assert a.base_amount = 25 and a.listing_base_amount = 25 and a.base_repriced_at is null and a.current_bid is null and a.bids_count = 0,
+    to_jsonb(a)::text;
+  assert not exists (select from public.user_cards where id = k.id), 'copie restée dans user_cards';
+  assert (select user_card = to_jsonb(k) and duration_minutes = 60 from wm.auction_escrow where auction_id = a.id), 'séquestre';
+  assert (select count(*) from wm.wishlist_alert_queue where auction_id = a.id and cursor_user is null and done_at is null) = 1, 'file d''alertes';
+  assert (select list_window_count from wm.user_state where user_id = s) = 1, 'rafale non comptée';
+  perform pg_temp.inv('mise en vente');
+end $$;
+
+-- Par id catalogue : la copie la plus ancienne du vendeur (obtained_at), pas la première créée ni celle d'un autre joueur.
+-- Copie d'un autre joueur ou id inconnu → 403 42501.
+do $$ declare s uuid := pg_temp.player('Vente2'); o uuid := pg_temp.player('Vente3'); c uuid := pg_temp.card('Catalogue marché');
+  k1 public.user_cards := wm.grant_copy(s, c, false); k2 public.user_cards := wm.grant_copy(s, c, false);
+  k3 public.user_cards := wm.grant_copy(s, c, false); ko public.user_cards := wm.grant_copy(o, c, false); r jsonb;
+  d jsonb := '{"status":403,"code":"42501","error":"Vous ne possédez pas cette carte","message":"Vous ne possédez pas cette carte"}';
+  q text := 'select wm.create_auction(%L, %L, 10, 60)'; begin
+  update public.user_cards set obtained_at = now() - interval '3 days' where id = k2.id;
+  update public.user_cards set obtained_at = now() - interval '2 days' where id = k3.id;
+  update public.user_cards set obtained_at = now() - interval '1 day' where id = k1.id;
+  update public.user_cards set obtained_at = now() - interval '4 days' where id = ko.id;
+  r := wm.create_auction(s, c, 10, 60);
+  assert (select user_card_id from public.auctions where id = (r ->> 'auction_id')::uuid) = k2.id, 'pas la plus ancienne';
+  assert pg_temp.err(format(q, s, ko.id)) = d, 'copie d''un autre joueur';
+  assert pg_temp.err(format(q, s, gen_random_uuid())) = d, 'id inconnu';
+  assert exists (select from public.user_cards where id = ko.id), 'copie de l''autre joueur partie';
+  perform pg_temp.inv('par id catalogue');
+end $$;
+
+-- Durée hors liste et mise de départ < 1, nulles comprises → 400, la durée d'abord ; 1440 accepté par l'API (M3-10).
+do $$ declare s uuid := pg_temp.player('Vente4'); c uuid := pg_temp.card('Durée marché'); k public.user_cards := wm.grant_copy(s, c, false);
+  q text := 'select wm.create_auction(%L, %L, %L, %L)'; x uuid;
+  dd jsonb := '{"status":400,"code":"invalid_request","error":"Durée d''enchère invalide","message":"Durée d''enchère invalide"}';
+  db jsonb := '{"status":400,"code":"invalid_request","error":"La mise de départ doit être d''au moins 1 wikibidou","message":"La mise de départ doit être d''au moins 1 wikibidou"}';
+  begin
+  assert pg_temp.err(format(q, s, k.id, 10, 45)) = dd and pg_temp.err(format(q, s, k.id, 10, null)) = dd
+    and pg_temp.err(format(q, s, k.id, 0, 45)) = dd, 'durée invalide';
+  assert pg_temp.err(format(q, s, k.id, 0, 60)) = db and pg_temp.err(format(q, s, k.id, null, 60)) = db, 'mise de départ invalide';
+  x := pg_temp.listing(s, c, 1, 1440);
+  assert (select duration_minutes = 1440 from wm.auction_escrow where auction_id = x)
+    and (select base_amount = 1 and end_at > now() + interval '1439 minutes' from public.auctions where id = x), '1440';
+end $$;
+
+-- Limite (M3-14) : 5 enchères actives pour un gratuit, échue non réglée comprise, une retirée ne compte plus ; 10 pour un Pro.
+do $$ declare f uuid := pg_temp.player('Limite1'); p uuid := pg_temp.player('Limite2', 0, true); c uuid := pg_temp.card('Limite marché');
+  q text := 'select pg_temp.listing(%L, %L)'; x uuid; d jsonb; begin
+  for i in 1 .. 5 loop x := pg_temp.listing(f, c); end loop;
+  update public.auctions set end_at = now() - interval '1 minute' where id = x;
+  d := pg_temp.err(format(q, f, c));
+  assert d = '{"status":409,"error":"Limite de 5 enchères actives atteinte","message":"Limite de 5 enchères actives atteinte"}', coalesce(d::text, 'acceptée');
+  perform wm.cancel_auction(f, x);
+  perform pg_temp.listing(f, c);
+  for i in 1 .. 10 loop perform pg_temp.listing(p, c); end loop;
+  d := pg_temp.err(format(q, p, c));
+  assert d = '{"status":409,"error":"Limite de 10 enchères actives atteinte","message":"Limite de 10 enchères actives atteinte"}', coalesce(d::text, 'acceptée');
+  perform pg_temp.inv('limite');
+end $$;
+
+-- Rafale (M3-13, P3), Pro et fenêtre jamais remise à zéro : la 5e mise en vente passe et retire la vérification, la 6e reçoit le 403 sans
+-- rien écrire ; vérifié à nouveau, elle passe.
+do $$ declare s uuid := pg_temp.player('Rafale1', 0, true); c uuid := pg_temp.card('Rafale marché'); k public.user_cards; d jsonb; begin
+  for i in 1 .. 5 loop
+    perform wm.create_auction(s, (wm.grant_copy(s, c, false)).id, 10, 60);
+    assert (select (human_verified_until is null) = (i = 5) from wm.user_state where user_id = s), 'vérification après la vente ' || i;
+  end loop;
+  k := wm.grant_copy(s, c, false);
+  d := pg_temp.err(format('select wm.create_auction(%L, %L, 10, 60)', s, k.id));
+  assert d ->> 'code' = 'human_verification_required' and d -> 'human_verification_required' = 'true', coalesce(d::text, '6e acceptée');
+  assert exists (select from public.user_cards where id = k.id), 'copie partie malgré le refus';
+  perform wm.set_human_verified(s);
+  perform wm.create_auction(s, k.id, 10, 60);
+  assert (select count(*) from public.auctions where seller_id = s) = 6, '6e refusée après vérification';
+end $$;
+
+-- Même Idempotency-Key : même réponse, une seule enchère, alors qu'une seconde copie permettrait une seconde vente.
+do $$ declare s uuid := pg_temp.player('Idem1'); c uuid := pg_temp.card('Idem marché'); r jsonb; begin
+  perform wm.grant_copy(s, c, false);
+  perform wm.grant_copy(s, c, false);
+  r := wm.create_auction(s, c, 10, 60, 'vente-1');
+  assert wm.create_auction(s, c, 10, 60, 'vente-1') = r, 'réponse rejouée différente';
+  assert (select count(*) from public.auctions where seller_id = s) = 1 and (select count(*) from public.user_cards where user_id = s) = 1,
+    'vente rejouée';
+end $$;
+
+-- cancel_auction (M3-16) : inconnue → 404, autre joueur → 403, mise posée → 409, sans rien écrire ; échue sans mise → retirée.
+do $$ declare s uuid := pg_temp.player('Retrait1'); o uuid := pg_temp.player('Retrait2', 100); c uuid := pg_temp.card('Retrait marché');
+  x uuid := pg_temp.listing(s, c); y uuid := pg_temp.listing(s, c); q text := 'select wm.cancel_auction(%L, %L)'; d jsonb; r jsonb; begin
+  d := pg_temp.err(format(q, s, gen_random_uuid()));
+  assert d = '{"status":404,"error":"Enchère introuvable","message":"Enchère introuvable"}', coalesce(d::text, 'inconnue acceptée');
+  d := pg_temp.err(format(q, o, x));
+  assert d = '{"status":403,"error":"Seul le vendeur peut modifier cette enchère","message":"Seul le vendeur peut modifier cette enchère"}',
+    coalesce(d::text, 'autre joueur accepté');
+  perform pg_temp.bid(y, o, 15);
+  d := pg_temp.err(format(q, s, y));
+  assert d = '{"status":409,"error":"Une enchère en cours ne peut pas être retirée","message":"Une enchère en cours ne peut pas être retirée"}',
+    coalesce(d::text, 'retrait avec mise accepté');
+  assert (select status = 'active' from public.auctions where id = y) and exists (select from wm.auction_escrow where auction_id = y)
+    and (select status = 'active' from public.auctions where id = x), 'refus qui écrit';
+  update public.auctions set end_at = now() - interval '1 minute' where id = x;
+  r := wm.cancel_auction(s, x);
+  assert r -> 'ok' = 'true' and (select status = 'cancelled' and settled_at is null from public.auctions where id = x)
+    and exists (select from public.user_cards where id = (r ->> 'user_card_id')::uuid and user_id = s), r::text;
+  perform pg_temp.inv('retrait');
+end $$;
+
+-- Review Focus, retrait d'une copie étiquetée (brillante, favorite, deux étiquettes, en avatar, obtenue le 1er janvier) : nouvelle ligne au
+-- vendeur, id neuf, count 1, pas favorite, sans étiquettes, obtained_at et snapshots d'origine ; plus de séquestre, enchère cancelled.
+-- Même clé rejouée → même réponse et une seule copie rendue ; sans clé → 409 « terminée ».
+do $$ declare s uuid := pg_temp.player('Retrait3'); c uuid := pg_temp.card('Retrait étiqueté marché', 'UR');
+  k public.user_cards := wm.grant_copy(s, c, true); x uuid; r jsonb; u public.user_cards; t1 uuid; t2 uuid; d jsonb; begin
+  update public.user_cards set starred = true, obtained_at = '2026-01-01 08:00+00' where id = k.id returning * into k;
+  insert into public.tags (user_id, name) values (s, 'retrait-1') returning id into t1;
+  insert into public.tags (user_id, name) values (s, 'retrait-2') returning id into t2;
+  insert into public.user_card_tags (user_card_id, tag_id) values (k.id, t1), (k.id, t2);
+  update public.profiles set avatar_user_card_id = k.id where id = s;
+  x := wm.create_auction(s, k.id, 10, 60) ->> 'auction_id';
+  r := wm.cancel_auction(s, x, 'retrait-1');
+  assert (select array_agg(e order by e) from jsonb_object_keys(r) e) = array['ok', 'user_card_id'] and r -> 'ok' = 'true', r::text;
+  select * into u from public.user_cards where id = (r ->> 'user_card_id')::uuid;
+  assert u.id <> k.id and u.user_id = s and u.count = 1 and not u.starred and u.obtained_at = '2026-01-01 08:00+00', to_jsonb(u)::text;
+  assert to_jsonb(u) - array['id', 'starred'] = to_jsonb(k) - array['id', 'starred'], 'copie rendue différente de l''originale';
+  assert not exists (select from public.user_card_tags where user_card_id = u.id), 'étiquettes sur la copie rendue';
+  assert not exists (select from wm.auction_escrow where auction_id = x) and (select status from public.auctions where id = x) = 'cancelled',
+    'séquestre ou statut';
+  assert wm.cancel_auction(s, x, 'retrait-1') = r, 'rejeu différent';
+  assert (select count(*) from public.user_cards where user_id = s) = 1, 'copie rendue deux fois';
+  d := pg_temp.err(format('select wm.cancel_auction(%L, %L)', s, x));
+  assert d = '{"status":409,"error":"Cette enchère est terminée","message":"Cette enchère est terminée"}', coalesce(d::text, 'second retrait accepté');
+  perform pg_temp.inv('retrait étiqueté');
+end $$;
+
+-- reprice_auction (M3-17), 60 min et 25 au départ, donc n = 12 : après la moitié de la durée (lue au séquestre), prix dans [1, 12], une seule
+-- fois, listing_base_amount gardé ; mise posée → 409 ; autre joueur → 403 ; inconnue → 404 ; retirée → 409 « terminée ».
+do $$ declare s uuid := pg_temp.player('Baisse1'); o uuid := pg_temp.player('Baisse2', 100); c uuid := pg_temp.card('Baisse marché');
+  x uuid := pg_temp.listing(s, c, 25, 60); y uuid := pg_temp.listing(s, c); q text := 'select wm.reprice_auction(%L, %L, %L)';
+  n jsonb := '{"status":400,"code":"invalid_request","error":"Le nouveau prix doit être compris entre 1 et 12 wikibidous","message":"Le nouveau prix doit être compris entre 1 et 12 wikibidous"}';
+  d jsonb; r jsonb; a public.auctions; begin
+  d := pg_temp.err(format(q, s, x, 12));
+  assert d = '{"status":409,"error":"Le prix ne peut être baissé qu''après la moitié de la durée","message":"Le prix ne peut être baissé qu''après la moitié de la durée"}',
+    coalesce(d::text, 'baisse avant la moitié acceptée');
+  update public.auctions set created_at = now() - interval '31 minutes' where id = x;
+  assert pg_temp.err(format(q, s, x, 13)) = n and pg_temp.err(format(q, s, x, 0)) = n and pg_temp.err(format(q, s, x, null)) = n, 'hors [1, 12]';
+  r := wm.reprice_auction(s, x, 12, 'baisse-1');
+  select * into a from public.auctions where id = x;
+  assert r = jsonb_build_object('ok', true, 'base_amount', 12, 'base_repriced_at', a.base_repriced_at) and a.base_repriced_at > now()
+    and a.base_amount = 12 and a.listing_base_amount = 25, r::text;
+  assert wm.reprice_auction(s, x, 12, 'baisse-1') = r, 'rejeu différent';
+  d := pg_temp.err(format(q, s, x, 10));
+  assert d = '{"status":409,"error":"Le prix a déjà été baissé une fois","message":"Le prix a déjà été baissé une fois"}',
+    coalesce(d::text, 'seconde baisse acceptée');
+  perform pg_temp.bid(x, o, 12);
+  d := pg_temp.err(format(q, s, x, 10));
+  assert d = '{"status":409,"error":"Une enchère en cours ne peut pas être modifiée","message":"Une enchère en cours ne peut pas être modifiée"}',
+    coalesce(d::text, 'baisse avec mise acceptée');
+  assert pg_temp.err(format(q, o, y, 5)) ->> 'error' = 'Seul le vendeur peut modifier cette enchère', 'autre joueur accepté';
+  assert pg_temp.err(format(q, s, gen_random_uuid(), 5)) ->> 'error' = 'Enchère introuvable', 'inconnue acceptée';
+  perform wm.cancel_auction(s, y);
+  assert pg_temp.err(format(q, s, y, 5)) ->> 'error' = 'Cette enchère est terminée', 'retirée acceptée';
+  perform pg_temp.inv('baisse de prix');
+end $$;
