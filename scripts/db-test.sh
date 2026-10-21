@@ -10,6 +10,8 @@ tests="$root/supabase/tests"
 setup_only=false
 [[ "${1:-}" == --setup-only ]] && setup_only=true
 [[ "${1:-}" == --stop && -n "${DATABASE_URL:-}" ]] && exit 0
+# pg-safeupdate de la base hébergée : pas de DELETE/UPDATE sans WHERE, vérifié avant de monter le cluster (rien sur stdout).
+[[ "${1:-}" == --stop ]] || node "$root/scripts/check-dml.ts"
 
 export LC_COLLATE=C                                                  # ordre lexical des migrations
 export PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning"     # pas de NOTICE parasite

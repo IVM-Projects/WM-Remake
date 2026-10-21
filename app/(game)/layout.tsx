@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Bell } from '@/components/shell/Bell'
 import { BottomBar } from '@/components/shell/BottomBar'
+import { Footer } from '@/components/shell/Footer'
 import { Logo } from '@/components/shell/Logo'
 import { Sidebar } from '@/components/shell/Sidebar'
 
@@ -15,7 +16,10 @@ export default function GameLayout({ children }: { children: ReactNode }) {
           <Logo />
           <Bell />
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          {children}
+          <Footer />
+        </main>
       </div>
       <BottomBar />
     </div>

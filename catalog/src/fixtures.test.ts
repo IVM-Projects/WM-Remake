@@ -148,11 +148,13 @@ test('fetch : Règles de lots sur toutes les pages choisies, corps rangés par U
     ...ids.map((id) => [id, `P${id}`, 100, 0, 'C', image(id), `Q${id}`, 0, 1]),
     [46, 'P46', 100, 0, 'C', 'Hors.jpg', 'Q46', 0, 0],
   ])
-  // 44 : bandeau seul ; 45 : seulement une redirection du même id ; les autres ont un texte.
+  // 41 : infobox en Lua (modèles filtrés comme dans cirrus.ts) ; 42 : template qui n'est pas un tableau, ignoré comme
+  // dans cirrus.ts ; 43 : sans title, sauté comme par cirrusDocs ; 44 : bandeau seul ; 45 : seulement une redirection.
+  const extra: Record<number, object> = { 41: { template: [null, 'Modèle:Infobox en Lua'] }, 42: { template: 'Modèle:Infobox en Lua' }, 43: { title: undefined } }
   const docs = [
-    ...ids.slice(0, 43).map((id) => ({ page_id: id, namespace: 0, opening_text: 'Texte.' })),
-    { page_id: 44, namespace: 0, opening_text: 'Pour les articles homonymes, voir Quarante-quatre.' },
-    { page_id: 45, namespace: 0, page_type: 'redirect', opening_text: 'Texte.' },
+    ...ids.slice(0, 43).map((id) => ({ page_id: id, namespace: 0, title: `T${id}`, opening_text: 'Texte.', ...extra[id] })),
+    { page_id: 44, namespace: 0, title: 'T44', opening_text: 'Pour les articles homonymes, voir Quarante-quatre.' },
+    { page_id: 45, namespace: 0, title: 'T45', page_type: 'redirect', opening_text: 'Texte.' },
   ]
   await writeFile(join(fixtures, 'raw', 'cirrus.ndjson'), docs.map((d) => `{"index": {"_id": ${d.page_id}}}\n${JSON.stringify(d)}\n`).join(''))
 
@@ -169,13 +171,39 @@ test('fetch : Règles de lots sur toutes les pages choisies, corps rangés par U
   const wikidata = entitiesUrls(ids.map((id) => `Q${id}`))
   const commons = imageInfoUrls(ids.flatMap((id) => image(id) ?? []), 'commons.wikimedia.org')
   const fr = imageInfoUrls(["Vue_d'1.jpg"], 'fr.wikipedia.org')
-  const extracts = [...new Set([...extractsUrls([44, 45]), ...extractsUrls(ids.slice(0, 40))])]
+  const extracts = [...new Set([...extractsUrls([41, 43, 44, 45]), ...extractsUrls(ids.slice(0, 40))])]
   expect(Object.keys(await read('wikidata.json'))).toEqual(wikidata)
   expect(Object.keys(await read('commons.json'))).toEqual([...commons, ...fr])
   expect(Object.keys(await read('extracts.json'))).toEqual(extracts)
   expect((await read('wikidata.json'))[wikidata[0]]).toEqual({ url: wikidata[0] })
   expect(asked.toSorted()).toEqual([...wikidata, ...commons, ...fr, ...extracts].toSorted())
   expect(result).toEqual({ wikidata: wikidata.length, commons: commons.length + fr.length, extracts: extracts.length })
+})
+
+test('fetch --only extracts : exactement les lots des règles, corps déjà là repris, lot mort retiré, autres tranches intactes', async () => {
+  const work = join(dir, 'only')
+  const fixtures = join(dir, 'only-fixtures')
+  await mkdir(work)
+  await mkdir(join(fixtures, 'raw'), { recursive: true })
+  await writeTsv(join(work, 'catalog.tsv'), [1, 2, 3].map((id) => [id, `P${id}`, 100, 0, 'C', null, `Q${id}`, 0, 1]))
+  // 2 : ouverture d'infobox (titre suivi d'une majuscule, M2-R5) ; 3 : sans texte.
+  const docs = [
+    { page_id: 1, namespace: 0, title: 'Chat', opening_text: 'Le chat est un mammifère.' },
+    { page_id: 2, namespace: 0, title: 'Chien (animal)', opening_text: 'Chien Photo du chien. Le chien aboie.' },
+    { page_id: 3, namespace: 0, title: 'Loup' },
+  ]
+  await writeFile(join(fixtures, 'raw', 'cirrus.ndjson'), docs.map((d) => `{"index": {"_id": ${d.page_id}}}\n${JSON.stringify(d)}\n`).join(''))
+  const [kept] = extractsUrls([1, 2, 3])
+  const dead = extractsUrls([3])[0]
+  await writeFile(join(fixtures, 'raw', 'extracts.json'), JSON.stringify({ [kept]: { old: true }, [dead]: { dead: true } }))
+
+  const asked: string[] = []
+  const client = { async get(url: string) { asked.push(url); return { url } } }
+  expect(await fetchCommand({ dir: work, fixtures, client, only: 'extracts' })).toEqual({ extracts: 2 })
+  const [fresh] = extractsUrls([2, 3])
+  expect(asked).toEqual([fresh])
+  expect(JSON.parse(await readFile(join(fixtures, 'raw', 'extracts.json'), 'utf8'))).toEqual({ [kept]: { old: true }, [fresh]: { url: fresh } })
+  for (const name of ['wikidata.json', 'commons.json']) await expect(readFile(join(fixtures, 'raw', name))).rejects.toThrow('ENOENT')
 })
 
 test('README et meta.json : sources datées, licences, mois en YYYY-MM', async () => {

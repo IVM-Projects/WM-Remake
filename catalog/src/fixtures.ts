@@ -1,8 +1,9 @@
 // Mode `fixtures` de catalog.yml (M2-7) : choix d'environ 300 pages et tranches cohérentes des vraies sources.
 import { once } from 'node:events'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
+import { templateList } from './cirrus.ts'
 import { imageInfoUrls, missingFiles } from './commons.ts'
 import { fnv1a32, hasOpening, joinCatalog } from './compute.ts'
 import type { CatalogRow } from './compute.ts'
@@ -210,25 +211,42 @@ export async function sliceCirrusCommand(o: { input: NodeJS.ReadableStream; fixt
 }
 
 // Règles de lots du plan sur toutes les pages `selected` de catalog.tsv, puis extractsUrls des 40 premiers ids.
-export async function fetchCommand(o: { dir: string; fixtures: string; client: Client }): Promise<{ wikidata: number; commons: number; extracts: number }> {
+// only 'extracts' (M2-R5) : extracts.json = exactement les lots de ces règles ; corps déjà là repris, les autres demandés.
+export async function fetchCommand(o: {
+  dir: string
+  fixtures: string
+  client: Client
+  only?: 'extracts'
+}): Promise<{ wikidata?: number; commons?: number; extracts: number }> {
   const raw = join(o.fixtures, 'raw')
   const rows: { id: number; image: string | null; qid: string | null }[] = []
   // catalog.tsv : page_id, title, len, views, rarity, image|\N, qid|\N, badge, selected (0|1).
   for await (const f of readTsv(join(o.dir, 'catalog.tsv'))) if (f[8] === '1') rows.push({ id: Number(f[0]), image: f[5], qid: f[6] })
-  // Résumé Cirrus utilisable : document de l'espace 0, pas une redirection, qui passe hasOpening.
+  // Résumé Cirrus utilisable : document de l'espace 0 avec un title (cirrusDocs saute les autres), pas une redirection,
+  // qui passe hasOpening avec ses modèles lus comme dans cirrus.ts (règle de cirrusCommand).
   const opening = new Set<number>()
   for await (const line of openLines(join(raw, 'cirrus.ndjson'))) {
-    const d = JSON.parse(line) as { page_id?: number; namespace?: number; page_type?: string; opening_text?: string }
-    if (d.page_id !== undefined && d.namespace === 0 && d.page_type !== 'redirect' && hasOpening(d.opening_text)) opening.add(d.page_id)
+    const d = JSON.parse(line) as { page_id?: number; namespace?: number; title?: unknown; page_type?: string; opening_text?: string; template?: unknown }
+    if (d.page_id === undefined || typeof d.title !== 'string' || d.namespace !== 0 || d.page_type === 'redirect') continue
+    if (hasOpening(d.opening_text, d.title, templateList(d.template))) opening.add(d.page_id)
   }
   const ids = rows.map((r) => r.id)
+  const extractUrls = [...new Set([...extractsUrls(ids.filter((id) => !opening.has(id))), ...extractsUrls(ids.slice(0, 40))])]
+
+  if (o.only === 'extracts') {
+    const path = join(raw, 'extracts.json')
+    const old = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    const fresh = await fetchRaw(o.client, extractUrls.filter((url) => !Object.hasOwn(old, url)))
+    const extracts = Object.fromEntries(extractUrls.map((url) => [url, Object.hasOwn(old, url) ? old[url] : fresh[url]]))
+    await writeFile(path, `${JSON.stringify(extracts, null, 2)}\n`)
+    return { extracts: Object.keys(extracts).length }
+  }
 
   const wikidata = await fetchRaw(o.client, entitiesUrls(rows.flatMap((r) => r.qid ?? [])))
   const commons = await fetchRaw(o.client, imageInfoUrls(rows.flatMap((r) => r.image ?? []), 'commons.wikimedia.org'))
   const missing = Object.values(commons).flatMap((body) => missingFiles(body))
   Object.assign(commons, await fetchRaw(o.client, imageInfoUrls(missing, 'fr.wikipedia.org')))
-  const extractUrls = new Set([...extractsUrls(ids.filter((id) => !opening.has(id))), ...extractsUrls(ids.slice(0, 40))])
-  const extracts = await fetchRaw(o.client, [...extractUrls])
+  const extracts = await fetchRaw(o.client, extractUrls)
 
   const files = { 'wikidata.json': wikidata, 'commons.json': commons, 'extracts.json': extracts }
   for (const [name, bodies] of Object.entries(files)) await writeFile(join(raw, name), `${JSON.stringify(bodies, null, 2)}\n`)

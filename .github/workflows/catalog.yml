@@ -2,6 +2,8 @@ name: Catalogue
 
 # Catalogue de cartes depuis les dumps et les API Wikimedia (M2), lancé à la main ou par l'API.
 # Mode `fixtures` : tranches réelles d'environ 300 pages pour les tests (M2-7), en artefact `fixtures-raw`.
+# Modes `sample` et `full` : dumps → vues → échantillon → texte Cirrus (une part par job), Wikidata et Commons
+# (reprenables par le cache) → compute, en artefact `catalog-out` (cards.csv, media.csv, counts.json).
 # Pas de `schedule` avant le premier chargement réussi (P12).
 on:
   workflow_dispatch:
@@ -46,6 +48,10 @@ permissions:
   contents: read
   actions: read
 
+env:
+  # User-Agent du projet sur chaque curl vers Wikimedia : leur politique des robots bride les agents génériques.
+  UA: 'WMRCatalog/1.0 (https://github.com/IVM-Projects/wm-remake) curl'
+
 jobs:
   fixtures:
     if: inputs.mode == 'fixtures'
@@ -60,15 +66,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-      - run: sudo apt-get update -q && sudo apt-get install -y -q lbzip2
+      - run: sudo apt-get -o Acquire::Retries=3 update -q && sudo apt-get -o Acquire::Retries=3 install -y -q lbzip2
 
       - name: Dumps SQL page et page_props
         run: |
           mkdir -p work catalog/fixtures/raw
           # Téléchargements sur disque, jamais en tube : un flux coupé ou figé tuerait le run, un fichier se retente
           # (curl efface la sortie partielle). -R : date du fichier distant, reprise dans le README.
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -R -o work/page.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -R -o work/page_props.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page_props.sql.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -R -o work/page.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -R -o work/page_props.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page_props.sql.gz
           echo "DUMP_DATE=$(date -u -r work/page.sql.gz +%F)" >> "$GITHUB_ENV"
           node catalog/src/cli.ts dumps --page work/page.sql.gz --props work/page_props.sql.gz --dir work
 
@@ -77,7 +83,7 @@ jobs:
           M=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)
           echo "MONTH=$M" >> "$GITHUB_ENV"
           # Sur disque d'abord : un flux coupé ou figé tuerait le run, un fichier se retente.
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/pv.bz2 "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/pv.bz2 "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2"
           df -h .
           lbzip2 -dc work/pv.bz2 | grep '^fr.wikipedia ' > work/fr.pv
           rm work/pv.bz2
@@ -98,7 +104,7 @@ jobs:
           : > catalog/fixtures/raw/cirrus.ndjson
           # Une part à la fois sur disque : un flux coupé ou figé tuerait le run, un fichier se retente.
           for p in $P; do
-            curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/part.bz2 "https://dumps.wikimedia.org/other/cirrus_search_index/$D/index_name%3Dfrwiki_content/$p"
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/part.bz2 "https://dumps.wikimedia.org/other/cirrus_search_index/$D/index_name%3Dfrwiki_content/$p"
             lbzip2 -dc work/part.bz2 | node catalog/src/cli.ts fixtures slice-cirrus --fixtures catalog/fixtures >> catalog/fixtures/raw/cirrus.ndjson
             rm work/part.bz2
           done
@@ -131,3 +137,397 @@ jobs:
           retention-days: 1
           overwrite: true
           if-no-files-found: ignore
+
+  # Jobs de construction (modes sample et full). Chaque condition vérifie le résultat de ses needs : !cancelled()
+  # seul laisserait tourner un job après l'échec de celui dont il dépend.
+  dumps:
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && inputs.artifacts_run_id == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    outputs:
+      month: ${{ steps.meta.outputs.month }}
+      cirrus_date: ${{ steps.meta.outputs.cirrus_date }}
+      cirrus_parts: ${{ steps.meta.outputs.cirrus_parts }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Dumps SQL page et page_props
+        run: |
+          mkdir -p work
+          # Sur disque, jamais en tube : un fichier se retente (curl efface la sortie partielle).
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/page.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/page_props.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page_props.sql.gz
+          node catalog/src/cli.ts dumps --page work/page.sql.gz --props work/page_props.sql.gz --dir work
+
+      - name: Mois des vues et instantané Cirrus
+        id: meta
+        run: |
+          echo "month=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"
+          L=$(node catalog/src/cli.ts cirrus-list)
+          # Variables d'abord : -e ne voit pas un jq en échec dans une substitution passée à echo.
+          D=$(jq -re .date <<< "$L")
+          P=$(jq -ce '.parts | select(length > 0)' <<< "$L")
+          echo "cirrus_date=$D" >> "$GITHUB_OUTPUT"
+          echo "cirrus_parts=$P" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dumps
+          path: |
+            work/pages.tsv
+            work/props.tsv
+          retention-days: 1
+          overwrite: true
+
+  pageviews:
+    needs: dumps
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && inputs.artifacts_run_id == '' && needs.dumps.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144 # Maps des vues par page_id et par titre (Task 1)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: sudo apt-get -o Acquire::Retries=3 update -q && sudo apt-get -o Acquire::Retries=3 install -y -q lbzip2
+
+      - name: Vues du mois
+        env:
+          M: ${{ needs.dumps.outputs.month }}
+        run: |
+          mkdir -p work
+          # Sur disque d'abord : un flux coupé ou figé tuerait le run, un fichier se retente.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/pv.bz2 "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2"
+          df -h .
+          lbzip2 -dc work/pv.bz2 | grep '^fr.wikipedia ' | node catalog/src/cli.ts pageviews --dir work
+          rm work/pv.bz2
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: views
+          path: work/views.tsv
+          retention-days: 1
+          overwrite: true
+
+  select:
+    needs: [dumps, pageviews]
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && inputs.artifacts_run_id == '' && needs.dumps.result == 'success' && needs.pageviews.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: '{dumps,views}'
+          merge-multiple: true
+          path: work
+
+      - name: Échantillon
+        env:
+          MODE: ${{ inputs.mode || 'sample' }}
+          RATE: ${{ inputs.sample_rate }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          # Taux forcé par l'entrée, sinon wm.config (P2) ; le mode full l'ignore (taux 1).
+          if [ "$MODE" = full ]; then
+            RATE=1
+          elif [ -z "$RATE" ]; then
+            [ -n "$SUPABASE_DB_URL" ] || { echo "::error::sample_rate vide et secret SUPABASE_DB_URL absent"; exit 1; }
+            # Même garde que le job load (les masques ne valent que pour un job) : mot de passe jusqu'au dernier @ masqué,
+            # refusé non encodé, sinon libpq citerait un morceau du mot de passe comme nom d'hôte.
+            pw=${SUPABASE_DB_URL#*://*:}
+            pw=${pw%@*}
+            echo "::add-mask::$pw"
+            echo "::add-mask::$SUPABASE_DB_URL"
+            if [[ $pw == *[@/?#]* ]]; then
+              echo "::error::Le mot de passe de SUPABASE_DB_URL doit être encodé (%40, %2F, %3F, %23)"
+              exit 1
+            fi
+            RATE=$(psql "$SUPABASE_DB_URL" -qAtX -c "select value #>> '{}' from wm.config where key = 'sample_rate'")
+          fi
+          node catalog/src/cli.ts select --dir work --mode "$MODE" --rate "$RATE"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: select
+          path: |
+            work/catalog.tsv
+            work/counts.json
+          retention-days: 1
+          overwrite: true
+
+  text:
+    needs: [dumps, select]
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && inputs.artifacts_run_id == '' && (inputs.text_source || 'cirrus') == 'cirrus' && needs.select.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      max-parallel: 10
+      fail-fast: false # une part en échec n'annule pas les téléchargements en cours ; « Re-run failed jobs » ne refait qu'elle
+      matrix:
+        part: ${{ fromJSON(needs.dumps.outputs.cirrus_parts) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: sudo apt-get -o Acquire::Retries=3 update -q && sudo apt-get -o Acquire::Retries=3 install -y -q lbzip2
+      - uses: actions/download-artifact@v7
+        with:
+          name: select
+          path: work
+
+      - name: Part Cirrus
+        env:
+          D: ${{ needs.dumps.outputs.cirrus_date }}
+          PART: ${{ matrix.part }}
+          MODE: ${{ inputs.mode || 'sample' }}
+        run: |
+          # Sur disque d'abord : un flux coupé ou figé tuerait le job, un fichier se retente.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/part.bz2 "https://dumps.wikimedia.org/other/cirrus_search_index/$D/index_name%3Dfrwiki_content/$PART"
+          lbzip2 -dc work/part.bz2 | node catalog/src/cli.ts cirrus --dir work --part "$PART" --mode "$MODE"
+          rm work/part.bz2
+          echo "NAME=text-${PART%.json.bz2}" >> "$GITHUB_ENV"
+
+      # Envoi seulement après une étape cirrus réussie : un text-*.tsv écrit avant qu'une garde lève n'est jamais envoyé.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}
+          path: work/text-${{ matrix.part }}.tsv
+          retention-days: 1
+          overwrite: true
+
+  # wikidata et commons tournent ensemble : 1 + 2 requêtes en vol, 100 + 100 démarrages par minute (P16).
+  # Délai = temps réellement restant au job (timeout − minutes passées − 15 pour sauver le cache) ; il borne aussi les
+  # requêtes en vol. Code 3 : délai atteint, le job reste vert avec finished=false, compute est sauté, et un nouveau
+  # run du même mois reprend depuis le cache.
+  wikidata:
+    needs: [dumps, select]
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && inputs.artifacts_run_id == '' && needs.select.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    outputs:
+      finished: ${{ steps.fetch.outputs.finished }}
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v7
+        with:
+          name: select
+          path: work
+      - uses: actions/cache/restore@v6
+        with:
+          path: work/desc.tsv
+          key: wikidata-${{ needs.dumps.outputs.month }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: wikidata-${{ needs.dumps.outputs.month }}-
+
+      - name: Descriptions Wikidata
+        id: fetch
+        run: |
+          left=$(( 345 - ($(date +%s) - JOB_START) / 60 - 15 )) # 345 = timeout-minutes
+          code=0
+          node catalog/src/cli.ts wikidata --dir work --per-minute 100 --concurrency 1 --deadline-min "$left" || code=$?
+          case $code in
+            0) echo "finished=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "finished=false" >> "$GITHUB_OUTPUT"; echo "::warning::Wikidata inachevé : relancer le workflow, le cache reprend" ;;
+            *) exit "$code" ;;
+          esac
+
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: work/desc.tsv
+          key: wikidata-${{ needs.dumps.outputs.month }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desc
+          path: work/desc.tsv
+          retention-days: 1
+          overwrite: true
+
+  commons:
+    needs: [dumps, select]
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && inputs.artifacts_run_id == '' && needs.select.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    outputs:
+      finished: ${{ steps.fetch.outputs.finished }}
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v7
+        with:
+          name: select
+          path: work
+      - uses: actions/cache/restore@v6
+        with:
+          path: work/media.tsv
+          key: commons-${{ needs.dumps.outputs.month }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: commons-${{ needs.dumps.outputs.month }}-
+
+      - name: Images Commons
+        id: fetch
+        run: |
+          left=$(( 345 - ($(date +%s) - JOB_START) / 60 - 15 )) # 345 = timeout-minutes
+          code=0
+          # 2 en vol (M2-R8) : à 1, un lot de plus de ~6,6 s ferait passer ≈ 3 000 lots au-delà du délai ; 100/min reste la limite.
+          node catalog/src/cli.ts commons --dir work --per-minute 100 --concurrency 2 --deadline-min "$left" || code=$?
+          case $code in
+            0) echo "finished=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "finished=false" >> "$GITHUB_OUTPUT"; echo "::warning::Commons inachevé : relancer le workflow, le cache reprend" ;;
+            *) exit "$code" ;;
+          esac
+
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: work/media.tsv
+          key: commons-${{ needs.dumps.outputs.month }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: media
+          path: work/media.tsv
+          retention-days: 1
+          overwrite: true
+
+  compute:
+    needs: [dumps, select, text, wikidata, commons]
+    # text est sauté en repli extracts ; wikidata et commons doivent avoir fini (pas de code 3).
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && inputs.artifacts_run_id == '' && needs.select.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.wikidata.outputs.finished == 'true' && needs.commons.outputs.finished == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120 # ≈ 6 600 appels TextExtracts à l'échantillon 0,09, ≈ 35 min à 200/min
+    permissions:
+      contents: read
+      actions: write # suppression des artefacts intermédiaires
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: '{select,desc,media,text-*}' # aucun text-* en repli extracts
+          merge-multiple: true
+          path: work
+
+      - name: Cartes
+        env:
+          MODE: ${{ inputs.mode || 'sample' }}
+          MONTH: ${{ needs.dumps.outputs.month }}
+          D: ${{ needs.dumps.outputs.cirrus_date }}
+          TEXT_SOURCE: ${{ inputs.text_source || 'cirrus' }}
+        run: time node catalog/src/cli.ts compute --dir work --out out --mode "$MODE" --month "$MONTH" --text-date "${D:0:4}-${D:4:2}-${D:6:2}" --text-source "$TEXT_SOURCE"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: catalog-out
+          path: out/
+          retention-days: 7
+          overwrite: true
+
+      # Ménage seulement (les intermédiaires expirent en 1 jour) : un échec ne rend pas le run rouge après catalog-out.
+      - name: Suppression des artefacts intermédiaires
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" --jq '.artifacts[] | select(.name != "catalog-out") | "\(.id) \(.name)"' |
+            while read -r id name; do
+              echo "Suppression de $name"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            done
+
+  # Chargement (M2-9, M2-17) puis revalidation du cache du catalogue (M2-15). Jamais deux chargements à la fois : le groupe
+  # `catalog` du workflow fait attendre tout autre run (un run en attente remplacé par un plus récent est annulé, pas lancé).
+  load:
+    needs: compute
+    if: ${{ !cancelled() && (inputs.mode || 'sample') != 'fixtures' && (inputs.load || github.event_name == 'schedule') && (needs.compute.result == 'success' || inputs.artifacts_run_id != '') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      APP_URL: https://wmr-ivm.vercel.app
+    steps:
+      - name: Secrets
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          # Vérifiés avant de charger : sans CRON_SECRET, la base changerait sous un cache resté périmé.
+          [ -n "$SUPABASE_DB_URL" ] || { echo "::error::Secret SUPABASE_DB_URL absent (Settings → Secrets and variables → Actions)"; exit 1; }
+          [ -n "$CRON_SECRET" ] || { echo "::error::Secret CRON_SECRET absent (Settings → Secrets and variables → Actions)"; exit 1; }
+          # Dépôt public : mot de passe (jusqu'au dernier @) masqué pour tout le job, et refusé non encodé, car un @ / ? # y
+          # déplacerait la coupure de libpq, qui citerait alors un morceau du mot de passe comme nom d'hôte.
+          pw=${SUPABASE_DB_URL#*://*:}
+          pw=${pw%@*}
+          echo "::add-mask::$pw"
+          echo "::add-mask::$SUPABASE_DB_URL"
+          if [[ $pw == *[@/?#]* ]]; then
+            echo "::error::Le mot de passe de SUPABASE_DB_URL doit être encodé (%40, %2F, %3F, %23)"
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      # Par l'API : catalog-out de ce run, ou de artifacts_run_id (gardé 7 jours).
+      - uses: actions/download-artifact@v7
+        with:
+          name: catalog-out
+          path: out
+          run-id: ${{ inputs.artifacts_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Chargement
+        id: load
+        env:
+          MODE: ${{ inputs.mode || 'sample' }}
+          TARGET: ${{ inputs.target || 'free' }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          time node catalog/src/cli.ts load --dir out --mode "$MODE" --target "$TARGET" --db "$SUPABASE_DB_URL"
+
+      # Aussi après un chargement en échec : des lots ou la finalisation ont pu être validés ; sans écriture, sans effet.
+      - name: Revalidation du cache du catalogue
+        if: ${{ !cancelled() && steps.load.outcome != 'skipped' }}
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS --retry 3 --retry-all-errors --retry-delay 10 -X POST -H "x-cron-secret: $CRON_SECRET" "$APP_URL/api/cron/revalidate"

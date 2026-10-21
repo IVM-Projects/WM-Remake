@@ -1,5 +1,6 @@
--- Catalogue (1400_wm_catalog.sql) : index de recherche, pages arithmétiques sur draw_pool, recherche par préfixe et trigramme,
--- liste de souhaits, « pas encore à moi », overlay joueur. Catalogue de 130 cartes créé ici (le seed n'est pas chargé).
+-- Catalogue (1400_wm_catalog.sql, 1520_wm_catalog_pages.sql) : index de recherche, pages arithmétiques sur draw_pool, recherche par préfixe
+-- et trigramme, liste de souhaits, « pas encore à moi », page partagée et overlay joueur, cartes du pool seulement, crédits d'une image.
+-- Catalogue de 130 cartes créé ici (le seed n'est pas chargé).
 
 -- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune).
 create function pg_temp.err(p_sql text) returns jsonb language plpgsql as $$
@@ -25,11 +26,11 @@ create function pg_temp.pages(p_uid uuid, n int, p_q text default null, p_rarity
   select coalesce(array_agg(x order by p, o), '{}')
   from generate_series(0, n - 1) p, unnest(pg_temp.ids(wm.cards_page(p_uid, p, p_q, p_rarity, p_wishlist, p_missing))) with ordinality u (x, o)
 $$;
--- Ordre du catalogue dans tous les modes (D§7.4) : rareté desc, seq du pool (carte hors pool en dernier), id.
+-- Ordre du catalogue dans tous les modes (D§7.4) : rareté desc, seq du pool, id ; cartes du pool seulement (M2-13).
 create function pg_temp.sorted(p_where text) returns uuid[] language plpgsql as $$
 declare a uuid[]; begin
-  execute format('select coalesce(array_agg(c.id order by c.rarity desc, d.seq nulls last, c.id), ''{}'') from public.cards c
-    left join wm.draw_pool d on d.card_id = c.id where %s', p_where) into a;
+  execute format('select coalesce(array_agg(c.id order by c.rarity desc, d.seq, c.id), ''{}'') from public.cards c
+    join wm.draw_pool d on d.card_id = c.id where %s', p_where) into a;
   return a;
 end $$;
 
@@ -102,7 +103,8 @@ do $$ declare u uuid := pg_temp.uid('Cat1'); r jsonb; d jsonb; q text; begin
   foreach q in array array['a', ' é '] loop
     d := pg_temp.err(format('select wm.cards_page(null, p_q => %L)', q));
     assert d = '{"status":400,"code":"invalid_request","error":"La recherche demande au moins 2 caractères",
-      "message":"La recherche demande au moins 2 caractères"}'::jsonb, coalesce(d::text, 'accepté : ' || q);
+      "message":"La recherche demande au moins 2 caractères"}'::jsonb
+      and pg_temp.err(format('select wm.cards_page_shared(p_q => %L)', q)) = d, coalesce(d::text, 'accepté : ' || q);
   end loop;
   assert wm.cards_page(u, p_q => '   ') = wm.cards_page(u), 'q blanc = sans recherche';
   r := wm.cards_page(u, p_q => 'ZO');
@@ -168,9 +170,34 @@ do $$ declare u uuid := pg_temp.uid('Cat1'); r jsonb; owned uuid[] := '{}'; wish
   assert wm.cards_page(null) -> 'ownedCardIds' = '[]' and wm.cards_page(null) -> 'wishlistCardIds' = '[]', 'sans joueur';
 end $$;
 
+-- Page partagée (M2-14) : sans clé du joueur ; cards_page = cards_page_shared || cards_overlay(ids de la page) en parcours, filtre et recherche.
+do $$ declare u uuid := pg_temp.uid('Cat1'); s jsonb; d jsonb; x record; begin
+  for x in select * from (values (0, null::text, null::public.rarity[]), (1, null, null), (0, null, '{UR,C}'), (1, null, '{UR,C}'),
+      (0, 'geographie', null), (1, 'geographie', null), (0, 'ZO', null)) v (p, q, rar) loop
+    s := wm.cards_page_shared(x.p, 'rarity', x.q, x.rar);
+    assert jsonb_array_length(s -> 'cards') > 0 and not s ?| array['ownedCardIds', 'wishlistCardIds', 'friendOwners'], s - 'cards';
+    assert wm.cards_page(u, x.p, x.q, x.rar) = s || wm.cards_overlay(u, pg_temp.ids(s)), format('page %s, q %s, rareté %s', x.p, x.q, x.rar);
+  end loop;
+  assert wm.cards_page_shared() = wm.cards_page(null) - array['ownedCardIds', 'wishlistCardIds', 'friendOwners'], 'défauts';
+  foreach d in array array[pg_temp.err($q$select wm.cards_page_shared(0, 'xyz')$q$), pg_temp.err($q$select wm.cards_page_shared(0, null)$q$)] loop
+    assert d = '{"status":400,"code":"invalid_request","error":"Tri inconnu","message":"Tri inconnu"}', coalesce(d::text, 'tri accepté');
+  end loop;
+end $$;
+
+-- Overlay : dans l'ordre de p_card_ids, ce que je possède ou souhaite parmi ces ids seulement (2 et 120, hors liste, n'y sont pas).
+do $$ declare u uuid := pg_temp.uid('Cat1'); begin
+  assert wm.cards_overlay(u, array[pg_temp.card(100), pg_temp.card(70), pg_temp.card(1), pg_temp.card(11), pg_temp.card(50)])
+    = jsonb_build_object('ownedCardIds', jsonb_build_array(pg_temp.card(100), pg_temp.card(1)),
+      'wishlistCardIds', jsonb_build_array(pg_temp.card(100), pg_temp.card(70), pg_temp.card(1)), 'friendOwners', '{}'::jsonb),
+    wm.cards_overlay(u, array[pg_temp.card(100), pg_temp.card(70), pg_temp.card(1), pg_temp.card(11), pg_temp.card(50)])::text;
+  assert wm.cards_overlay(u, '{}') = '{"ownedCardIds":[],"wishlistCardIds":[],"friendOwners":{}}'
+    and wm.cards_overlay(null, array[pg_temp.card(1)]) = wm.cards_overlay(u, null), 'liste vide, sans joueur';
+end $$;
+
 -- Option A : un rôle sans autre droit que ceux de la table écrit public.cards (l'index évalue wm_index.search_text, exécutable par tous).
--- La carte, hors pool, sort en fin de rareté ; une recherche sans lettre ni chiffre rend une page vide, même si un titre contient « !!! ».
-do $$ declare r jsonb; q text; begin
+-- Hors pool, la carte n'est ni trouvée, ni souhaitée (ni comptée), ni manquante (M2-13) ; au pool, la recherche la trouve.
+-- Une recherche sans lettre ni chiffre rend une page vide, même si un titre du pool contient « !!! ».
+do $$ declare u uuid := pg_temp.uid('Cat1'); r jsonb; q text; begin
   create role tests_cards_writer nologin bypassrls;
   grant select, insert, update on public.cards to tests_cards_writer;
   set local role tests_cards_writer;
@@ -178,13 +205,36 @@ do $$ declare r jsonb; q text; begin
   values ('Tardive !!! - -', 'https://fr.wikipedia.org/wiki/Cat_131', 'L', 1, 1, 'Divers');
   update public.cards set category = 'Géographie tardive' where wikipedia_url = 'https://fr.wikipedia.org/wiki/Cat_131';
   reset role;
-  assert pg_temp.ids(wm.cards_page(null, p_q => 'GEOGRAPHIE TARDIVE')) = array[pg_temp.card(131)], 'carte écrite par le rôle de table';
-  r := wm.cards_page(null, p_q => 'géographie', p_rarity => '{L}');
-  assert pg_temp.ids(r) = array[pg_temp.card(131)] and not exists (select from wm.draw_pool where card_id = pg_temp.card(131)), r::text;
-  assert pg_temp.ids(wm.cards_page(null, p_rarity => '{L}', p_missing => true))
-    = array(select card_id from wm.draw_pool where rarity = 'L' order by seq) || pg_temp.card(131), 'hors pool en dernier';
+  insert into public.wishlist_items (user_id, card_id) values (u, pg_temp.card(131));
+  assert pg_temp.ids(wm.cards_page(null, p_q => 'GEOGRAPHIE TARDIVE')) = '{}' and pg_temp.ids(wm.cards_page_shared(p_q => 'tardive')) = '{}'
+    and pg_temp.ids(wm.cards_page(null, p_q => 'géographie', p_rarity => '{L}')) = '{}', 'hors pool : recherche';
+  r := wm.cards_page(u, p_wishlist => true);
+  assert pg_temp.ids(r) = pg_temp.sorted(format('c.id in (%L, %L, %L, %L)', pg_temp.card(1), pg_temp.card(70), pg_temp.card(100), pg_temp.card(120)))
+    and r -> 'total' = '4', 'hors pool : souhaits ' || r::text;
+  assert pg_temp.ids(wm.cards_page(u, p_q => 'tardive', p_wishlist => true)) = '{}', 'hors pool : souhaits en recherche';
+  assert pg_temp.ids(wm.cards_page(null, p_rarity => '{L}', p_missing => true)) = array(select card_id from wm.draw_pool where rarity = 'L' order by seq)
+    and pg_temp.ids(wm.cards_page(u, p_q => 'tardive', p_missing => true)) = '{}', 'hors pool : manquantes';
+  perform wm.pool_add(pg_temp.card(131), 'L');
+  assert pg_temp.ids(wm.cards_page(null, p_q => 'GEOGRAPHIE TARDIVE')) = array[pg_temp.card(131)], 'carte écrite par le rôle de table, au pool';
+  r := wm.cards_page(u, p_wishlist => true);
+  assert pg_temp.card(131) = any (pg_temp.ids(r)) and r -> 'total' = '5', 'au pool : souhaits ' || r::text;
   foreach q in array array['!!!', '- -', '!!! - -'] loop
     r := wm.cards_page(null, p_q => q);
     assert r -> 'cards' = '[]' and r -> 'total' = 'null' and r -> 'searchHasMore' = 'false' and not r ? 'rarityCounts', q || ' : ' || r::text;
+  end loop;
+end $$;
+
+-- Crédits d'une image (M2-16) : les quatre clés, auteur nul compris ; carte sans média ou inconnue → 404.
+do $$ declare d jsonb; begin
+  insert into wm.card_media (card_id, file, author, license, license_url) values
+    (pg_temp.card(2), 'Zoologie.jpg', 'Jean Dupont', 'CC BY-SA 4.0', 'https://creativecommons.org/licenses/by-sa/4.0'),
+    (pg_temp.card(4), 'Carte_004.png', null, 'CC0', null);
+  assert wm.card_credits(pg_temp.card(2)) = '{"file":"Zoologie.jpg","image_author":"Jean Dupont","image_license":"CC BY-SA 4.0",
+    "license_url":"https://creativecommons.org/licenses/by-sa/4.0"}', wm.card_credits(pg_temp.card(2))::text;
+  assert wm.card_credits(pg_temp.card(4)) = '{"file":"Carte_004.png","image_author":null,"image_license":"CC0","license_url":null}',
+    wm.card_credits(pg_temp.card(4))::text;
+  foreach d in array array[pg_temp.err(format('select wm.card_credits(%L)', pg_temp.card(3))), pg_temp.err('select wm.card_credits(gen_random_uuid())'),
+      pg_temp.err('select wm.card_credits(null)')] loop
+    assert d = '{"status":404,"error":"Carte introuvable","message":"Carte introuvable"}', coalesce(d::text, 'trouvée');
   end loop;
 end $$;

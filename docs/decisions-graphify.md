@@ -103,6 +103,7 @@ Format : ce qui a été tranché — coût si c'est faux.
 ## Écart au design
 
 - Écart : tables miroir créées par domaine, au jalon qui les utilise (M0 cœur, M3 marché, M4 échanges et social, M5 batailles, guildes, progression) au lieu d'un seul `0001` complet : ne figer aucune colonne sans le contexte de son domaine.
+- C9 : échantillon de 0,045 au lieu de ≈ 9 % (M2-3, mesure du 2026-10-21).
 
 ## Résultats des vérifications du M0
 

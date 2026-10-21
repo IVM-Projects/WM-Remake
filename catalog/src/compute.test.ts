@@ -1,11 +1,14 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterAll, expect, test } from 'vitest'
 import { RARITY } from '../../lib/rarity.ts'
 import type { RarityCode } from '../../lib/rarity.ts'
 import {
   cleanOpening,
+  computeCommand,
   cutSummary,
   fnv1a32,
   hasOpening,
@@ -14,8 +17,11 @@ import {
   selectCommand,
   selectSample,
   statsV1,
+  usableOpening,
 } from './compute.ts'
 import type { CatalogRow, Counts } from './compute.ts'
+import { extractsUrls } from './extracts.ts'
+import type { Client } from './http.ts'
 import { readTsv, writeTsv } from './tsv.ts'
 import type { Field } from './tsv.ts'
 
@@ -47,6 +53,16 @@ test('statsV1 : q_score, ATK et DEF (D§10.1)', () => {
   expect(s.map((r) => r.q_score)).toEqual([0, 60.75, 91.25])
   expect(s.map((r) => r.atk)).toEqual([1000, 5500, 10000])
   expect(s.map((r) => r.def)).toEqual([1000, 5500, 10000])
+})
+
+test('statsV1 : liens inconnus hors du classement, au rang neutre 0,5 (M2-R7)', () => {
+  const s = statsV1([
+    { text_bytes: 100, incoming_links: 0, badge: 0 },
+    { text_bytes: 200, incoming_links: null, badge: 0 },
+    { text_bytes: 300, incoming_links: 5, badge: 0 },
+  ])
+  // Liens : 0 et 5 classés seuls (0 et 1), l'inconnu à 0,5 ; texte 0, 0,5 et 1.
+  expect(s.map((r) => r.q_score)).toEqual([0, 40, 80])
 })
 
 const row = (page_id: number, rarity: RarityCode): CatalogRow => ({
@@ -200,6 +216,119 @@ test('cutSummary : fin de phrase dans les max premiers caractères, sinon dernie
   expect(cutSummary(quote, 17)).toBe('Il dit…')
 })
 
+test('cleanOpening : bandeaux relevés dans les tranches réelles de Cirrus', () => {
+  // Phrases recopiées de raw/cirrus.ndjson (insécables comprises) ; les deux dernières n'ont pas de fin de phrase.
+  const banners = [
+    'Cet article est une ébauche concernant l’athlétisme, le sport universitaire et Rome.',
+    'Vous pouvez partager vos connaissances en l’améliorant (comment ?) selon les recommandations des projets correspondants.',
+    'Vous pouvez partager vos connaissances en l’améliorant (comment ?).',
+    'Cet article ne cite pas suffisamment ses sources (octobre 2022).',
+    "Si vous disposez d'ouvrages ou d'articles de référence ou si vous connaissez des sites web de qualité traitant du thème abordé ici, merci de compléter l'article en donnant les références utiles à sa vérifiabilité et en les liant à la section « Notes et références ».",
+    'En pratique : Quelles sources sont attendues ? Comment ajouter mes sources ?',
+    'Vous lisez un « article de qualité » labellisé en 2009.',
+    'Article principal : Tournoi de tennis US Clay Court.',
+    "Pour l'instrument d'orchestre, voir Hautbois.",
+    'Pour plus d’informations, voyez le projet associé.',
+    "Cet article traite de l'épreuve masculine.",
+    'Cet article est orphelin. Moins de trois articles lui sont liés (avril 2020). Vous pouvez aider en ajoutant des liens vers [[Meyor]] dans les articles relatifs au sujet.',
+    "Cette page est une très courte ébauche oubliée. À l'instar du célèbre « Une pomme est un fruit » qui a marqué l'histoire de Wikipédia, n'hésitez pas à la développer (comment ?) Vous pouvez également enrichir les pages proposées dans la rubrique « Pommes à croquer » du bistro du jour.",
+    'Cette page d’homonymie répertorie des personnes partageant un même patronyme germanique.',
+    "Cet article ne s'appuie pas, ou pas assez, sur des sources secondaires ou tertiaires (octobre 2019). L'article peut contenir des analyses et interprétations inexactes ou inédites de sources primaires. Pour améliorer la vérifiabilité de l'article ainsi que son intérêt encyclopédique, il est nécessaire, quand des sources primaires sont citées, de les associer à des analyses faites par des sources secondaires.",
+    'Cette page contient des caractères spéciaux ou non latins. S’ils s’affichent mal (▯, ?, etc.), consultez la page d’aide Unicode.',
+    'Cet article peut contenir un travail inédit ou des déclarations non vérifiées (septembre 2022). Vous pouvez aider en ajoutant des références ou en supprimant le contenu inédit. Voir la page de discussion pour plus de détails.',
+    'Consultez la liste des tâches à accomplir en page de discussion.',
+    "Trouver des sources sur « Trilogie d'Albert Simonin » : Archive Wikiwix Bing Cairn DuckDuckGo E. Universalis Gallica Google G. Books G. News G. Scholar Persée Qwant (zh) Baidu (ru) Yandex (wd) trouver des œuvres sur Wikidata",
+    'Sur les autres projets Wikimedia : AKA, sur le Wiktionnaire Aka, sur le Wiktionnaire aka, sur Wikimedia Commons',
+  ]
+  expect(cleanOpening(`${banners.join(' ')} Le chat est un mammifère.`)).toBe('Le chat est un mammifère.')
+  for (const b of banners) expect(cleanOpening(`${b} Le chat, sur le toit, dort.`)).toBe('Le chat, sur le toit, dort.')
+  // Une phrase ordinaire qui commence comme un bandeau reste.
+  expect(cleanOpening("À l'instar des autres romans, le récit est long.")).toBe("À l'instar des autres romans, le récit est long.")
+  expect(cleanOpening('Cet article présente la liste des maires.')).toBe('Cet article présente la liste des maires.')
+})
+
+test('cleanOpening : « voire » et « voyez-vous » ne font pas un bandeau « Pour …, voir … »', () => {
+  for (const text of ['Pour la plupart des historiens, voire pour tous, Clovis est le premier roi.', 'Pour ses partisans, voyez-vous, la loi est juste.']) {
+    expect(cleanOpening(`${text} La suite.`)).toBe(`${text} La suite.`)
+  }
+  expect(cleanOpening('Pour Clovis, voir : Clovis Ier. Le roi.')).toBe('Le roi.')
+})
+
+test('cleanOpening : notes de maintenance entre crochets et « Écouter » retirées, crochets d’API gardés', () => {
+  const notes = [
+    'réf.\u00a0nécessaire', 'réf. souhaitée', 'Quoi\u00a0?', 'Lequel ?', 'Laquelle ?', 'Qui ?', 'Quand ?', 'Où ?', 'Comment ?',
+    'Pourquoi ?', 'source insuffisante', 'non neutre', 'interprétation personnelle', 'à vérifier', 'pas clair',
+  ]
+  for (const note of notes) expect(cleanOpening(`Il est fréquent en Suisse[${note}]. Employé seul, il désigne Hannah.`)).toBe('Il est fréquent en Suisse. Employé seul, il désigne Hannah.')
+  expect(cleanOpening('Responsable[Quoi\u00a0?] du département.')).toBe('Responsable du département.')
+  expect(cleanOpening('Il est connu [réf. nécessaire] partout.')).toBe('Il est connu partout.')
+  // « Écouter » collé au mot ou après l'API ; en tête de phrase, c'est un mot.
+  expect(cleanOpening("SankadiokroÉcouter est une localité de l'est de la Côte d'Ivoire.")).toBe("Sankadiokro est une localité de l'est de la Côte d'Ivoire.")
+  expect(cleanOpening('Saintes (/sɛ̃t/ Écouter) est une commune.')).toBe('Saintes (/sɛ̃t/) est une commune.')
+  expect(cleanOpening('Paris (/pa.ʁi/ Écouter, ou /paʁi/) est une ville.')).toBe('Paris (/pa.ʁi/, ou /paʁi/) est une ville.')
+  // Après une barre qui n'est pas celle de l'API (pas de « ) , ; » derrière), « Écouter » reste.
+  for (const text of ['Le site /Écouter/ est un dossier.', 'Lire / Écouter.', 'Lire / Écouter']) expect(cleanOpening(text)).toBe(text)
+  for (const word of ['Il dort. Écouter la radio est un plaisir.', 'Son album Écouter sort en 2010.', 'Il aime le film Écouter le temps.']) {
+    expect(cleanOpening(word)).toBe(word)
+  }
+  for (const kept of ['Paris (prononcé [pa.ʁi]) est la capitale.', 'Baracs (hongrois : Baracs [ˈbɒrɒt͡ʃ]) est une localité.', 'Il veut adapter ces doctrines [pour des lecteurs occidentaux] sans trahir.']) {
+    expect(cleanOpening(kept)).toBe(kept)
+  }
+})
+
+test('hasOpening : ouverture d’infobox (M2-R5) refusée, vraie phrase d’ouverture gardée', () => {
+  const infobox: [string, string | undefined][] = [
+    ['René Guénon Photographie de 1925 (à 38 ans). Signature. René Guénon, né le 15 novembre 1886 à Blois.', 'René Guénon'],
+    ["Rhynchocalycaceae Fleur de Saltera (es) sarcocolla (Penaeaceae) Taxon inexistant en Classification de Cronquist.", 'Rhynchocalycaceae'],
+    ["Aaron Dundon Pas d'image ? Cliquez ici a Compétitions nationales. Aaron Dundon, né le 22 mai 1982.", 'Aaron Dundon'],
+    ['Harmony Harmony est une ville du comté de Fillmore.', 'Harmony (Minnesota)'],
+    ['Attaque de Tichla (1987) Guerre du Sahara occidental Batailles. L’attaque de Tichla.', 'Attaque de Tichla (1987)'],
+    ['Alex\u00a0D. Linz Alexander David Linz est un acteur américain.', 'Alex D. Linz'],
+    ['Kéran 3 Kéran 3 est une commune du Togo.', 'Kéran 3'],
+    // Sans titre ou titre différent : marqueurs d'infobox.
+    ['Formule 3 FIA 2022 Navigation Le Championnat de Formule 3 FIA 2022 est la quatrième saison.', 'Championnat de Formule 3 FIA 2022'],
+    ['Kompas modifier - modifier le code - voir Wikidata (aide) Kompas est un quotidien indonésien.', undefined],
+    ['Moyecques Localisation sur la carte de France Moyecques est un hameau.', undefined],
+    ['Apokal Pour plus de détails, voir Fiche technique et Distribution. Apokal est un film.', undefined],
+    ['Banksia rouge des marais Cet article est une ébauche concernant la flore. Le Banksia occidentalis est un arbuste.', undefined],
+    ['Placodermi Placodermi Restitution paléoartistique de divers placodermes.', undefined],
+    ["Chronologies Cet article présente les faits marquants de l'année 2020 en Arabie saoudite.", undefined],
+    // Faux positif accepté (un appel TextExtracts) : titre plus court que le nom de la phrase d'ouverture.
+    ['Rostom Khan (né à Ispahan en 1567) est un roi de Karthli.', 'Rostom (roi de Karthli)'],
+  ]
+  for (const [text, title] of infobox) expect(hasOpening(text, title)).toBe(false)
+  const leads: [string, string | undefined][] = [
+    ['Zakaria Amzil est un footballeur marocain.', 'Zakaria Amzil'],
+    ['Paris (prononcé [pa.ʁi]) est la capitale de la France.', 'Paris'],
+    ['Le Seigneur des anneaux est une trilogie cinématographique.', 'Le Seigneur des anneaux (série de films)'],
+    ['Cécile Cukierman, née le 26 avril 1976 à Bagneux, est une femme politique.', 'Cécile Cukierman'],
+    ['SLC29A1 est un gène situé sur le chromosome 6 humain.', 'SLC29A1'],
+    ["L'église Saint-Samson est une église catholique.", 'Église Saint-Samson de Bobital'],
+    ['René Guénon Photographie de 1925. René Guénon, né le 15 novembre 1886.', undefined],
+    ['Cet article présente la liste des maires de Dunkerque.', 'Liste des maires de Dunkerque'],
+  ]
+  for (const [text, title] of leads) expect(hasOpening(text, title)).toBe(true)
+  // usableOpening : même règle sur un texte déjà nettoyé (cirrusCommand ne nettoie qu'une fois).
+  for (const [text, title] of [...infobox, ...leads]) expect(usableOpening(cleanOpening(text), title)).toBe(hasOpening(text, title))
+  expect(usableOpening('', 'Chat')).toBe(false)
+})
+
+test('hasOpening : infobox V3 ou en Lua dans les modèles → légende en tête, ouverture refusée ; v2 acceptée', () => {
+  const text = "Cave Balve Entrée de la Balver Höhle en 2014. La Balver Höhle est une grotte d'Allemagne."
+  expect(hasOpening(text, 'Balver Höhle')).toBe(true)
+  expect(hasOpening(text, 'Balver Höhle', ['Modèle:Infobox Grotte', 'Modèle:Infobox en Lua'])).toBe(false)
+  expect(hasOpening(text, 'Balver Höhle', ['Modèle:Infobox Club sportif', 'Modèle:Infobox V3/Début'])).toBe(false)
+  expect(hasOpening(text, 'Balver Höhle', ['Modèle:Infobox Commune de France', 'Modèle:Infobox/Début', 'Modèle:Portail'])).toBe(true)
+})
+
+test('cleanOpening : barre de portails en dernière ligne retirée (TextExtracts), « Portail » dans le texte gardé', () => {
+  const extract = 'Pierfrancesco Chili est un pilote de moto italien.\n\n Portail des sports motocyclistes   Portail de l’Italie'
+  for (const end of ['', '\n', ' \n  ']) expect(cleanOpening(extract + end)).toBe('Pierfrancesco Chili est un pilote de moto italien.')
+  expect(cleanOpening('Le portail est en fer.\nPortail de l’église, il date de 1600.\nIl est classé.')).toBe(
+    'Le portail est en fer. Portail de l’église, il date de 1600. Il est classé.',
+  )
+})
+
 test('cleanOpening : bandeau dont le titre cité finit par « ! » ou « ? »', () => {
   expect(cleanOpening('Cet article concerne la chanson « Ça ira ! », pas le film. Le texte est connu.')).toBe('Le texte est connu.')
   expect(cleanOpening('Cet article concerne la collection « Que sais-je ? ». Le livre est court.')).toBe('Le livre est court.')
@@ -235,4 +364,113 @@ test('selectCommand : catalog.tsv et counts.json cohérents ; mode full retient 
   expect(all.selected).toEqual(all.full)
   const again = await Array.fromAsync(readTsv(join(dir, 'catalog.tsv')))
   expect(again.map((l) => l[8])).toEqual(['1', '1', '1'])
+})
+
+// Dossier écrit à la main : 1 a sa licence et son résumé Cirrus ; 2 a une image sans licence, des liens inconnus et pas de
+// résumé Cirrus ; 3 manque à Cirrus ; 4 n'est pas retenue.
+async function computeDir(): Promise<string> {
+  const dir = await mkdtemp(join(root, 'compute-'))
+  const zero = { L: 0, UR: 0, SR: 0, R: 0, PC: 0, C: 0 }
+  const counts: Counts = { mode: 'sample', rate: 0.5, full: { ...zero, L: 1, R: 1, C: 2 }, selected: { ...zero, L: 1, R: 1, C: 1 } }
+  await writeFile(join(dir, 'counts.json'), JSON.stringify(counts))
+  await writeTsv(join(dir, 'catalog.tsv'), [
+    [1, 'Chat_noir', 1000, 30000, 'L', 'Libre.jpg', 'Q1', 1, 1],
+    [2, 'Sans_licence', 2000, 10, 'C', 'Sans.jpg', 'Q2', 0, 1],
+    [3, 'Absente', 500, 300, 'R', null, 'Q3', 0, 1],
+    [4, 'Hors', 100, 0, 'C', null, null, 0, 0],
+  ])
+  await writeTsv(join(dir, 'text-00000.tsv'), [[1, 5000, 10, 'Le chat noir est un chat.'], [2, 3000, null, null], [4, 100, 0, null]])
+  // Q2 : libellé d'une page de service, jamais montré ; Q3 : vraie description qui finit par « Wikipédia ».
+  await writeTsv(join(dir, 'desc.tsv'), [['Q1', 'chat'], ['Q2', "page d'homonymie de Wikimedia"], ['Q3', 'mascotte de Wikipédia']])
+  await writeTsv(join(dir, 'media.tsv'), [
+    ['Libre.jpg', 'Auteur', 'CC BY-SA 4.0', 'https://creativecommons.org/licenses/by-sa/4.0', 'https://upload.wikimedia.org/x/Libre.jpg'],
+    ['Sans.jpg', 'Auteur', null, null, 'https://upload.wikimedia.org/x/Sans.jpg'],
+  ])
+  return dir
+}
+
+const extractsClient = (ids: number[]): Client => {
+  const pages = [
+    { pageid: 1, extract: 'Le chat noir, vu par TextExtracts.' },
+    { pageid: 2, extract: 'Pour les articles homonymes, voir Sans. Texte de la page deux.' },
+    { pageid: 3, extract: 'Une page, absente de Cirrus.' },
+  ]
+  const url = extractsUrls(ids)[0]
+  return {
+    async get(u) {
+      if (u !== url) throw new Error(`URL inconnue : ${u}`)
+      return { batchcomplete: true, query: { pages: pages.filter((p) => ids.includes(p.pageid)) } }
+    },
+  }
+}
+
+const HEADER = 'page_id,wikipedia_title,wikipedia_url,lang,rarity,atk,def,q_score,pageviews,pageviews_refreshed_at,qscore_refreshed_at,category,summary,image_url'
+
+test('computeCommand : pas d’image sans licence, complément TextExtracts, page absente de Cirrus, liens inconnus', async () => {
+  const dir = await computeDir()
+  const out = join(dir, 'out')
+  const o = { dir, out, mode: 'sample', month: '2026-12', textDate: '2026-10-18', textSource: 'cirrus', client: extractsClient([2, 3]) } as const
+  const counts = await computeCommand(o)
+  // 3 absente : text_bytes = len (500, ATK 4000) ; liens de 2 et 3 au rang 0,5.
+  const dates = '2027-01-01T00:00:00Z,2026-10-18T00:00:00Z'
+  expect(await readFile(join(out, 'cards.csv'), 'utf8')).toBe([
+    HEADER,
+    `1,Chat noir,https://fr.wikipedia.org/wiki/Chat_noir,fr,L,10000,10000,100,30000,${dates},chat,Le chat noir est un chat.,https://upload.wikimedia.org/x/Libre.jpg`,
+    `2,Sans licence,https://fr.wikipedia.org/wiki/Sans_licence,fr,C,7000,7000,47.5,10,${dates},,Texte de la page deux.,`,
+    `3,Absente,https://fr.wikipedia.org/wiki/Absente,fr,R,4000,4000,32.5,300,${dates},mascotte de Wikipédia,"Une page, absente de Cirrus.",`,
+    '',
+  ].join('\n'))
+  expect(await readFile(join(out, 'media.csv'), 'utf8')).toBe(
+    'page_id,file,author,license,license_url\n1,Libre.jpg,Auteur,CC BY-SA 4.0,https://creativecommons.org/licenses/by-sa/4.0\n',
+  )
+  const written = JSON.parse(await readFile(join(out, 'counts.json'), 'utf8'))
+  expect(written).toEqual(counts)
+  expect(counts).toMatchObject({
+    mode: 'sample', rate: 0.5, month: '2026-12', text_date: '2026-10-18', text_source: 'cirrus',
+    cirrus_absent: 1, links_unknown: 2, summaries: { cirrus: 1, extracts: 2, none: 0 },
+  })
+  // Reprise : extracts.tsv couvre déjà le lot, aucun appel.
+  await computeCommand({ ...o, client: { get: () => Promise.reject(new Error('appel inattendu')) } })
+})
+
+test('computeCommand, repli extracts : text_bytes = len, liens à 0, tous les résumés de TextExtracts', async () => {
+  const dir = await computeDir()
+  const out = join(dir, 'out')
+  const o = { dir, out, mode: 'sample', month: '2026-09', textDate: '2026-10-18', textSource: 'extracts', client: extractsClient([1, 2, 3]) } as const
+  const counts = await computeCommand(o)
+  const rows = (await readFile(join(out, 'cards.csv'), 'utf8')).trim().split('\n').slice(1)
+  expect(rows.map((r) => r.split(',').slice(5, 8))).toEqual([['7000', '10000', '67.5'], ['10000', '7000', '62.5'], ['4000', '4000', '32.5']])
+  expect(rows[0]).toContain('"Le chat noir, vu par TextExtracts."')
+  expect(counts).toMatchObject({ text_source: 'extracts', cirrus_absent: 0, links_unknown: 0, summaries: { cirrus: 0, extracts: 3, none: 0 } })
+})
+
+test('computeCommand : plus de 1 % des pages absentes de Cirrus (part text-*.tsv manquante) refusé', async () => {
+  const dir = await computeDir()
+  await writeTsv(join(dir, 'text-00000.tsv'), [[2, 3000, null, null], [4, 100, 0, null]])
+  const o = { dir, out: join(dir, 'out'), mode: 'sample', month: '2026-09', textDate: '2026-10-18', textSource: 'cirrus' } as const
+  await expect(computeCommand({ ...o, client: { get: () => Promise.reject(new Error('appel inattendu')) } })).rejects.toThrow(
+    'Pages absentes de Cirrus : 2 sur 4 (plus de 1 %), une part text-*.tsv manque-t-elle, ou des documents Cirrus mal formés ont-ils été sautés ?',
+  )
+})
+
+test('CLI compute : --text-date doit être un jour réel', async () => {
+  const cli = fileURLToPath(new URL('./cli.ts', import.meta.url))
+  const run = (date: string) =>
+    spawnSync(process.execPath, [cli, 'compute', '--dir', join(root, 'absent'), '--out', join(root, 'absent-out'), '--mode', 'sample',
+      '--month', '2026-09', '--text-date', date, '--text-source', 'cirrus'], { encoding: 'utf8' })
+  for (const date of ['2026-02-30', '2026-04-31', '2026-13-01', '2026-1-01']) {
+    const bad = run(date)
+    expect(bad.status).toBe(1)
+    expect(bad.stderr.trim()).toBe(`Option --text-date invalide : ${date}`)
+  }
+  // Un vrai jour passe la validation : l'échec vient ensuite de counts.json absent.
+  const ok = run('2024-02-29')
+  expect(ok.status).toBe(1)
+  expect(ok.stderr).toContain('counts.json')
+})
+
+test('computeCommand : mode différent de celui de select refusé', async () => {
+  const dir = await computeDir()
+  const o = { dir, out: join(dir, 'out'), mode: 'full', month: '2026-09', textDate: '2026-10-18', textSource: 'cirrus' } as const
+  await expect(computeCommand(o)).rejects.toThrow('Mode full différent de celui de select (sample)')
 })

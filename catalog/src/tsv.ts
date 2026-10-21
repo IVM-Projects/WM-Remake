@@ -1,5 +1,6 @@
 // TSV intermédiaires du pipeline : sans en-tête, `\N` = null, échappements \\ \t \n \r (Global Constraints du plan M2).
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createReadStream, createWriteStream, existsSync } from 'node:fs'
+import { readFile, truncate } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { pipeline } from 'node:stream/promises'
 
@@ -31,4 +32,17 @@ export async function writeTsv(
     }
   }, createWriteStream(path, { flags: opts.append ? 'a' : 'w' }))
   return n
+}
+
+// Ids (1re colonne) d'un TSV écrit en ajout par une commande reprenable ; vide s'il n'existe pas. Une dernière ligne sans
+// `\n` (run tué, disque plein) est d'abord coupée : relue, elle compterait comme écrite et l'ajout suivant s'y collerait.
+// shortcut: relit tout le fichier pour trouver le dernier `\n`, lire la fin par blocs si le mode full (M8) pèse trop.
+export async function writtenIds(path: string): Promise<Set<string>> {
+  const ids = new Set<string>()
+  if (!existsSync(path)) return ids
+  const bytes = await readFile(path)
+  const end = bytes.lastIndexOf(0x0a) + 1
+  if (end < bytes.length) await truncate(path, end)
+  for await (const f of readTsv(path)) ids.add(String(f[0]))
+  return ids
 }

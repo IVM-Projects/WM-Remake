@@ -60,7 +60,7 @@ create or replace trigger user_cards_rarity_counts_del after delete on public.us
 do $$ begin
   set local lock_timeout = '5s';
   lock table public.user_cards in share mode;
-  delete from wm.user_rarity_counts;
+  delete from wm.user_rarity_counts where true;
   insert into wm.user_rarity_counts (user_id, snapshot_rarity, is_shiny, rows, copies)
   select user_id, snapshot_rarity, is_shiny, count(*), sum(count) from public.user_cards group by 1, 2, 3;
 end $$;

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { z } from 'zod'
-import type { RouteSpec } from '../../lib/contract.ts'
+import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
+import { CRON_SECRET } from '../harness.ts'
 import { api, failed, Iso, makeUser, noSession, ok, psql, Rarity } from '../users.ts'
 
 // Colonnes de `rest/v1/cards` lues par les clients (R§3.4) : aussi les clés de chaque carte de /api/cards.
@@ -15,6 +17,9 @@ const Overlay = { cards: z.array(Card).max(50), ownedCardIds: z.array(z.uuid()),
 const Page = z.strictObject({ ...Overlay, total: z.int(), rarityCounts: z.record(Rarity, z.int()) })
 const Search = z.strictObject({ ...Overlay, total: z.null(), searchHasMore: z.boolean() })
 const Filtered = z.strictObject({ ...Overlay, total: z.int() })
+
+const firstCard = async (env: ContractEnv, uid: string) => (await ok(await api(env, '/api/cards', { uid }), Page)).cards[0]
+const revalidate = (env: ContractEnv) => fetch(`${env.plain}/api/cron/revalidate`, { method: 'POST', headers: { 'x-cron-secret': CRON_SECRET } })
 
 export const cards: RouteSpec = {
   method: 'GET',
@@ -44,8 +49,11 @@ export const cards: RouteSpec = {
       name: 'q=a → 400 « La recherche demande au moins 2 caractères »',
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl)
-        const body = await failed(await api(env, '/api/cards?q=a', { uid }), 400, 'invalid_request')
-        assert.equal(body.error, 'La recherche demande au moins 2 caractères')
+        // Deux lectures : la seconde sort du cache, qui garde le code et le détail du P0001 (P14).
+        for (let i = 0; i < 2; i++) {
+          const body = await failed(await api(env, '/api/cards?q=a', { uid }), 400, 'invalid_request')
+          assert.equal(body.error, 'La recherche demande au moins 2 caractères')
+        }
       },
     },
     {
@@ -72,6 +80,34 @@ insert into public.wishlist_items (user_id, card_id) values (:'uid', :'wished')`
         assert.deepEqual([page.ownedCardIds, page.wishlistCardIds], [[owned], [wished]])
         const wish = await ok(await api(env, '/api/cards?wishlist=1', { uid }), Filtered)
         assert.deepEqual([wish.total, wish.cards.map((c) => c.id), wish.wishlistCardIds], [1, [wished], [wished]])
+      },
+    },
+    {
+      name: 'page partagée en cache jusqu\'à POST /api/cron/revalidate (M2-14, M2-15)',
+      run: async (env) => {
+        const { uid } = makeUser(env.backend.databaseUrl)
+        const { id, summary: original } = await firstCard(env, uid)
+        // psql rogne sa sortie : un résumé nul ou bordé de blancs ne se relirait ni ne se restaurerait à l'identique.
+        assert.ok(original && original === original.trim(), `résumé inutilisable pour ce cas : ${JSON.stringify(original)}`)
+        const edit = (summary: string) => psql(env.backend.databaseUrl,
+          `update public.cards set summary = :'summary' where id = :'id' returning summary`, { id, summary })
+        const fresh = edit(`${original} (revalidé)`)
+        try {
+          assert.equal((await firstCard(env, uid)).summary, original)
+          assert.equal((await revalidate(env)).status, 200)
+          // Profil max : la première lecture sert encore la page périmée pendant que le cache se recharge.
+          const end = Date.now() + 5_000
+          let seen: string | null = original
+          while (seen !== fresh && Date.now() < end) {
+            await sleep(250)
+            seen = (await firstCard(env, uid)).summary
+          }
+          assert.equal(seen, fresh)
+        } finally {
+          // Sans assertion : un échec ici masquerait celui du cas.
+          edit(original)
+          await revalidate(env)
+        }
       },
     },
   ],

@@ -1,0 +1,32 @@
+{
+  "mode": "sample",
+  "rate": 1,
+  "full": {
+    "L": 10,
+    "UR": 10,
+    "SR": 16,
+    "R": 38,
+    "PC": 54,
+    "C": 171
+  },
+  "selected": {
+    "L": 10,
+    "UR": 10,
+    "SR": 16,
+    "R": 38,
+    "PC": 54,
+    "C": 171
+  },
+  "month": "2026-09",
+  "text_date": "2026-10-18",
+  "text_source": "cirrus",
+  "cirrus_absent": 0,
+  "links_unknown": 33,
+  "summaries": {
+    "cirrus": 139,
+    "extracts": 159,
+    "none": 1
+  },
+  "cards": 299,
+  "media": 181
+}

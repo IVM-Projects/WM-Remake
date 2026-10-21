@@ -5,11 +5,13 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode 
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
-import { apiOnce, unsure, userMessage } from '@/lib/api'
+import { api, apiOnce, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
+import { usePrefs } from '@/lib/prefs'
 import { rarityOf, type RarityCode } from '@/lib/rarity'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
-import { Card, type CardFace } from './Card'
+import { Card, showsImage, type CardFace } from './Card'
+import { ImageCredit, type Credit } from './ImageCredit'
 import { TagPicker, type Tag } from './TagPicker'
 
 // Carte du catalogue (wm.cards_page, rest/v1/cards) ; q_score et pageviews manquent dans une copie de collection.
@@ -88,6 +90,9 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   const [error, setError] = useState<string | null>(null)
   const needMeta = card.q_score === undefined || card.pageviews === undefined
   const isOwned = !!owned
+  const imageShown = showsImage(card, usePrefs().hideSensitive)
+  // Crédit rangé avec sa carte : une modale réutilisée pour une autre carte n'affiche jamais celui de la précédente.
+  const [credit, setCredit] = useState<(Credit & { card_id: string }) | null>(null)
 
   // À l'ouverture : la méta absente d'une copie (comme l'original, qui lit cards?id=eq.), l'état de la liste de souhaits d'une carte du catalogue.
   useEffect(() => {
@@ -107,6 +112,14 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
     }
     return () => { live = false }
   }, [card.id, needMeta, isOwned])
+
+  useEffect(() => {
+    if (!imageShown) return
+    let live = true
+    // 404 (carte sans média) ou erreur : aucune ligne.
+    api<Credit | null>(`/api/cards/${card.id}/credits`).then((c) => { if (live && c) setCredit({ ...c, card_id: card.id }) }, () => {})
+    return () => { live = false }
+  }, [card.id, imageShown])
 
   async function toggleStar() {
     // Un PATCH à la fois : un double clic laisserait l'écran et la base en désaccord.
@@ -276,8 +289,8 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
                       Voir l&apos;article sur Wikipédia →
                     </a>
                   </p>
-                  {/* shortcut: auteur et licence de l'image (/api/cards/{id}/credits, D§8.5) quand la route existera. */}
                   <p>Texte de l&apos;article : CC BY-SA 4.0 — crédits sur la page Wikipédia.</p>
+                  {imageShown && credit?.card_id === card.id && <ImageCredit credit={credit} />}
                 </div>
               </>
             )}

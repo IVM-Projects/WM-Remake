@@ -20,6 +20,7 @@ const STARTUP_MS = 120_000
 // Clés de test uniquement (build:test) ; la passerelle les échange contre un JWT du rôle, comme Supabase.
 const KEY_ROLES = new Map([['sb_publishable_test', 'anon'], ['sb_secret_test', 'service_role']])
 export const GATE = { password: 'test-gate', secret: 'test-secret' }
+export const CRON_SECRET = 'test-cron'
 
 // Vérificateur Turnstile du banc (POST /turnstile/siteverify) : seul ce couple est accepté.
 const TURNSTILE = { secret: 'test-turnstile', response: 'dev-bypass' }
@@ -234,6 +235,7 @@ export async function startNext(name: 'plain' | 'gated', backend: Backend): Prom
     GATE_COOKIE_SECRET: name === 'gated' ? GATE.secret : undefined,
     TURNSTILE_SECRET_KEY: TURNSTILE.secret,
     TURNSTILE_VERIFY_URL: `${backend.supabaseUrl}/turnstile/siteverify`,
+    CRON_SECRET,
   })
   const stop = () => kill(child)
   try {

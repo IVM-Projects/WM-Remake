@@ -138,3 +138,66 @@ export function batchUrls(base: string, values: string[], max: number, maxLength
   if (n > 0) urls.push(url)
   return urls
 }
+
+// Valeurs d'une URL de batchUrls (dernier paramètre) : la reprise sait quels ids un lot couvre.
+export const batchValues = (url: string): string[] => url.slice(url.lastIndexOf('=') + 1).split('%7C').map(decodeURIComponent)
+
+// Fin d'un job : `deadlineMin` minutes après l'appel ; sans `deadlineMin`, jamais.
+export type Deadline = { end: number; now: () => number }
+
+export function deadline(o: { deadlineMin?: number; now?: () => number }): Deadline {
+  const now = o.now ?? Date.now
+  return { end: now() + (o.deadlineMin ?? Infinity) * 60_000, now }
+}
+
+const LATE = Symbol('délai')
+const MAX_TIMER_MS = 2 ** 31 - 1 // au-delà, setTimeout partirait au bout de 1 ms
+
+// Requête bornée par le temps qui reste : la course perdue rend LATE, la requête abandonnée meurt avec le process
+// (code 3 du CLI). Le minuteur est effacé dès la réponse, pour ne pas retenir la boucle d'événements.
+async function within(request: Promise<unknown>, ms: number): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([request, new Promise((resolve) => (timer = setTimeout(resolve, Math.min(ms, MAX_TIMER_MS), LATE)))])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Lots demandés 3 à la fois (plafond des requêtes en vol ; le client borne concurrence et débit) jusqu'à l'échéance,
+// requêtes en vol comprises ; chaque corps passe à `onBody` dès son arrivée. Rend false si des lots restent.
+export async function fetchBatches(
+  client: Client,
+  urls: string[],
+  dl: Deadline,
+  onBody: (url: string, body: unknown) => Promise<void>,
+): Promise<boolean> {
+  let next = 0
+  let cut = false
+  async function worker() {
+    while (next < urls.length && !cut) {
+      const left = dl.end - dl.now()
+      if (left <= 0) {
+        cut = true
+        return
+      }
+      const url = urls[next++]
+      const body = await within(client.get(url), left)
+      if (body === LATE) {
+        cut = true
+        return
+      }
+      // Lot tronqué (iicontinue…) : ses fichiers manquants passeraient pour introuvables à jamais.
+      // iistart seul n'annonce que les versions anciennes d'un fichier (iilimit = 1) : la version courante est là.
+      const more = (body as { continue?: object } | null)?.continue
+      if (more !== undefined && Object.keys(more).some((k) => k !== 'continue' && k !== 'iistart')) {
+        throw new Error(`Wikimedia : réponse incomplète (continue) sur ${url}`)
+      }
+      await onBody(url, body)
+    }
+  }
+  // Une erreur arrête aussi les deux autres (sinon ils écrivent encore après le rejet, hors CLI).
+  const run = () => worker().catch((e: unknown) => { cut = true; throw e })
+  await Promise.all([run(), run(), run()])
+  return !cut
+}

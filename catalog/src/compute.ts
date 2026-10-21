@@ -1,9 +1,14 @@
-// Calculs purs du catalogue (échantillon M2-1, rang percentile M2-2, stats_v1 D§10.1, résumé) et commande `select`.
-import { writeFile } from 'node:fs/promises'
+// Calculs purs du catalogue (échantillon M2-1, rang percentile M2-2, stats_v1 D§10.1, résumé), commandes `select` et
+// `compute`.
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { RARITY, rarityForViews } from '../../lib/rarity.ts'
 import type { RarityCode } from '../../lib/rarity.ts'
-import { readTsv, writeTsv } from './tsv.ts'
+import { CARD_CSV_COLUMNS, MEDIA_CSV_COLUMNS, wikipediaUrl, writeCsv } from './emit.ts'
+import { extractsUrls, parseExtracts } from './extracts.ts'
+import { batchValues, createClient, deadline, fetchBatches } from './http.ts'
+import type { Client } from './http.ts'
+import { readTsv, writeTsv, writtenIds } from './tsv.ts'
 import type { Field } from './tsv.ts'
 
 export type Mode = 'full' | 'sample'
@@ -113,10 +118,13 @@ export function pct(values: number[]): number[] {
 }
 
 export function statsV1(
-  rows: { text_bytes: number; incoming_links: number; badge: number }[],
+  rows: { text_bytes: number; incoming_links: number | null; badge: number }[],
 ): { atk: number; def: number; q_score: number }[] {
   const text = pct(rows.map((r) => r.text_bytes))
-  const links = pct(rows.map((r) => Math.log1p(r.incoming_links)))
+  // M2-R7 : liens inconnus (pages récentes) classés à part, au rang neutre 0,5.
+  const known = pct(rows.flatMap((r) => (r.incoming_links === null ? [] : [Math.log1p(r.incoming_links)])))
+  let k = 0
+  const links = rows.map((r) => (r.incoming_links === null ? 0.5 : known[k++]))
   const q = rows.map((r, i) => Math.round(100 * (0.45 * text[i] + 0.35 * links[i] + 0.2 * r.badge) * 100) / 100)
   const qp = pct(q)
   return rows.map((_, i) => ({ atk: Math.round(1000 + 9000 * text[i]), def: Math.round(1000 + 9000 * qp[i]), q_score: q[i] }))
@@ -126,19 +134,52 @@ export function statsV1(
 // Une ponctuation suivie de « » » ne finit la phrase qu'avec ce guillemet : « Ça ira ! », dit-il ne s'arrête pas à « ! ».
 const STOP = String.raw`[.!?…](?:\s?»|\)|(?!\s?»))(?=\s|$)`
 const STOPS = new RegExp(STOP, 'g')
-// Bandeau de tête : une phrase jusqu'à la première fin de phrase, ou jusqu'à la fin du texte.
+// Bandeau de tête (relevés dans les tranches réelles de Cirrus : homonymie, ébauche, sources, label, article principal…) :
+// une phrase jusqu'à la première fin de phrase, ou jusqu'à la fin du texte ; « (comment ?) » est pris dans le début
+// pour ne pas finir là. « Trouver des sources » et « Sur les autres projets » n'ont pas de fin de phrase : bornés à part.
 const BANNER = new RegExp(
-  String.raw`^(?:Pour les articles homonymes|Pour l['’]article homonyme|Pour les articles ayant des titres homonymes|Ne doit pas être confondu|Ne pas confondre|Cet article concerne|Pour un article plus général|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)\s*`,
+  String.raw`^(?:(?:Pour [^.!?]*?,\s?vo(?:ir|yez)(?![\w-])|Ne doit pas être confondu|Ne pas confondre|Cet article (?:concerne|traite|est une ébauche|est orphelin|ne cite|ne s['’]appuie|peut contenir)|Cette page (?:d['’]homonymie|est une très courte ébauche|contient des caractères spéciaux)|Vous lisez un «|Vous pouvez (?:partager vos connaissances en l['’]améliorant \(comment\s?\?\)|aider en ajoutant|également enrichir les pages)|Articles? principa(?:l|ux)\s?:|Moins de trois articles lui sont liés|Si vous disposez d['’]ouvrages|En pratique\s?:\s?Quelles sources sont attendues\s?\?\s?Comment ajouter mes sources|À l['’]instar du célèbre «|L['’]article peut contenir des analyses|Pour améliorer la vérifiabilité|S['’]ils s['’]affichent mal|Voir la page de discussion pour plus de détails|Consultez la liste des tâches|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)|Trouver des sources sur «[^»]*»\s?:[^]*?\(wd\)\s?trouver des œuvres sur Wikidata|Sur les autres projets Wikimedia\s?:(?:[^,]*,\s?sur (?:le |la )?Wik\S*(?: Commons)?)+)\s*`,
 )
+
+// Notes de maintenance entre crochets (liste fixe : l'API « [pa.ʁi] » reste) et « Écouter » collé au mot ou entre la
+// barre de l'API et « ) , ; » ; après une espace, « Écouter » est un vrai mot (« Son album Écouter… », « Lire / Écouter »).
+// Barre de portails en dernière ligne : TextExtracts la garde dans l'intro d'un article sans section.
+const NOISE =
+  /\[(?:réf\.\s?(?:nécessaire|souhaitée)|(?:Quoi|Lequel|Laquelle|Lesquels|Lesquelles|Qui|Quand|Où|Comment|Pourquoi|Combien)\s?\?|source\sinsuffisante|non\sneutre|interprétation\spersonnelle|à\svérifier|pas\sclair)\]|(?<=[\p{L}\p{M}])Écouter(?![\p{L}\p{M}])|(?<=\/)\s?Écouter(?=\s?[),;])|\n[^\S\n]*Portail [^\n]*\s*$/gu
 
 export function cleanOpening(text: string): string {
   // Une espace insécable seule est gardée (typographie française) ; tabulations et sauts de ligne deviennent des espaces.
-  let t = text.replace(/\s{2,}|[\t\n\r]/g, ' ').trim()
+  let t = text.replace(NOISE, '').replace(/\s{2,}|[\t\n\r]/g, ' ').trim()
   while (BANNER.test(t)) t = t.replace(BANNER, '')
   return t
 }
 
-export const hasOpening = (text: string | undefined): boolean => cleanOpening(text ?? '') !== ''
+// Texte d'infobox repérable sans le titre : liens de modification, légendes de carte, fiche de film, bandeau resté
+// derrière une infobox, mots de tête répétés (« Placodermi Placodermi »).
+const INFOBOX =
+  /modifier - modifier le code|Localisation sur la carte|Pour plus de détails, voir Fiche technique|Pas d'image \? Cliquez ici| Navigation [\p{Lu}\d]|Cet article est une ébauche|Pour les articles homonymes, voir|» redirige ici|^Chronologies |^(\S+(?: \S+){0,5}) \1 /u
+// Modèles dont l'infobox laisse sa légende dans opening_text (voir usableOpening).
+const LEAKY_INFOBOX = /^Modèle:Infobox (?:V3\/Début|en Lua)$/
+
+// Ouverture utilisable comme résumé (sinon TextExtracts) : seule règle de cirrusCommand et de `fixtures fetch`
+// (usableOpening sur un texte déjà passé par cleanOpening, hasOpening sur le texte brut).
+// M2-R5 : le titre (avec ou sans sa précision entre parenthèses) suivi d'une majuscule ou d'un chiffre ouvre un texte
+// d'infobox (« René Guénon Photographie de 1925… ») ; sans titre, seul INFOBOX joue. Un faux positif coûte un appel
+// TextExtracts, un faux négatif laisse passer l'infobox. Une infobox V3 ou en Lua (modèles de la page) laisse sa
+// légende en tête d'opening_text même sans titre (« Cave Balve Entrée de la Balver Höhle… » : 14 des 15 pages de la
+// tranche que le titre ne repérait pas) ; une infobox v2 n'y laisse rien.
+// shortcut: une légende sans titre ni marqueur, hors infobox V3 ou Lua, passe encore (aucune sur la tranche), à reprendre
+// si les résumés de la démo en souffrent.
+export function usableOpening(clean: string, title?: string, templates?: string[]): boolean {
+  // Insécables ramenées à l'espace pour comparer au titre.
+  const t = clean.replace(/\s/g, ' ')
+  if (t === '' || INFOBOX.test(t) || templates?.some((m) => LEAKY_INFOBOX.test(m))) return false
+  const heads = title ? [title, title.replace(/ \([^()]*\)$/, '')].map((h) => `${h.replace(/\s/g, ' ')} `) : []
+  return !heads.some((h) => t.startsWith(h) && /^[\p{Lu}\d]/u.test(t.slice(h.length)))
+}
+
+export const hasOpening = (text: string | undefined, title?: string, templates?: string[]): boolean =>
+  usableOpening(cleanOpening(text ?? ''), title, templates)
 
 export function cutSummary(text: string, max: number): string {
   if (text.length <= max) return text
@@ -176,4 +217,125 @@ export async function selectCommand(o: { dir: string; mode: Mode; rate: number }
   })())
   await writeFile(join(o.dir, 'counts.json'), JSON.stringify(counts, null, 2) + '\n')
   return counts
+}
+
+// Complément TextExtracts (P11, M2-R5) : extracts.tsv (page_id, summary|\N, résumé déjà coupé : l'extrait brut pèserait
+// plusieurs fois plus) écrit en ajout lot par lot, une ligne par page demandée ; un lot déjà écrit est sauté (reprise).
+async function extractSummaries(dir: string, pageIds: number[], mode: Mode, client: Client): Promise<Map<number, string | null>> {
+  const path = join(dir, 'extracts.tsv')
+  const written = await writtenIds(path)
+  const todo = extractsUrls(pageIds).filter((url) => !batchValues(url).every((id) => written.has(id)))
+  await fetchBatches(client, todo, deadline({}), async (url, body) => {
+    const found = new Map(parseExtracts(body).map((p) => [String(p.page_id), cutSummary(cleanOpening(p.extract), SUMMARY_MAX[mode])]))
+    const fresh = batchValues(url).filter((id) => !written.has(id))
+    await writeTsv(path, fresh.map((id) => [id, found.get(id) || null]), { append: true })
+  })
+  const out = new Map<number, string | null>()
+  for await (const f of readTsv(path)) out.set(Number(f[0]), f[1])
+  return out
+}
+
+// Description Wikidata d'une page de service (« page d'homonymie de Wikimedia », « page de liste de Wikipédia ») : l'élément
+// lié n'est pas l'article ; « cofondateur de Wikipédia » reste.
+const META = /^(?:page|catégorie|modèle)\b.*\bWiki(?:m[ée]dia|pédia)\s*$/i
+
+// out/cards.csv et out/media.csv des pages retenues, out/counts.json ; stats_v1 sur tout catalog.tsv (M2-2).
+// shortcut: textes et lignes gardés en mémoire (2,77 M lignes : ≈ 1,8 Go de tas en sample, ≈ 5,2 Go en full, 85 % des
+// 6 Go du job), le mode full (M8) doit lire en flux.
+export async function computeCommand(o: {
+  dir: string
+  out: string
+  mode: Mode
+  month: string
+  textDate: string
+  textSource: 'cirrus' | 'extracts'
+  client?: Client
+}): Promise<Counts> {
+  const counts = JSON.parse(await readFile(join(o.dir, 'counts.json'), 'utf8')) as Counts
+  // Les résumés Cirrus sont déjà coupés au maximum du mode de select.
+  if (counts.mode !== o.mode) throw new Error(`Mode ${o.mode} différent de celui de select (${counts.mode})`)
+  const rows: CatalogRow[] = []
+  let line = 0
+  for await (const f of readTsv(join(o.dir, 'catalog.tsv'))) {
+    line++
+    const n = (i: number) => num(f, i, 'catalog.tsv', line)
+    rows.push({
+      page_id: n(0), title: String(f[1]), len: n(2), views: n(3), rarity: f[4] as RarityCode,
+      image: f[5], qid: f[6], badge: n(7), selected: f[8] === '1',
+    })
+  }
+  // text-<part>.tsv : page_id, text_bytes, incoming_links|\N, summary|\N ; aucun en repli extracts (job text sauté).
+  const text = new Map<number, { text_bytes: number; incoming_links: number | null; summary: string | null }>()
+  if (o.textSource === 'cirrus') {
+    const parts = (await readdir(o.dir)).filter((f) => /^text-.+\.tsv$/.test(f)).sort()
+    if (parts.length === 0) throw new Error(`Aucun text-*.tsv dans ${o.dir}`)
+    for (const part of parts) {
+      line = 0
+      for await (const f of readTsv(join(o.dir, part))) {
+        line++
+        const n = (i: number) => num(f, i, part, line)
+        text.set(n(0), { text_bytes: n(1), incoming_links: f[2] === null ? null : n(2), summary: f[3] })
+      }
+    }
+  }
+
+  let absent = 0
+  let unknown = 0
+  // Repli extracts (P11) : text_bytes = len, liens à 0. Page absente de Cirrus : text_bytes = len, liens inconnus (M2-R7).
+  // shortcut: len (wikitexte) et text_bytes (texte rendu) n'ont pas la même unité ; rare, à revoir si cirrus_absent grandit.
+  const stats = statsV1(rows.map((r) => {
+    if (o.textSource === 'extracts') return { text_bytes: r.len, incoming_links: 0, badge: r.badge }
+    const t = text.get(r.page_id)
+    if (!t) absent++
+    if ((t?.incoming_links ?? null) === null) unknown++
+    return { text_bytes: t?.text_bytes ?? r.len, incoming_links: t?.incoming_links ?? null, badge: r.badge }
+  }))
+  // Une part text-*.tsv manquante passerait pour des pages absentes, et des milliers d'appels TextExtracts.
+  if (absent > Math.max(1, rows.length / 100)) {
+    throw new Error(`Pages absentes de Cirrus : ${absent} sur ${rows.length} (plus de 1 %), une part text-*.tsv manque-t-elle, ou des documents Cirrus mal formés ont-ils été sautés ?`)
+  }
+
+  // Pages retenues sans résumé Cirrus (ouvertures d'infobox comprises, M2-R5 ; toutes en repli) : même sélection que
+  // `fixtures fetch`, d'où les mêmes URL (Règles de lots).
+  const selected = rows.flatMap((r, i) => (r.selected ? [i] : []))
+  const need = selected.map((i) => rows[i].page_id).filter((id) => text.get(id)?.summary == null)
+  const extracts = need.length > 0 ? await extractSummaries(o.dir, need, o.mode, o.client ?? createClient()) : new Map<number, string | null>()
+
+  // desc.tsv : qid, description|\N ; media.tsv : file, author|\N, license|\N, license_url|\N, image_url|\N.
+  const desc = new Map<string, string | null>()
+  for await (const f of readTsv(join(o.dir, 'desc.tsv'))) desc.set(String(f[0]), f[1])
+  const media = new Map<string, (string | null)[]>()
+  for await (const f of readTsv(join(o.dir, 'media.tsv'))) media.set(String(f[0]), f)
+
+  const [y, m] = o.month.split('-').map(Number)
+  const viewsAt = `${new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10)}T00:00:00Z` // 1er du mois suivant
+  const statsAt = `${o.textDate}T00:00:00Z`
+  const summaries = { cirrus: 0, extracts: 0, none: 0 }
+  const credits: Field[][] = []
+  await mkdir(o.out, { recursive: true })
+  const cards = await writeCsv(join(o.out, 'cards.csv'), CARD_CSV_COLUMNS, (function* (): Generator<Field[]> {
+    for (const i of selected) {
+      const r = rows[i]
+      const cirrus = text.get(r.page_id)?.summary ?? null
+      const summary = cirrus ?? extracts.get(r.page_id) ?? null
+      summaries[cirrus !== null ? 'cirrus' : summary !== null ? 'extracts' : 'none']++
+      // P15 : media.tsv garde image_url sans licence ; ni image ni crédit dans ce cas.
+      const [file, author, license, licenseUrl, imageUrl] = (r.image !== null && media.get(r.image)) || []
+      const image = license && imageUrl ? imageUrl : null
+      if (image) credits.push([r.page_id, file, author, license, licenseUrl])
+      const title = r.title.replaceAll('_', ' ')
+      const { atk, def, q_score } = stats[i]
+      const description = r.qid === null ? null : (desc.get(r.qid) ?? null)
+      const category = description !== null && META.test(description) ? null : description
+      yield [r.page_id, title, wikipediaUrl(title), 'fr', r.rarity, atk, def, q_score, r.views, viewsAt, statsAt, category, summary, image]
+    }
+  })())
+  await writeCsv(join(o.out, 'media.csv'), MEDIA_CSV_COLUMNS, credits)
+
+  const result = {
+    ...counts, month: o.month, text_date: o.textDate, text_source: o.textSource,
+    cirrus_absent: absent, links_unknown: unknown, summaries, cards, media: credits.length,
+  }
+  await writeFile(join(o.out, 'counts.json'), JSON.stringify(result, null, 2) + '\n')
+  return result
 }

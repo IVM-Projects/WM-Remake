@@ -43,6 +43,10 @@ const SIZES = {
   },
 }
 
+// Image affichée selon ses drapeaux (une image qui ne charge pas est masquée à part, `broken`) ; la modale ne demande le crédit qu'à cette condition (card_credits ne lit pas les drapeaux).
+export const showsImage = (card: Pick<CardFace, 'image_url' | 'hide_image' | 'nsfw_image'>, hideSensitive: boolean): boolean =>
+  !!card.image_url && !card.hide_image && !(card.nsfw_image && hideSensitive)
+
 // DOM de R§6.4 : classes, ordre des enfants et aria-label sont un contrat avec les extensions (docs/DESIGN.md).
 export function Card({ card, size = 'lg', owned, starred, onToggleStar, starOff, count = 1, isShiny, friendOwner, onClick, excerpt }: Props) {
   const { hideSensitive } = usePrefs()
@@ -52,7 +56,7 @@ export function Card({ card, size = 'lg', owned, starred, onToggleStar, starOff,
   const s = SIZES[size]
   const color = `var(--color-rarity-${r.css})`
   const title = card.wikipedia_title
-  const image = !card.hide_image && !(card.nsfw_image && hideSensitive) && card.image_url !== broken && card.image_url
+  const image = showsImage(card, hideSensitive) && card.image_url !== broken && card.image_url
   const text = excerpt ?? card.category
   return (
     <div

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
+import type { RpcResult } from '@/lib/route'
 
 const getClaims = vi.fn()
 const rpc = vi.fn()
@@ -239,6 +240,31 @@ describe('route()', () => {
     const args = vi.fn(() => ({}))
     await route({ fn: 'fn', input: z.looseObject({}), args })(req({ method: 'HEAD', query: '?page=2' }), ctx)
     expect(args).toHaveBeenCalledWith({ page: '2' }, expect.anything())
+  })
+
+  it('headers : posés sur un 200, absents d\'un 404', async () => {
+    const handler = route({ fn: 'fn', auth: false, headers: { 'Cache-Control': 'public, max-age=60' } })
+    expect((await handler(req(), ctx)).headers.get('cache-control')).toBe('public, max-age=60')
+    pgError({ code: 'P0001', details: '{"status":404,"error":"Carte introuvable","message":"Carte introuvable"}' })
+    const res = await handler(req(), ctx)
+    expect(res.status).toBe(404)
+    expect(res.headers.get('cache-control')).toBeNull()
+  })
+
+  it('call remplace la RPC (admin non appelé, fn journalisé) ; son erreur P0001 est traduite comme une RPC', async () => {
+    signedIn()
+    const call = vi.fn<(args: Record<string, unknown>) => Promise<RpcResult>>(async () => ({ data: { x: 1 }, error: null }))
+    const handler = route({ fn: 'fn', args: () => ({ p_x: 1 }), call })
+    const res = await handler(req(), ctx)
+    expect(await res.json()).toEqual({ x: 1 })
+    expect(call).toHaveBeenCalledWith({ p_x: 1, p_uid: 'u1' })
+    expect(schema).not.toHaveBeenCalled()
+    expect(JSON.parse(vi.mocked(console.log).mock.calls[0][0]).rpc).toBe('fn')
+    call.mockResolvedValue({ data: null, error: { code: 'P0001', details: '{"status":400,"code":"invalid_request","error":"m","message":"m"}' } })
+    const bad = await handler(req(), ctx)
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toEqual({ code: 'invalid_request', error: 'm', message: 'm' })
+    expect(rpc).not.toHaveBeenCalled()
   })
 
   it('log : segments dynamiques masqués', async () => {
