@@ -1055,17 +1055,19 @@ do $$ begin
 end $$;
 
 -- Alertes de liste de souhaits (1650, M3-20, P28).
--- La file des blocs précédents (cartes que personne ne souhaite) est vidée d'abord. Carte souhaitée par trois joueurs et par le vendeur,
--- base 15 : budget de 2 → les deux plus petits id, curseur sur le 2e, ligne en attente ; puis le 3e, ligne terminée ; puis rien. Trois
--- wishlist_listed, aucune pour le vendeur, amount 15 et end_at de l'enchère.
-do $$ declare s uuid := pg_temp.player('Souhait1'); c uuid := pg_temp.card('Souhait marché'); w uuid[]; x uuid; k wm.wishlist_alert_queue; begin
+-- La file des blocs précédents (cartes que personne ne souhaite) est vidée d'abord. Carte souhaitée par trois joueurs et par le vendeur, le
+-- plus grand des quatre id (sans le filtre du vendeur, il serait servi au second lot), base 15 : budget de 2 → les deux plus petits id,
+-- curseur sur le 2e, ligne en attente ; budget null → rien ; puis le 3e, ligne terminée ; puis rien. Trois wishlist_listed, aucune pour
+-- le vendeur, amount 15 et end_at de l'enchère.
+do $$ declare p uuid[] := array(select pg_temp.player('Souhait' || i) from generate_series(1, 4) i order by 1); s uuid := p[4];
+  w uuid[] := p[1:3]; c uuid := pg_temp.card('Souhait marché'); x uuid; k wm.wishlist_alert_queue; begin
   perform wm.wishlist_alerts_fanout(1000000);
-  w := array(select pg_temp.player('Souhait' || i) from generate_series(2, 4) i order by 1);
-  insert into public.wishlist_items (user_id, card_id) select u, c from unnest(w || s) u;
+  insert into public.wishlist_items (user_id, card_id) select u, c from unnest(p) u;
   x := pg_temp.listing(s, c, 15);
   assert wm.wishlist_alerts_fanout(2) = 2, 'premier lot';
   select * into k from wm.wishlist_alert_queue where auction_id = x;
   assert k.cursor_user = w[2] and k.done_at is null, to_jsonb(k)::text;
+  assert wm.wishlist_alerts_fanout(null) = 0, 'budget nul sans borne';
   assert wm.wishlist_alerts_fanout(2) = 1, 'second lot';
   select * into k from wm.wishlist_alert_queue where auction_id = x;
   assert k.cursor_user = w[3] and k.done_at = now(), to_jsonb(k)::text;
@@ -1099,6 +1101,21 @@ do $$ declare s uuid := pg_temp.player('Souhait5'); c uuid := pg_temp.card('Souh
     'six notifications';
 end $$;
 
+-- Enchère active sans séquestre (cas d'erreur de P9, signalé par les invariants) : sautée sans erreur, l'enchère saine de la même carte est
+-- servie, la cassée reste en attente ; séquestre réinséré, elle est servie à l'appel suivant.
+do $$ declare s uuid := pg_temp.player('Souhait9'); u uuid := pg_temp.player('Souhait10'); c uuid := pg_temp.card('Souhait cassé marché');
+  x uuid := pg_temp.listing(s, c); y uuid := pg_temp.listing(s, c); e wm.auction_escrow; n int; begin
+  insert into public.wishlist_items (user_id, card_id) values (u, c);
+  delete from wm.auction_escrow where auction_id = x returning * into e;
+  assert wm.wishlist_alerts_fanout() = 1, 'diffusion avec une enchère sans séquestre';
+  assert (select array_agg(data ->> 'auction_id') from public.notifications where user_id = u) = array[y::text], 'enchère saine non servie';
+  assert (select cursor_user is null and done_at is null from wm.wishlist_alert_queue where auction_id = x), 'enchère cassée terminée';
+  insert into wm.auction_escrow select (e).*;
+  n := wm.wishlist_alerts_fanout();  -- instruction à part : un assert lirait la file avant l'écriture de l'appel
+  assert n = 1 and (select done_at = now() from wm.wishlist_alert_queue where auction_id = x), 'après réparation : ' || n;
+  perform pg_temp.inv('séquestre réinséré');
+end $$;
+
 -- purge_expired (M3-20) : clé d'idempotence de 25 h supprimée, de 23 h gardée ; ligne de file terminée il y a 2 h supprimée, il y a 30 min
 -- gardée, en attente gardée. Toutes les autres clés et lignes de file datent de cette transaction.
 do $$ declare u uuid := gen_random_uuid(); x uuid := (select auction_id from wm.wishlist_alert_queue limit 1); q bigint[]; r jsonb; begin
@@ -1127,7 +1144,7 @@ end $$;
 -- Faux pg_cron 1.6 (colonnes de cron.job et cron.job_run_details lues par 1650). Sans wm-settle → null ; wm-settle sans run → 86400 ; dernier
 -- run succeeded de wm-settle fini il y a 5 s → 5 (ni le run en échec ni celui d'un autre job ne comptent). overdue_s : échue depuis 2 min →
 -- ≥ 120, depuis 30 s → null. Purge : fini il y a 25 h et sans end_time commencé il y a 25 h → 2, celui d'il y a 23 h reste. Colonne
--- renommée → pas d'exception, 86400 et overdue_s null même avec une échue de 2 min.
+-- renommée, puis schéma cron sans droit → pas d'exception, 86400 et overdue_s null même avec une échue de 2 min.
 do $$ declare s uuid := pg_temp.player('Sante1'); x uuid := pg_temp.listing(s, pg_temp.card('Santé marché')); h jsonb; begin
   assert to_regnamespace('cron') is null, 'schéma cron créé sans pg_cron';
   assert wm.purge_cron_history() = 0, 'purge sans pg_cron';
@@ -1160,4 +1177,10 @@ do $$ declare s uuid := pg_temp.player('Sante1'); x uuid := pg_temp.listing(s, p
   alter table cron.job rename column jobname to name;
   h := wm.health();
   assert h - 'now' = '{"ok":true,"db":"ok","settle_lag_s":86400,"overdue_s":null}', 'lecture en erreur : ' || h::text;
+  -- Droit manquant sur le schéma cron : to_regclass lève 42501 lui-même. Propriétaire sans droit sur cron (défait par le rollback du banc).
+  alter table cron.job rename column name to jobname;
+  assert wm.health() -> 'settle_lag_s' = '5', 'colonne rétablie';
+  alter function wm.health() owner to authenticated;
+  h := wm.health();
+  assert h - 'now' = '{"ok":true,"db":"ok","settle_lag_s":86400,"overdue_s":null}', 'schéma cron sans droit : ' || h::text;
 end $$;

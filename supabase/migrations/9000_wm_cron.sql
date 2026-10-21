@@ -9,6 +9,7 @@ begin
      and exists (select from pg_available_extensions where name = 'pg_cron') then
     create extension if not exists pg_cron with schema pg_catalog;
     grant usage on schema cron to postgres;
+    grant all privileges on all tables in schema cron to postgres;  -- lecture de wm.health, purge de wm.purge_cron_history
     perform cron.schedule('wm-settle', '10 seconds', 'select wm.settle_due_auctions(500)');
     perform cron.schedule('wm-wishlist-alerts', '10 seconds', 'select wm.wishlist_alerts_fanout(5000)');
     perform cron.schedule('wm-purge', '7 * * * *', 'select wm.purge_expired()');

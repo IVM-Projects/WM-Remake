@@ -19,10 +19,13 @@ begin
     select w.id, w.auction_id, s.user_id, a.base_amount
     from wm.wishlist_alert_queue w
     join public.auctions a on a.id = w.auction_id and a.status = 'active'
+    -- Sans séquestre (enchère en erreur, P9, signalée par check_invariants), notification_data serait null et l'insertion échouerait à
+    -- chaque appel : la ligne attend, les autres passent.
+    join wm.auction_escrow e on e.auction_id = a.id
     join public.wishlist_items s on s.card_id = a.card_id and s.user_id <> a.seller_id
     where w.id = any (v_ids) and (w.cursor_user is null or s.user_id > w.cursor_user)
     order by w.id, s.user_id
-    limit p_batch
+    limit greatest(coalesce(p_batch, 0), 0)  -- limit null ne bornerait rien
   ), ins as (
     insert into public.notifications (user_id, type, data)
     select user_id, 'wishlist_listed', wm.notification_data('wishlist_listed', auction_id, base_amount) from p order by user_id
@@ -80,8 +83,8 @@ declare
   v_lag int;
   v_overdue int;
 begin
-  if to_regclass('cron.job') is not null and to_regclass('cron.job_run_details') is not null then
-    begin
+  begin  -- to_regclass lève aussi (droit manquant sur le schéma cron) : dans le bloc
+    if to_regclass('cron.job') is not null and to_regclass('cron.job_run_details') is not null then
       execute $q$
         select coalesce((select extract(epoch from now() - max(r.end_time))::int from cron.job_run_details r
                          where r.jobid = j.jobid and r.status = 'succeeded'), 86400)
@@ -91,11 +94,12 @@ begin
         select extract(epoch from now() - min(end_at))::int into v_overdue
         from public.auctions where status = 'active' and end_at < now() - interval '60 seconds';
       end if;
-    exception when others then
-      v_lag := 86400;
-      v_overdue := null;
-    end;
-  end if;
+    end if;
+  exception when others then
+    raise warning 'wm.health : % %', sqlstate, sqlerrm;
+    v_lag := 86400;
+    v_overdue := null;
+  end;
   return jsonb_build_object('ok', true, 'db', 'ok', 'now', now(), 'settle_lag_s', v_lag, 'overdue_s', v_overdue);
 end $$;
 
