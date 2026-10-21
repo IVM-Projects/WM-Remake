@@ -247,9 +247,16 @@ jobs:
             RATE=1
           elif [ -z "$RATE" ]; then
             [ -n "$SUPABASE_DB_URL" ] || { echo "::error::sample_rate vide et secret SUPABASE_DB_URL absent"; exit 1; }
-            # Mot de passe masqué aussi seul : une erreur de psql peut citer un morceau de l'URL.
+            # Même garde que le job load (les masques ne valent que pour un job) : mot de passe jusqu'au dernier @ masqué,
+            # refusé non encodé, sinon libpq citerait un morceau du mot de passe comme nom d'hôte.
             pw=${SUPABASE_DB_URL#*://*:}
-            echo "::add-mask::${pw%%@*}"
+            pw=${pw%@*}
+            echo "::add-mask::$pw"
+            echo "::add-mask::$SUPABASE_DB_URL"
+            if [[ $pw == *[@/?#]* ]]; then
+              echo "::error::Le mot de passe de SUPABASE_DB_URL doit être encodé (%40, %2F, %3F, %23)"
+              exit 1
+            fi
             RATE=$(psql "$SUPABASE_DB_URL" -qAtX -c "select value #>> '{}' from wm.config where key = 'sample_rate'")
           fi
           node catalog/src/cli.ts select --dir work --mode "$MODE" --rate "$RATE"
