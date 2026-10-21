@@ -6,6 +6,8 @@
 # 2. Double règlement : 20 settle_auction(X) et 20 settle_due_auctions() → une seule ligne settle: par enchère, une seule copie gagnée.
 # 3. Mise contre règlement à la fin de Z, sur 5 tours : jamais une mise acceptée après settled_at ; prolongée au 1er tour, réglée au 5e.
 # 4. Cron contre mises (P9) : des lots de 4 qui alternent hi et lo pendant 40 surenchères de A et B sur W → les 20 réglées.
+# 5. Ordre des verrous du lot (P9), déterministe : une mise simulée tient lo puis demande hi ; le lot attend < 1 s, sans 40P01.
+# 6. settle_request contre une prolongation et un retrait validés pendant son attente du verrou → 409 et 404 (P8).
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 tmp="$(mktemp -d)"
@@ -39,6 +41,8 @@ money() {
 # Appels en arrière-plan, SQLSTATE dans les erreurs (VERBOSITY verbose) : $1 = fichier d'erreurs, puis la requête.
 pids=()
 bg() { q -v VERBOSITY=verbose -c "set role service_role; $2" >/dev/null 2>"$tmp/$1" & pids+=($!); }
+# Même chose, mais l'appel part à l'heure du serveur $2 (pg_sleep_until) : connexion et fork ne mangent pas la fenêtre.
+bgat() { q -v VERBOSITY=verbose -c "select pg_sleep_until($2)" -c "set role service_role; $3" >/dev/null 2>"$tmp/$1" & pids+=($!); }
 waitall() { fails=0; for p in "${pids[@]}"; do wait "$p" || fails=$((fails + 1)); done; pids=(); }
 # Aucun interblocage ni attente de verrou échue ; chaque sortie d'erreur non vide des fichiers $2… contient un refus du motif $1.
 refusals() {
@@ -89,19 +93,18 @@ got="$(q -c "select format('%s %s %s', (select count(*) from public.auctions whe
 check "double règlement"
 
 # 3. Mise contre règlement : Z finit 1 s après sa mise de 10 ; 20 mises (B 11, A 12, … A 30) et 20 règlements partent, entrelacés, en
-# 0,3 s, après 0,8 s au 1er tour … 1,2 s au 5e (tout après end_at).
+# 0,3 s, après 0,8 s au 1er tour … 1,2 s au 5e (tout après end_at), à l'heure du serveur comptée depuis end_at.
 rounds=""
 delays=(0.8 0.9 1.0 1.1 1.2)
 for r in 0 1 2 3 4; do
   z="$(list "$v" "$cz")"
   q -c "select wm.place_bid('$a', '$z', 10)" >/dev/null
   e0="$(q -c "update public.auctions set end_at = clock_timestamp() + interval '1 second' where id = '$z' returning end_at")"
-  sleep "${delays[r]}"
   for i in $(seq 20); do
     w="$b"; (( i % 2 )) || w="$a"
-    bg "3b$r-$i" "select wm.place_bid('$w', '$z', $((10 + i)))"
-    bg "3s$r-$i" "select wm.settle_auction('$z')"
-    sleep 0.015
+    at="'$e0'::timestamptz + make_interval(secs => ${delays[r]} - 1 + 0.015 * ($i - 1))"
+    bgat "3b$r-$i" "$at" "select wm.place_bid('$w', '$z', $((10 + i)))"
+    bgat "3s$r-$i" "$at + interval '7.5 milliseconds'" "select wm.settle_auction('$z')"
   done
   waitall
   quiet "$tmp"/3s"$r"-*
@@ -148,3 +151,47 @@ quiet "$tmp/4cron"
 refusals 'bid_too_low|Tu es déjà en tête' "$tmp"/4[ab]*
 [[ "$(q -c "$due")" == 20 ]] || fail "cron : $(q -c "$due") réglées sur 20"
 check "cron contre mises"
+
+# 5. Ordre des verrous du lot : le bloqueur imite une mise (lo, puis hi une seconde plus tard) ; le lot doit tout prendre trié d'un coup, lo
+# d'abord, et attendre < 1 s. (a) hi puis lo vendeurs, sans mise : attrape le lot verrouillé enchère par enchère ou sans ses vendeurs ;
+# (b) vendue par hi, menée par lo : attrape le lot sans ses meneurs. Chacun de ces trois défauts tient hi en attendant lo → 40P01.
+lockstep() {  # $1 = étiquette, puis les enchères, dans l'ordre de end_at
+  local k="$1" ids; shift
+  ids="$(printf "'%s'," "$@")"; ids="array[${ids%,}]::uuid[]"
+  q -c "update public.auctions a set end_at = now() - interval '1 minute' + make_interval(secs => v.n)
+    from unnest($ids) with ordinality v (id, n) where a.id = v.id" >/dev/null
+  q -v VERBOSITY=verbose -c "begin; select from public.profiles where id = '$lo' for update; select pg_sleep(1);
+    select from public.profiles where id = '$hi' for update; commit;" >/dev/null 2>"$tmp/5$k-mise" &
+  blocker=$!
+  until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do kill -0 "$blocker"; done
+  q -v VERBOSITY=verbose -c "set role service_role; select wm.settle_due_auctions()" >/dev/null 2>"$tmp/5$k-lot" || true
+  wait "$blocker" || true
+  quiet "$tmp/5$k-mise" "$tmp/5$k-lot"
+  [[ "$(q -c "select count(*) from public.auctions where id = any ($ids) and status <> 'active'")" == $# ]] || fail "lot $k : non réglé"
+}
+lockstep a "$(list "$hi" "$cz")" "$(list "$lo" "$cz")"
+l5="$(list "$hi" "$cz")"
+q -c "select wm.place_bid('$lo', '$l5', 10)" >/dev/null
+lockstep b "$l5"
+check "ordre des verrous du lot"
+
+# 6. settle_request contre une écriture validée pendant qu'il attend le verrou : enchère échue au moment de ses refus, puis prolongée (comme
+# une mise de dernière seconde) → 409 ; puis retirée → 404. Le refus annule aussi la clé d'idempotence.
+race() {  # $1 = étiquette, $2 = enchère, $3 = écriture du bloqueur, $4 = message attendu
+  q -c "begin; $3; select pg_sleep(1); commit;" >/dev/null &
+  blocker=$!
+  until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do kill -0 "$blocker"; done
+  ! q -v VERBOSITY=verbose -c "set role service_role; select wm.settle_request('$t', '$2', '$tag $1')" >/dev/null 2>"$tmp/6$1" \
+    || fail "settle_request $1 : accepté"
+  wait "$blocker"
+  refusals "$4" "$tmp/6$1"
+  [[ "$(q -c "select count(*) from wm.idempotency_keys where user_id = '$t' and key = '$tag $1'")" == 0 ]] || fail "clé $1 gardée"
+}
+z6="$(list "$v" "$cz")"
+q -c "select wm.place_bid('$a', '$z6', 10)" -c "update public.auctions set end_at = now() - interval '1 second' where id = '$z6'" >/dev/null
+race prolongée "$z6" "update public.auctions set end_at = clock_timestamp() + interval '1 hour' where id = '$z6'" \
+  "L'enchère n'est pas encore terminée"
+z6="$(list "$v" "$cz")"
+q -c "update public.auctions set end_at = now() - interval '1 second' where id = '$z6'" >/dev/null
+race retirée "$z6" "select wm.cancel_auction('$v', '$z6')" 'Enchère introuvable'
+check "settle_request contre un verrou"

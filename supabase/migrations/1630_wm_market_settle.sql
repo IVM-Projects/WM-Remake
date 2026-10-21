@@ -67,7 +67,7 @@ begin
   return n;
 end $$;
 
--- POST /settle (P8) : refus de route sans verrou, puis le règlement unique ; owned calculé pour p_uid (P11).
+-- POST /settle (P8) : refus d'abord sans verrou, puis d'après l'issue du règlement unique ; owned calculé pour p_uid (P11).
 create or replace function wm.settle_request(p_uid uuid, p_auction_id uuid, p_idem text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -86,7 +86,14 @@ begin
   if a.status = 'active' and a.end_at > clock_timestamp() then
     perform wm.raise_err(409, null, 'L''enchère n''est pas encore terminée');
   end if;
-  perform wm.settle_auction(a.id);
+  -- Issue lue sous le verrou : une mise de dernière seconde (anti-snipe) ou un retrait a pu être validé pendant l'attente.
+  v_resp := wm.settle_auction(a.id);
+  if v_resp is null or v_resp ->> 'status' = 'cancelled' then
+    perform wm.raise_err(404, null, 'Enchère introuvable');
+  end if;
+  if v_resp ->> 'status' = 'active' then
+    perform wm.raise_err(409, null, 'L''enchère n''est pas encore terminée');
+  end if;
   select * into a from public.auctions where id = a.id;
   return wm.idem_store(p_uid, p_idem, jsonb_build_object('auction', wm.auction_json(a)
     || jsonb_build_object('owned', exists (select from public.user_cards where user_id = p_uid and card_id = a.card_id))));
