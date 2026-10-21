@@ -194,6 +194,8 @@ export async function fetchBatches(
       await onBody(url, body)
     }
   }
-  await Promise.all([worker(), worker(), worker()])
+  // Une erreur arrête aussi les deux autres (sinon ils écrivent encore après le rejet, hors CLI).
+  const run = () => worker().catch((e: unknown) => { cut = true; throw e })
+  await Promise.all([run(), run(), run()])
   return !cut
 }
