@@ -807,6 +807,8 @@ do $$ declare s uuid := pg_temp.player('Liste1'); b uuid := pg_temp.player('List
   assert (wm.market_list(p_q => 'st', p_card_id => c) ->> 'total')::int = 5, 'q à 2 caractères';
   assert wm.market_list(p_q => 'magnetisme', p_card_id => c) = '{"auctions":[],"hasMore":false,"total":0}', 'q sans correspondance';
   assert wm.market_list(p_q => 'el_ct', p_card_id => c) ->> 'total' = '0', '_ pris comme joker';
+  assert wm.market_list(p_q => 'el%ue', p_card_id => c) ->> 'total' = '0', '% pris comme joker';
+  assert wm.market_list(p_q => 'el\ec', p_card_id => c) ->> 'total' = '0', '\ pris comme échappement';
   assert wm.market_list(p_q => '%%', p_card_id => c) = '{"auctions":[],"hasMore":false,"total":0}', '%% sans lettre ni chiffre';
   -- Refus.
   d := pg_temp.err(format(q, 0, 'recent', null, c));

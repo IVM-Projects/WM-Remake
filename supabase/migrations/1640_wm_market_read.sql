@@ -2,10 +2,11 @@
 -- règlement paresseux, ventes en résumé et détail Pro. Idempotente. Seule écriture : le règlement du détail, par wm.settle_auction.
 
 -- Partagée, sans joueur : enchères active seulement, pages de 1 à 50 lignes à partir de 1 (P17, P24). Clause en littéraux comme
--- wm.cards_list (1520) : le plan ne garde que les filtres posés.
+-- wm.cards_list (1520) : le plan ne garde que les filtres posés. stable : un seul instantané pour les ids, le total et les objets, sinon une
+-- enchère réglée entre deux instructions sortirait avec son nouveau statut.
 create or replace function wm.market_list(p_page int default 1, p_limit int default 50, p_sort text default 'recent', p_q text default null,
   p_rarity public.rarity[] default null, p_card_id uuid default null)
-returns jsonb language plpgsql security definer set search_path = '' as $$
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare
   v_page int := coalesce(p_page, 1);
   v_limit int := least(greatest(coalesce(p_limit, 50), 1), 50);
@@ -51,8 +52,9 @@ returns jsonb language sql security definer set search_path = '' as $$
 $$;
 
 -- GET /mine (R§3.5, union des formes) : ventes active du joueur, échues non réglées comprises (M3-14), et son plafond (M3-10).
+-- stable : appelée par market_mine_lists, elle lit son instantané (une fonction volatile imbriquée en prendrait un neuf).
 create or replace function wm.market_mine(p_uid uuid)
-returns jsonb language sql security definer set search_path = '' as $$
+returns jsonb language sql stable security definer set search_path = '' as $$
   select jsonb_build_object('sellingCount', count(*),
     'maxConcurrentAuctions', (select (c.value ->> case when p.is_pro or p.is_vip then 'pro' else 'free' end)::int
       from wm.config c, public.profiles p where c.key = 'max_concurrent_auctions' and p.id = p_uid),
@@ -62,8 +64,9 @@ returns jsonb language sql security definer set search_path = '' as $$
 $$;
 
 -- ?mine=1, non caché : selling entier (au plus le plafond) ; bidding, won et history par pages de 50 à partir de 1. owned posé ici (P11).
+-- stable : sellingCount, counts et listes lus sur un seul instantané.
 create or replace function wm.market_mine_lists(p_uid uuid, p_page int default 1)
-returns jsonb language plpgsql security definer set search_path = '' as $$
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare
   v_page bigint := coalesce(p_page, 1);  -- bigint : page × 50 sans dépassement
   v_off bigint := (v_page - 1) * 50;
@@ -82,12 +85,12 @@ begin
     'selling', (select coalesce(jsonb_agg(wm.auction_json(a) || jsonb_build_object('owned',
         exists (select from public.user_cards uc where uc.user_id = p_uid and uc.card_id = a.card_id)) order by a.created_at desc, a.id), '[]')
       from public.auctions a where a.seller_id = p_uid and a.status = 'active'),
-    -- Par dernière mise du joueur ; my_last_bid = le montant de cette mise.
+    -- Par dernière mise du joueur ; ses mises sur une enchère ne font que monter, donc my_last_bid = max(amount).
     'bidding', (select coalesce(jsonb_agg(wm.auction_json(a) || jsonb_build_object('owned',
         exists (select from public.user_cards uc where uc.user_id = p_uid and uc.card_id = a.card_id), 'my_last_bid', g.amount,
         'my_state', case when a.status = 'active' then case when a.current_bidder_id = p_uid then 'leading' else 'outbid' end
                          when a.winner_id = p_uid then 'won' else 'lost' end) order by g.last_at desc, g.auction_id), '[]')
-      from (select auction_id, max(placed_at) last_at, (array_agg(amount order by placed_at desc))[1] amount from public.auction_bids
+      from (select auction_id, max(placed_at) last_at, max(amount) amount from public.auction_bids
             where bidder_id = p_uid group by auction_id order by last_at desc, auction_id limit 50 offset v_off) g
       join public.auctions a on a.id = g.auction_id),
     'won', (select coalesce(jsonb_agg(wm.auction_json(a) || jsonb_build_object('owned',
@@ -134,7 +137,7 @@ begin
   return jsonb_build_object('summary', (select coalesce(jsonb_object_agg(r, jsonb_build_object('average', round(s.average)::int, 'count', s.n)), '{}')
     from unnest(enum_range(null::public.rarity)) r
     cross join lateral (select avg(final_price) average, count(*) n from (select final_price from public.auctions
-      where card_id = p_card_id and snapshot_rarity = r and status = 'settled_sold' order by settled_at desc limit v_n) x) s
+      where card_id = p_card_id and snapshot_rarity = r and status = 'settled_sold' order by settled_at desc, id limit v_n) x) s
     where s.n > 0));
 end $$;
 
