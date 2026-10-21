@@ -43,7 +43,7 @@ const SIZES = {
   },
 }
 
-// Image réellement affichée ; la modale ne demande le crédit de l'image qu'à cette condition (card_credits ne lit pas les drapeaux).
+// Image affichée selon ses drapeaux (une image qui ne charge pas est masquée à part, `broken`) ; la modale ne demande le crédit qu'à cette condition (card_credits ne lit pas les drapeaux).
 export const showsImage = (card: Pick<CardFace, 'image_url' | 'hide_image' | 'nsfw_image'>, hideSensitive: boolean): boolean =>
   !!card.image_url && !card.hide_image && !(card.nsfw_image && hideSensitive)
 
