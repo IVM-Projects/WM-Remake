@@ -268,9 +268,18 @@ test('fetchBatches : une requête sans réponse est abandonnée à l’échéanc
 
 test('fetchBatches : une réponse avec `continue` arrête tout, rien pour son lot', async () => {
   const got: string[] = []
-  const client: Client = { get: async () => ({ continue: { iicontinue: 'x', continue: '||' }, query: { pages: [] } }) }
-  await expect(fetchBatches(client, ['u'], deadline({}), async (url) => void got.push(url))).rejects.toThrow(
-    'Wikimedia : réponse incomplète (continue) sur u',
-  )
+  for (const more of [{ iicontinue: 'x', continue: '||' }, { excontinue: 20, continue: '||' }, { iistart: 't', iicontinue: 'x' }]) {
+    const client: Client = { get: async () => ({ continue: more, query: { pages: [] } }) }
+    await expect(fetchBatches(client, ['u'], deadline({}), async (url) => void got.push(url))).rejects.toThrow(
+      'Wikimedia : réponse incomplète (continue) sur u',
+    )
+  }
   expect(got).toEqual([])
+})
+
+test('fetchBatches : `continue` fait de iistart seul (versions anciennes d’un titre seul) passe à onBody', async () => {
+  const body = { continue: { iistart: '2006-03-07T15:51:32Z', continue: '||' }, query: { pages: [{ title: 'File:A.jpg' }] } }
+  const got: unknown[] = []
+  expect(await fetchBatches({ get: async () => body }, ['u'], deadline({}), async (url, b) => void got.push([url, b]))).toBe(true)
+  expect(got).toEqual([['u', body]])
 })

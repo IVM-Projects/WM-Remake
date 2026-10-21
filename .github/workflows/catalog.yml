@@ -48,6 +48,10 @@ permissions:
   contents: read
   actions: read
 
+env:
+  # User-Agent du projet sur chaque curl vers Wikimedia : leur politique des robots bride les agents génériques.
+  UA: 'WMRCatalog/1.0 (https://github.com/IVM-Projects/wm-remake) curl'
+
 jobs:
   fixtures:
     if: inputs.mode == 'fixtures'
@@ -69,8 +73,8 @@ jobs:
           mkdir -p work catalog/fixtures/raw
           # Téléchargements sur disque, jamais en tube : un flux coupé ou figé tuerait le run, un fichier se retente
           # (curl efface la sortie partielle). -R : date du fichier distant, reprise dans le README.
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -R -o work/page.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -R -o work/page_props.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page_props.sql.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -R -o work/page.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -R -o work/page_props.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page_props.sql.gz
           echo "DUMP_DATE=$(date -u -r work/page.sql.gz +%F)" >> "$GITHUB_ENV"
           node catalog/src/cli.ts dumps --page work/page.sql.gz --props work/page_props.sql.gz --dir work
 
@@ -79,7 +83,7 @@ jobs:
           M=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)
           echo "MONTH=$M" >> "$GITHUB_ENV"
           # Sur disque d'abord : un flux coupé ou figé tuerait le run, un fichier se retente.
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/pv.bz2 "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/pv.bz2 "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2"
           df -h .
           lbzip2 -dc work/pv.bz2 | grep '^fr.wikipedia ' > work/fr.pv
           rm work/pv.bz2
@@ -100,7 +104,7 @@ jobs:
           : > catalog/fixtures/raw/cirrus.ndjson
           # Une part à la fois sur disque : un flux coupé ou figé tuerait le run, un fichier se retente.
           for p in $P; do
-            curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/part.bz2 "https://dumps.wikimedia.org/other/cirrus_search_index/$D/index_name%3Dfrwiki_content/$p"
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/part.bz2 "https://dumps.wikimedia.org/other/cirrus_search_index/$D/index_name%3Dfrwiki_content/$p"
             lbzip2 -dc work/part.bz2 | node catalog/src/cli.ts fixtures slice-cirrus --fixtures catalog/fixtures >> catalog/fixtures/raw/cirrus.ndjson
             rm work/part.bz2
           done
@@ -158,8 +162,8 @@ jobs:
         run: |
           mkdir -p work
           # Sur disque, jamais en tube : un fichier se retente (curl efface la sortie partielle).
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/page.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/page_props.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page_props.sql.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/page.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/page_props.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page_props.sql.gz
           node catalog/src/cli.ts dumps --page work/page.sql.gz --props work/page_props.sql.gz --dir work
 
       - name: Mois des vues et instantané Cirrus
@@ -204,7 +208,7 @@ jobs:
         run: |
           mkdir -p work
           # Sur disque d'abord : un flux coupé ou figé tuerait le run, un fichier se retente.
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/pv.bz2 "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/pv.bz2 "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2"
           df -h .
           lbzip2 -dc work/pv.bz2 | grep '^fr.wikipedia ' | node catalog/src/cli.ts pageviews --dir work
           rm work/pv.bz2
@@ -300,7 +304,7 @@ jobs:
           MODE: ${{ inputs.mode || 'sample' }}
         run: |
           # Sur disque d'abord : un flux coupé ou figé tuerait le job, un fichier se retente.
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/part.bz2 "https://dumps.wikimedia.org/other/cirrus_search_index/$D/index_name%3Dfrwiki_content/$PART"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -A "$UA" -o work/part.bz2 "https://dumps.wikimedia.org/other/cirrus_search_index/$D/index_name%3Dfrwiki_content/$PART"
           lbzip2 -dc work/part.bz2 | node catalog/src/cli.ts cirrus --dir work --part "$PART" --mode "$MODE"
           rm work/part.bz2
           echo "NAME=text-${PART%.json.bz2}" >> "$GITHUB_ENV"
@@ -313,7 +317,7 @@ jobs:
           retention-days: 1
           overwrite: true
 
-  # wikidata et commons tournent ensemble : 2 + 1 requêtes en vol, 100 + 100 démarrages par minute (P16).
+  # wikidata et commons tournent ensemble : 1 + 2 requêtes en vol, 100 + 100 démarrages par minute (P16).
   # Délai = temps réellement restant au job (timeout − minutes passées − 15 pour sauver le cache) ; il borne aussi les
   # requêtes en vol. Code 3 : délai atteint, le job reste vert avec finished=false, compute est sauté, et un nouveau
   # run du même mois reprend depuis le cache.
@@ -347,7 +351,7 @@ jobs:
         run: |
           left=$(( 345 - ($(date +%s) - JOB_START) / 60 - 15 )) # 345 = timeout-minutes
           code=0
-          node catalog/src/cli.ts wikidata --dir work --per-minute 100 --concurrency 2 --deadline-min "$left" || code=$?
+          node catalog/src/cli.ts wikidata --dir work --per-minute 100 --concurrency 1 --deadline-min "$left" || code=$?
           case $code in
             0) echo "finished=true" >> "$GITHUB_OUTPUT" ;;
             3) echo "finished=false" >> "$GITHUB_OUTPUT"; echo "::warning::Wikidata inachevé : relancer le workflow, le cache reprend" ;;

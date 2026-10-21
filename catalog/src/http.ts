@@ -188,7 +188,9 @@ export async function fetchBatches(
         return
       }
       // Lot tronqué (iicontinue…) : ses fichiers manquants passeraient pour introuvables à jamais.
-      if ((body as { continue?: unknown } | null)?.continue !== undefined) {
+      // iistart seul n'annonce que les versions anciennes d'un fichier (iilimit = 1) : la version courante est là.
+      const more = (body as { continue?: object } | null)?.continue
+      if (more !== undefined && Object.keys(more).some((k) => k !== 'continue' && k !== 'iistart')) {
         throw new Error(`Wikimedia : réponse incomplète (continue) sur ${url}`)
       }
       await onBody(url, body)
