@@ -34,7 +34,7 @@
   - ids dédoublonnés et triés : qids par valeur numérique, fichiers par ordre des unités de code, `page_id` croissants ;
   - Wikidata : `entitiesUrls(tous les qids des pages selected)`, lots de 50 ; la reprise saute un lot dont tous les qids sont déjà dans `desc.tsv` ;
   - Commons : `imageInfoUrls(toutes les images des pages selected, 'commons.wikimedia.org')` seulement (M2-R6 : pas de passe frwiki, les fichiers locaux sont des logos non libres ; un fichier absent de Commons reçoit sa ligne vide dans le lot) ; lots de 50 fichiers au plus et URL de 7 000 caractères au plus ;
-  - TextExtracts : `extractsUrls(page_id des pages selected sans hasOpening(opening_text, title))`, lots de 20 (M2-R5 : une ouverture d'infobox compte comme absente, ≈ 48 % des pages sur la tranche).
+  - TextExtracts : `extractsUrls(page_id des pages selected sans hasOpening(opening_text, title, template))`, lots de 20 (M2-R5 : une ouverture d'infobox compte comme absente, y compris une légende laissée par `Modèle:Infobox V3/Début` ou `Modèle:Infobox en Lua` ; ≈ 53 % des pages sur la tranche).
 - **Base** : jamais de `delete` sur `public.cards` ; tout `DELETE`/`UPDATE` garde un `WHERE` (`where true` pour vider, pg-safeupdate), contrôlé par `scripts/check-dml.ts` dès la Task 10. Taille de la base = `select sum(pg_database_size(datname))::bigint from pg_database` (le chiffre que Supabase compare à 500 Mo). Garde du chargement à `450e6` octets, cible de la démo `≤ 350e6` (M2-3).
 - **Pas d'image sans licence** (D§3.4, A4, P15) : un média sans `license` ne donne ni `image_url` ni ligne `media.csv`.
 - **Actions** :
