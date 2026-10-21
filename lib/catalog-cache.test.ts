@@ -50,6 +50,7 @@ describe('cardsCall', () => {
     rpc.mockResolvedValue({ data: null, error: pgError('08006') })
     await expect(sharedCardsPage(0, 'rarity', null, null)).rejects.toThrow()
     expect(log.mock.calls).toStrictEqual([[JSON.stringify({ rpc: 'cards_page_shared', pg_code: '08006' })]])
+    log.mockRestore()
   })
 })
 
