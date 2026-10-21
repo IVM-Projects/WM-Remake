@@ -86,7 +86,8 @@ before="$(sed -n 's/^base avant chargement : \([0-9]*\) octets$/\1/p' "$tmp/log2
 # et ses résultats ; sans cela, l'essai \copy lèverait 23505 et les 50 pages déjà fusionnées seraient sautées.
 q -c "\copy wm.catalog_stage from '$tmp/v2/cards.csv' with (format csv, header true)" \
   -c "\copy wm.catalog_stage_media from '$tmp/v2/media.csv' with (format csv, header true)" -c "select wm.catalog_merge('sample', 50)" >/dev/null
-load --dir "$tmp/v2" --batch 100 >"$tmp/out3" 2>"$tmp/log3" &
+# exec : $! est le pid de node lui-même (une fonction lancée en fond laisserait node orphelin au kill de cleanup).
+(exec node "$root/catalog/src/cli.ts" load --mode sample --target free --db "$DATABASE_URL" --dir "$tmp/v2" --batch 100) >"$tmp/out3" 2>"$tmp/log3" &
 pid=$!
 # Une seule session tire par lots de 1 000 tant que le chargement tourne.
 coproc PICK { q; }
