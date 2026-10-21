@@ -63,10 +63,18 @@ test('firstCsvRecords : en-tête et n enregistrements entiers, saut de ligne gui
 test('rateFor : plus grand taux au pas de 0,005 sous 350 Mo établis et 450 Mo au pic du premier chargement (M2-3)', () => {
   // Pic : (450e6 − 16e6) / (1 400 + 900) = 188 695 cartes, soit 0,068 ; régime établi : 238 571 cartes.
   expect(rateFor({ base: 16e6, bytesPerCard: 1400, stageBytesPerRow: 900, nFull: 2_773_461 })).toBe(0.065)
+  expect(() => rateFor({ base: 360e6, bytesPerCard: 1400, stageBytesPerRow: 900, nFull: 2_773_461 })).toThrow('rateFor : aucun taux possible')
   // Sans stage, le régime établi limite : 238 571 / 2 773 461 = 0,086.
   expect(rateFor({ base: 16e6, bytesPerCard: 1400, stageBytesPerRow: 0, nFull: 2_773_461 })).toBe(0.085)
 })
 
 test('measureCommand : refusée hors de la base wm_test du banc, sans connexion', async () => {
-  await expect(measureCommand({ db: 'postgres://u:p@h:5432/postgres', csvDir: root, copies: 1 })).rejects.toThrow('measure : base wm_test du banc seulement')
+  for (const db of [
+    'postgres://u:p@h:5432/postgres',
+    'postgres://u:p@db.x.supabase.co:5432/wm_test',
+    'postgres://u:p@h:5432/postgres?application_name=/wm_test',
+    'postgres://u:p@127.0.0.1:5432/wm_test?dbname=postgres',
+  ]) {
+    await expect(measureCommand({ db, csvDir: root, copies: 1 })).rejects.toThrow('measure : base wm_test du banc seulement')
+  }
 })

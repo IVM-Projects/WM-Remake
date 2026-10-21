@@ -118,7 +118,7 @@ Projet `iggurckxmoagsajzrnwd`, 2026-10-20. Ordre suivi (R32) : base, puis variab
 
 ## M2 — Task 13 : taille du catalogue
 
-Bac à sable, 2026-10-21, branche `claude/clever-cannon-59x0dj` (sur e2389cd). Banc : PG16 jetable de `scripts/db-test.sh --setup-only`, catalogue d'essai de 2 000 cartes compris (il s'annule dans les différences et sort du pool à la première finalisation). `measure` réplique 1 000 fois `catalog/fixtures/expected` (299 cartes, 181 médias) dans le stage (`page_id + k × 10^7`, titre suffixé de « (k) », URL de `_(k)`), fusionne par lots de 10 000, finalise et passe le `vacuum` du chargement, puis refait un passage « mensuel » où toutes les `pageviews` ont + 1.
+Bac à sable, 2026-10-21, branche `claude/clever-cannon-59x0dj` (sur fd8aa9b). Banc : PG16 jetable de `scripts/db-test.sh --setup-only`, catalogue d'essai de 2 000 cartes compris (il s'annule dans les différences et sort du pool à la première finalisation). `measure` réplique 1 000 fois `catalog/fixtures/expected` (299 cartes, 181 médias) dans le stage (`page_id + k × 10^7`, titre suffixé de « (k) », URL de `_(k)`), fusionne par lots de 10 000, finalise et passe le `vacuum` du chargement, puis refait un passage « mensuel » où toutes les `pageviews` ont + 1.
 
 ```bash
 eval "$(bash scripts/db-test.sh --setup-only)"
@@ -153,7 +153,7 @@ après fusion, finalisation et vacuum : base 702504012 octets, pic 954293324 oct
 | Carte après le passage mensuel (B) | même calcul après le second `vacuum` | 2 259 o (run 2 : 2 228 o), dont 776 o (744 o) de gonflement de la mise à jour complète (anciennes versions des lignes et des index : le `vacuum` rend la place sans réduire les fichiers) | 2026-10-21 |
 | Pic | plus grande `SIZE_SQL` vue après le stage et après chaque lot | premier chargement : 2 300 o/ligne (run 2 : 2 302 o), stage, cartes et résultats ; passage mensuel : 3 070 o/ligne aux deux runs, le maximum, couvert par B + S retenus (3 296 o) | 2026-10-21 |
 | Constantes | plus grandes mesures + 10 %, arrondies au-dessus | `BYTES_PER_CARD = 2_485`, `STAGE_BYTES_PER_ROW = 811` | 2026-10-21 |
-| `base` de la démo | `SIZE_SQL` relevé par le contrôleur (≈ 30 Mo) | 31 457 280 o (30 Mio) ; relu par le contrôleur avant le chargement | 2026-10-21 |
+| `base` de la démo | `SIZE_SQL` relevé par le contrôleur sur la démo (MCP) | 31 223 669 o, PostgreSQL 17.11 (banc : PG16) ; à relire avant le chargement | 2026-10-21 |
 | `nFull` | total du catalogue complet | 2 773 461 (ajusté par le contrôleur si le `counts.json` du run de la Task 9 diffère) | 2026-10-21 |
-| Taux | `rateFor` | régime établi : (350e6 − base) / 2 485 = 128 186 cartes ; pic : (450e6 − base) / 3 296 = 126 985 cartes, qui limite ; 126 985 / 2 773 461 = 0,0458 → `sample_rate` = 0,045 | 2026-10-21 |
-| Projection de la démo | 0,045 × 2 773 461 ≈ 124 806 cartes | avec les constantes : 341,6 Mo établis, 442,8 Mo au pic ; avec les mesures brutes : 313,4 Mo établis, 318,5 Mo au pic du premier chargement, 414,6 Mo au pic d'un passage mensuel | 2026-10-21 |
+| Taux | `rateFor` | régime établi : (350e6 − base) / 2 485 = 128 280 cartes ; pic : (450e6 − base) / 3 296 = 127 056 cartes, qui limite ; 127 056 / 2 773 461 = 0,0458 → `sample_rate` = 0,045 (vaut jusqu'à `nFull` = 2 823 465) | 2026-10-21 |
+| Projection de la démo | 0,045 × 2 773 461 ≈ 124 806 cartes | avec les constantes : 341,4 Mo établis, 442,6 Mo au pic ; avec les mesures brutes : 313,2 Mo établis, 318,3 Mo au pic du premier chargement, 414,4 Mo au pic d'un passage mensuel | 2026-10-21 |

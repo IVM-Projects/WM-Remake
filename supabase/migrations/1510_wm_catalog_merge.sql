@@ -7,7 +7,7 @@ insert into wm.config (key, value, note) values
   ('catalog_stats_frozen', 'false',
    'true → le chargement garde atk, def, q_score et qscore_refreshed_at des cartes existantes ; true en option A (D§10.1)'),
   ('sample_rate', '0.045',
-   'Part de chaque rareté chargée sur le plan Free (C9, M2-3), mesurée le 2026-10-21 : 2 485 o/carte, 811 o/ligne de stage (mesure + 10 %), base 31 457 280 o')
+   'Part de chaque rareté chargée sur le plan Free (C9, M2-3), mesurée le 2026-10-21 : 2 485 o/carte, 811 o/ligne de stage (mesure + 10 %), base 31 223 669 o')
 on conflict do nothing;
 
 -- Lien stable carte ↔ article : la correspondance par page_id survit aux renommages (M2-9).

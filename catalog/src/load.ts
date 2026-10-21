@@ -25,7 +25,9 @@ const VACUUM = 'vacuum (analyze) public.cards, wm.draw_pool, wm.card_source, wm.
 // Plus grand taux au pas de 0,005 : démo ≤ 350 Mo en régime établi, ≤ MAX_BYTES au pic du premier chargement (stage plein, M2-3).
 export function rateFor(o: { base: number; bytesPerCard: number; stageBytesPerRow: number; nFull: number }): number {
   const cards = Math.min((350e6 - o.base) / o.bytesPerCard, (MAX_BYTES - o.base) / (o.bytesPerCard + o.stageBytesPerRow))
-  return Math.floor((cards / o.nFull) * 200) / 200
+  const rate = Math.floor((cards / o.nFull) * 200) / 200
+  if (!(rate > 0)) throw new Error(`rateFor : aucun taux possible (base ${o.base} octets, ${o.nFull} pages)`)
+  return rate
 }
 
 // `<=` : une taille illisible (NaN) est refusée.
@@ -172,7 +174,9 @@ export async function loadCommand(o: { dir: string; mode: Mode; target: Target; 
 // (pageviews + 1) dont le gonflement entre dans B ; pic = plus grande taille vue après \copy ou entre deux lots.
 export async function measureCommand(o: { db: string; csvDir: string; copies: number }) {
   // Des centaines de milliers de cartes jamais supprimées (aucun delete sur public.cards) : jamais sur la démo.
-  if (!/\/wm_test(\?|$)/.test(o.db)) throw new Error('measure : base wm_test du banc seulement')
+  const u = URL.canParse(o.db) ? new URL(o.db) : null
+  const local = u !== null && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname) && u.pathname === '/wm_test' && !u.searchParams.has('dbname')
+  if (!local) throw new Error('measure : base wm_test du banc seulement')
   const [size0] = await psql(o.db, TRUNCATE, SIZE_SQL)
   log(`base initiale : ${size0} octets`)
   let peak = Number(size0)
@@ -194,7 +198,10 @@ export async function measureCommand(o: { db: string; csvDir: string; copies: nu
       if ((JSON.parse(merged) as { processed: number }).processed === 0) break
       peak = Math.max(peak, Number(size))
     }
-    await psql(o.db, "select wm.catalog_finalize('sample')")
+    // Banc réutilisé ou passage sans effet : B serait faux sans erreur.
+    const [fin] = await psql(o.db, "select wm.catalog_finalize('sample')")
+    const done = (JSON.parse(fin) as Record<string, number>)[views === 0 ? 'inserted' : 'updated']
+    if (done !== Number(rows)) throw new Error(`measure : ${done} cartes ${views === 0 ? 'insérées' : 'mises à jour'} sur ${rows} (banc neuf exigé)`)
     const [size] = await psql(o.db, VACUUM, SIZE_SQL)
     log(`après fusion, finalisation et vacuum : base ${size} octets, pic ${peak} octets`)
     return { rows: Number(rows), staged: Number(staged), size: Number(size) }
