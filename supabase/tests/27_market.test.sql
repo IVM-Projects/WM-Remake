@@ -768,3 +768,279 @@ do $$ declare s uuid := pg_temp.player('Finaliser1'); b uuid := pg_temp.player('
   assert (select count(*) from wm.wb_ledger where ref = 'settle:' || x) = 1, 'vendeur crédité plusieurs fois';
   perform pg_temp.inv('settle_request');
 end $$;
+
+-- Lectures (1640, M3-19).
+-- Ids d'un tableau d'objets Auction, dans l'ordre de la réponse.
+create function pg_temp.ids(p jsonb) returns uuid[] language sql as $$
+  select coalesce(array_agg((e ->> 'id')::uuid order by o), '{}') from jsonb_array_elements(p) with ordinality x (e, o)
+$$;
+
+-- market_list : cinq enchères actives d'« Électricité statique » aux dates et prix connus (x2 de base 10 avec une mise à 40, x4 échue non
+-- réglée, x3 et x5 en UR), une enchère d'une autre carte (card_id strict). Chaque appel filtre sur une carte du bloc (les enchères actives
+-- des blocs précédents compteraient), sauf le dernier, comparé au nombre réel d'enchères actives.
+do $$ declare s uuid := pg_temp.player('Liste1'); b uuid := pg_temp.player('Liste2', 100); t uuid := pg_temp.player('Liste3');
+  c uuid := pg_temp.card('Électricité statique'); o uuid := pg_temp.card('Électricité dynamique'); x uuid[]; y uuid; r jsonb; d jsonb;
+  q text := 'select wm.market_list(p_page => %L, p_sort => %L, p_q => %L, p_card_id => %L)';
+  e400 text := '{"status":400,"code":"invalid_request","error":"%1$s","message":"%1$s"}'; begin
+  x := array(select pg_temp.listing(s, c, v) from unnest(array[50, 10, 30, 20, 60]) v);
+  y := pg_temp.listing(t, o);
+  perform wm.place_bid(b, x[2], 40);
+  update public.auctions a set created_at = now() - make_interval(hours => 6 - v.i::int), end_at = now() + v.e
+  from unnest(x, array[interval '5 hours', '1 hour', '3 hours', '-1 minute', '2 hours']) with ordinality v (id, e, i) where a.id = v.id;
+  update public.auctions set snapshot_rarity = 'UR' where id in (x[3], x[5]);
+  -- Tris : recent (défaut), prix effectif (x2 classée à 40, sa mise, pas à 10), fin la plus proche avec l'échue non réglée en tête.
+  r := wm.market_list(p_card_id => c);
+  assert r - 'auctions' = '{"hasMore":false,"total":5}' and pg_temp.ids(r -> 'auctions') = array[x[5], x[4], x[3], x[2], x[1]], r::text;
+  assert r -> 'auctions' = (select jsonb_agg(wm.auction_json(a) order by a.created_at desc) from public.auctions a where a.id = any (x)),
+    'objets Auction';
+  assert not exists (select from jsonb_array_elements(r -> 'auctions') e where e ? 'owned' or e -> 'card' ? 'summary'), 'owned ou summary';
+  assert pg_temp.ids(wm.market_list(p_sort => 'price_asc', p_card_id => c) -> 'auctions') = array[x[4], x[3], x[2], x[1], x[5]], 'price_asc';
+  assert pg_temp.ids(wm.market_list(p_sort => 'price_desc', p_card_id => c) -> 'auctions') = array[x[5], x[1], x[2], x[3], x[4]], 'price_desc';
+  assert pg_temp.ids(wm.market_list(p_sort => 'ending_soon', p_card_id => c) -> 'auctions') = array[x[4], x[2], x[5], x[3], x[1]], 'ending_soon';
+  -- Filtres : rareté figée ; card_id strict ; q sans accents ni casse, %q% même à 2 caractères, jokers LIKE pris à la lettre.
+  r := wm.market_list(p_rarity => '{UR}', p_card_id => c);
+  assert pg_temp.ids(r -> 'auctions') = array[x[5], x[3]] and r -> 'total' = '2', r::text;
+  r := wm.market_list(p_card_id => o);
+  assert pg_temp.ids(r -> 'auctions') = array[y] and r -> 'total' = '1', r::text;
+  assert pg_temp.ids(wm.market_list(p_q => 'electricite', p_card_id => c) -> 'auctions') = array[x[5], x[4], x[3], x[2], x[1]], 'q sans accent';
+  assert pg_temp.ids(wm.market_list(p_q => ' ÉLECTRICITÉ ', p_card_id => o) -> 'auctions') = array[y], 'q accentué';
+  assert (wm.market_list(p_q => 'st', p_card_id => c) ->> 'total')::int = 5, 'q à 2 caractères';
+  assert wm.market_list(p_q => 'magnetisme', p_card_id => c) = '{"auctions":[],"hasMore":false,"total":0}', 'q sans correspondance';
+  assert wm.market_list(p_q => 'el_ct', p_card_id => c) ->> 'total' = '0', '_ pris comme joker';
+  assert wm.market_list(p_q => '%%', p_card_id => c) = '{"auctions":[],"hasMore":false,"total":0}', '%% sans lettre ni chiffre';
+  -- Refus.
+  d := pg_temp.err(format(q, 0, 'recent', null, c));
+  assert d = format(e400, 'La page commence à 1')::jsonb, coalesce(d::text, 'page 0 acceptée');
+  d := pg_temp.err(format(q, 1, 'xyz', null, c));
+  assert d = format(e400, 'Tri inconnu')::jsonb, coalesce(d::text, 'tri inconnu accepté');
+  d := pg_temp.err(format(q, 1, 'recent', 'a', c));
+  assert d = format(e400, 'La recherche demande au moins 2 caractères')::jsonb, coalesce(d::text, 'q d''un caractère accepté');
+  -- Limite ramenée dans 1..50, hasMore = page × limite < total.
+  r := wm.market_list(p_limit => 2, p_card_id => c);
+  assert pg_temp.ids(r -> 'auctions') = array[x[5], x[4]] and r - 'auctions' = '{"hasMore":true,"total":5}', r::text;
+  r := wm.market_list(p_page => 3, p_limit => 2, p_card_id => c);
+  assert pg_temp.ids(r -> 'auctions') = array[x[1]] and r - 'auctions' = '{"hasMore":false,"total":5}', r::text;
+  assert pg_temp.ids(wm.market_list(p_limit => 0, p_card_id => c) -> 'auctions') = array[x[5]], 'limite 0';
+  assert (wm.market_list() ->> 'total')::int = (select count(*) from public.auctions where status = 'active'), 'sans filtre';
+  perform pg_temp.inv('liste');
+end $$;
+
+-- 51 enchères actives d'une carte (six vendeurs Pro), plus une retirée, une invendue et une vendue : p_limit 100 ramené à 50, hasMore, puis
+-- la 51e en page 2 ; les deux pages font les 51 actives, sans doublon (création identique, départage par id) ; les terminées n'apparaissent
+-- jamais.
+do $$ declare c uuid := pg_temp.card('Pagination marché'); s uuid := pg_temp.player('Page0'); b uuid := pg_temp.player('Page9', 100);
+  p uuid[] := array(select pg_temp.player('Page' || i, 0, true) from generate_series(1, 6) i); x uuid[]; z uuid[]; r jsonb; r2 jsonb; begin
+  z := array(select pg_temp.listing(s, c) from generate_series(1, 3));
+  perform wm.cancel_auction(s, z[1]);
+  perform wm.place_bid(b, z[3], 10);
+  update public.auctions set end_at = now() - interval '1 minute' where id in (z[2], z[3]);
+  perform wm.settle_auction(z[2]);
+  perform wm.settle_auction(z[3]);
+  assert (select array_agg(status::text order by array_position(z, id)) from public.auctions where id = any (z))
+    = array['cancelled', 'settled_unsold', 'settled_sold'], 'terminées';
+  x := array(select pg_temp.listing(p[(i - 1) / 10 + 1], c) from generate_series(1, 51) i);
+  r := wm.market_list(p_limit => 100, p_card_id => c);
+  assert jsonb_array_length(r -> 'auctions') = 50 and r - 'auctions' = '{"hasMore":true,"total":51}', (r - 'auctions')::text;
+  r2 := wm.market_list(p_page => 2, p_limit => 100, p_card_id => c);
+  assert jsonb_array_length(r2 -> 'auctions') = 1 and r2 - 'auctions' = '{"hasMore":false,"total":51}', r2::text;
+  assert pg_temp.ids(r -> 'auctions') || pg_temp.ids(r2 -> 'auctions') = array(select i from unnest(x) i order by i), 'pages';
+  perform pg_temp.inv('pagination');
+end $$;
+
+-- market_overlay : seulement les cartes possédées, dans l'ordre demandé ; la seule copie mise en vente (au séquestre) ne compte pas.
+do $$ declare u uuid := pg_temp.player('Overlay1'); c1 uuid := pg_temp.card('Overlay marché 1'); c2 uuid := pg_temp.card('Overlay marché 2');
+  c3 uuid := pg_temp.card('Overlay marché 3'); c4 uuid := pg_temp.card('Overlay marché 4'); r jsonb; begin
+  perform wm.grant_copy(u, c1, false);
+  perform wm.grant_copy(u, c3, false);
+  perform pg_temp.listing(u, c4);
+  r := wm.market_overlay(u, array[c3, c2, c4, c1]);
+  assert r = jsonb_build_object('ownedCardIds', jsonb_build_array(c3, c1)), r::text;
+  assert wm.market_overlay(u, '{}') = '{"ownedCardIds":[]}', 'liste vide';
+end $$;
+
+-- market_mine_lists : P mise sur quatre enchères de S (en tête après une surenchère, surenchéri, gagnée, perdue) et vend trois copies
+-- (vendue, invendue, retirée) plus deux en cours. bidding par dernière mise de P, my_last_bid = sa dernière mise ; history par
+-- coalesce(settled_at, created_at) desc (P26) ; owned posé par le SQL (P11) : seule la carte gagnée est à P parmi celles de bidding.
+do $$ declare p uuid := pg_temp.player('Mes1', 1000); s uuid := pg_temp.player('Mes2'); q uuid := pg_temp.player('Mes3', 1000);
+  b uuid := pg_temp.player('Mes4', 100); ca uuid := pg_temp.card('Mes enchères marché'); cw uuid := pg_temp.card('Mes gains marché');
+  cs uuid := pg_temp.card('Mes ventes marché'); lead uuid := pg_temp.listing(s, ca); outb uuid := pg_temp.listing(s, ca);
+  won uuid := pg_temp.listing(s, cw); lost uuid := pg_temp.listing(s, ca); h uuid[]; sell uuid[]; r jsonb; d jsonb; begin
+  perform wm.place_bid(p, lead, 10);
+  perform wm.place_bid(p, won, 10);
+  perform wm.place_bid(p, outb, 10);
+  perform wm.place_bid(q, outb, 11);
+  perform wm.place_bid(p, lost, 10);
+  perform wm.place_bid(q, lost, 11);
+  perform wm.place_bid(q, lead, 11);
+  perform wm.place_bid(p, lead, 13);
+  update public.auctions set end_at = now() - interval '1 minute' where id in (won, lost);
+  perform wm.settle_auction(won);
+  perform wm.settle_auction(lost);
+  h := array(select pg_temp.listing(p, cs) from generate_series(1, 3));
+  perform wm.place_bid(b, h[1], 10);
+  update public.auctions set end_at = now() - interval '1 minute' where id in (h[1], h[2]);
+  perform wm.settle_auction(h[1]);
+  perform wm.settle_auction(h[2]);
+  perform wm.cancel_auction(p, h[3]);
+  sell := array(select pg_temp.listing(p, cs) from generate_series(1, 2));
+  r := wm.market_mine_lists(p);
+  assert r - array['selling', 'bidding', 'won', 'history'] = '{"mine":true,"counts":{"selling":2,"bidding":4,"won":1,"history":3},
+    "wonHasMore":false,"historyHasMore":false,"sellingCount":2,"maxConcurrentAuctions":5}', (r - array['selling', 'bidding', 'won', 'history'])::text;
+  assert pg_temp.ids(r -> 'bidding') = array[lead, lost, outb, won], 'ordre de bidding';
+  assert (select jsonb_agg(jsonb_build_array(e -> 'my_state', e -> 'my_last_bid', e -> 'owned') order by o)
+          from jsonb_array_elements(r -> 'bidding') with ordinality x (e, o))
+    = '[["leading", 13, false], ["lost", 10, false], ["outbid", 10, false], ["won", 10, true]]', r -> 'bidding' #>> '{}';
+  assert r -> 'bidding' -> 0 = wm.auction_json((select a from public.auctions a where id = lead))
+    || '{"owned":false,"my_last_bid":13,"my_state":"leading"}', r -> 'bidding' ->> 0;
+  assert pg_temp.ids(r -> 'selling') = array(select i from unnest(sell) i order by i), 'selling';
+  assert pg_temp.ids(r -> 'won') = array[won] and r -> 'won' -> 0 = wm.auction_json((select a from public.auctions a where id = won))
+    || '{"owned":true}', r -> 'won' #>> '{}';
+  assert pg_temp.ids(r -> 'history') = array[h[2], h[1], h[3]], 'ordre de history';
+  assert (select array_agg(e ->> 'status' order by o) from jsonb_array_elements(r -> 'history') with ordinality x (e, o))
+    = array['settled_unsold', 'settled_sold', 'cancelled'], 'statuts de history';
+  assert (select bool_and(e -> 'owned' = 'true') from jsonb_array_elements((r -> 'selling') || (r -> 'history')) e), 'owned des ventes';
+  d := pg_temp.err(format('select wm.market_mine_lists(%L, 0)', p));
+  assert d = '{"status":400,"code":"invalid_request","error":"La page commence à 1","message":"La page commence à 1"}', coalesce(d::text, 'page 0');
+  perform pg_temp.inv('mes enchères');
+end $$;
+
+-- won : tout l'historique, settled_at desc, 50 par page. 51 enchères settled_sold gagnées par W, insérées à la main (lignes directes, sans
+-- séquestre ni grand livre : hors des invariants, qui ne lisent que les enchères active et le grand livre) ; leur vendeur a 51 lignes
+-- d'historique, donc historyHasMore.
+do $$ declare w uuid := pg_temp.player('Gains1'); s uuid := pg_temp.player('Gains2'); c uuid := pg_temp.card('Gains marché'); r jsonb;
+  prices text := 'select jsonb_agg(e -> ''final_price'' order by o) from jsonb_array_elements(%L::jsonb) with ordinality x (e, o)';
+  v jsonb; begin
+  insert into public.auctions (seller_id, card_id, user_card_id, snapshot_rarity, base_amount, listing_base_amount, current_bid,
+    current_bidder_id, bids_count, final_price, status, end_at, settled_at, winner_id)
+  select s, c, gen_random_uuid(), 'R', 1, 1, i, w, 1, i, 'settled_sold', now() - make_interval(mins => i), now() - make_interval(mins => i), w
+  from generate_series(1, 51) i;
+  r := wm.market_mine_lists(w);
+  execute format(prices, r -> 'won') into v;
+  assert v = (select jsonb_agg(i order by i) from generate_series(1, 50) i) and r -> 'wonHasMore' = 'true'
+    and r -> 'counts' = '{"selling":0,"bidding":0,"won":51,"history":0}', (r - 'won')::text;
+  r := wm.market_mine_lists(w, 2);
+  execute format(prices, r -> 'won') into v;
+  assert v = '[51]' and r -> 'wonHasMore' = 'false', (r - 'won')::text;
+  r := wm.market_mine_lists(s);
+  assert jsonb_array_length(r -> 'history') = 50 and r -> 'historyHasMore' = 'true' and r -> 'counts' ->> 'history' = '51', (r - 'history')::text;
+  r := wm.market_mine_lists(s, 2);
+  execute format(prices, r -> 'history') into v;
+  assert v = '[51]' and r -> 'historyHasMore' = 'false', (r - 'history')::text;
+  perform pg_temp.inv('gagnées insérées à la main');
+end $$;
+
+-- market_mine : ventes actives du joueur (l'échue non réglée comprise, la retirée non) avec user_card_id ; plafond 5 en gratuit, 10 en Pro.
+do $$ declare f uuid := pg_temp.player('Quota1'); p uuid := pg_temp.player('Quota2', 0, true); c uuid := pg_temp.card('Quota marché');
+  x uuid := pg_temp.listing(f, c); y uuid := pg_temp.listing(f, c); z uuid := pg_temp.listing(f, c); r jsonb; begin
+  update public.auctions set end_at = now() - interval '1 minute' where id = y;
+  perform wm.cancel_auction(f, z);
+  r := wm.market_mine(f);
+  assert r = jsonb_build_object('sellingCount', 2, 'maxConcurrentAuctions', 5, 'auctions', (select jsonb_agg(jsonb_build_object('id', id,
+    'card_id', card_id, 'user_card_id', user_card_id) order by id) from public.auctions where id in (x, y) and user_card_id is not null)), r::text;
+  assert wm.market_mine(p) = '{"sellingCount":0,"maxConcurrentAuctions":10,"auctions":[]}', wm.market_mine(p)::text;
+end $$;
+
+-- auction_detail : 52 mises insérées à la main sur une enchère sans meneur (ni meneur ni grand livre : hors des invariants) → les 50 plus
+-- récentes, plus récente d'abord, created_at = placed_at, pseudo du miseur ; enchère non échue, donc non réglée.
+do $$ declare s uuid := pg_temp.player('Detail1'); m uuid := pg_temp.player('Detail2'); n uuid := pg_temp.player('Detail3');
+  x uuid := pg_temp.listing(s, pg_temp.card('Détail marché')); r jsonb; begin
+  insert into public.auction_bids (auction_id, bidder_id, amount, placed_at)
+  select x, case when i % 2 = 0 then m else n end, 100 - i, now() - make_interval(secs => i) from generate_series(1, 52) i;
+  r := wm.auction_detail(x);
+  assert (select array_agg(k order by k) from jsonb_object_keys(r) k) = array['auction', 'bids'], r::text;
+  assert r -> 'auction' = wm.auction_json((select a from public.auctions a where id = x)) and r -> 'auction' ->> 'status' = 'active',
+    r ->> 'auction';
+  assert r -> 'bids' = (select jsonb_agg(jsonb_build_object('amount', 100 - i, 'placed_at', now() - make_interval(secs => i),
+      'created_at', now() - make_interval(secs => i), 'bidder', jsonb_build_object('username', case when i % 2 = 0 then 'Detail2' else 'Detail3' end))
+      order by i) from generate_series(1, 50) i), r -> 'bids' ->> 0;
+  perform pg_temp.inv('détail');
+end $$;
+
+-- Review Focus, règlement sans clic : B mène à 10 sur une enchère échue → auction_detail la règle d'abord (settle_auction) : la réponse est
+-- déjà settled_sold, la copie est chez B et le vendeur crédité, sans cron ni /settle ; un second détail ne règle rien de plus. Échue sans
+-- mise → settled_unsold, encore lisible. Inconnue ou retirée → 404.
+do $$ declare s uuid := pg_temp.player('Paresseux1'); b uuid := pg_temp.player('Paresseux2', 100); c uuid := pg_temp.card('Paresseux marché');
+  x uuid := pg_temp.listing(s, c); y uuid := pg_temp.listing(s, c); z uuid := pg_temp.listing(s, c); r jsonb; d jsonb; begin
+  perform wm.place_bid(b, x, 10);
+  update public.auctions set end_at = now() - interval '1 minute' where id in (x, z);
+  r := wm.auction_detail(x);
+  assert r -> 'auction' = wm.auction_json((select a from public.auctions a where id = x)) and r -> 'auction' ->> 'status' = 'settled_sold'
+    and r -> 'auction' ->> 'winner_id' = b::text and r -> 'auction' -> 'final_price' = '10', r::text;
+  assert r -> 'bids' = (select jsonb_build_array(jsonb_build_object('amount', 10, 'placed_at', placed_at, 'created_at', placed_at,
+    'bidder', '{"username":"Paresseux2"}'::jsonb)) from public.auction_bids where auction_id = x), r ->> 'bids';
+  assert (select count(*) from public.user_cards where user_id = b and card_id = c) = 1, 'copie pas chez le gagnant';
+  assert (select jsonb_agg(jsonb_build_array(user_id, delta)) from wm.wb_ledger where ref = 'settle:' || x) = jsonb_build_array(jsonb_build_array(s, 10))
+    and (select wikibidous_balance from public.profiles where id = s) = 10, 'vendeur non crédité';
+  assert wm.auction_detail(x) = r and (select count(*) from wm.wb_ledger where ref = 'settle:' || x) = 1, 'second détail';
+  assert wm.auction_detail(z) -> 'auction' ->> 'status' = 'settled_unsold', 'échue sans mise';
+  perform pg_temp.inv('règlement paresseux');
+  d := pg_temp.err(format('select wm.auction_detail(%L)', gen_random_uuid()));
+  assert d = '{"status":404,"error":"Enchère introuvable","message":"Enchère introuvable"}', coalesce(d::text, 'inconnue acceptée');
+  perform wm.cancel_auction(s, y);
+  assert pg_temp.err(format('select wm.auction_detail(%L)', y)) = d, 'retirée acceptée';
+end $$;
+
+-- card_sales_summary : ventes réelles de la carte, R à 10 puis 11, UR à 7 (copie en UR figée avant la vente) ; une invendue, une retirée et
+-- une vente d'une autre carte ne comptent pas. Moyenne arrondie (10,5 → 11). Fenêtre à 1 : la dernière vente de chaque rareté. Carte sans
+-- vente → {} ; inconnue → 404.
+do $$ declare s uuid := pg_temp.player('Resume1', 0, true); b uuid := pg_temp.player('Resume2', 100); c uuid := pg_temp.card('Résumé marché');
+  o uuid := pg_temp.card('Résumé autre marché'); k public.user_cards := wm.grant_copy(s, c, false); x uuid[]; i uuid; d jsonb; begin
+  update public.user_cards set snapshot_rarity = 'UR' where id = k.id;
+  x := array[pg_temp.listing(s, c, 10), pg_temp.listing(s, c, 11), pg_temp.listing(s, o, 30),
+    (wm.create_auction(s, k.id, 7, 60) ->> 'auction_id')::uuid, pg_temp.listing(s, c), pg_temp.listing(s, c)];
+  perform wm.place_bid(b, x[1], 10);
+  perform wm.place_bid(b, x[2], 11);
+  perform wm.place_bid(b, x[3], 30);
+  perform wm.place_bid(b, x[4], 7);
+  perform wm.cancel_auction(s, x[6]);
+  update public.auctions set end_at = now() - interval '1 minute' where id = any (x[1:5]);
+  foreach i in array x[1:5] loop  -- dans l'ordre : la vente à 11 est la dernière des R
+    perform wm.settle_auction(i);
+  end loop;
+  assert wm.card_sales_summary(c) = '{"summary":{"R":{"average":11,"count":2},"UR":{"average":7,"count":1}}}', wm.card_sales_summary(c)::text;
+  begin
+    update wm.config set value = '1' where key = 'sales_summary_window';
+    d := wm.card_sales_summary(c);
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d = '{"summary":{"R":{"average":11,"count":1},"UR":{"average":7,"count":1}}}', d::text;
+  assert wm.card_sales_summary(pg_temp.card('Résumé vide marché')) = '{"summary":{}}', 'carte sans vente';
+  d := pg_temp.err(format('select wm.card_sales_summary(%L)', gen_random_uuid()));
+  assert d = '{"status":404,"error":"Carte introuvable","message":"Carte introuvable"}', coalesce(d::text, 'carte inconnue acceptée');
+  perform pg_temp.inv('résumé des ventes');
+end $$;
+
+-- card_sales : Pro d'abord (403 pro_required, même sur une carte inconnue), puis carte (404). 25 ventes des 25 derniers jours, une de 31 jours
+-- et une invendue, insérées à la main (hors des invariants) → sales = les 25, plus récente d'abord, clés exactes ; recent = les 20 premières ;
+-- VIP vaut Pro ; max_rows à 3 → 3 lignes.
+do $$ declare f uuid := pg_temp.player('Ventes1'); p uuid := pg_temp.player('Ventes2', 0, true); s uuid := pg_temp.player('Ventes3');
+  c uuid := pg_temp.card('Ventes marché'); q text := 'select wm.card_sales(%L, %L)'; r jsonb; d jsonb; begin
+  insert into public.auctions (seller_id, card_id, user_card_id, snapshot_rarity, is_shiny, base_amount, listing_base_amount, current_bid,
+    bids_count, final_price, status, end_at, settled_at)
+  select s, c, gen_random_uuid(), case when i % 2 = 0 then 'SR' else 'R' end::public.rarity, i % 3 = 0, 1, 1, i, 1, i,
+    case when i = 27 then 'settled_unsold' else 'settled_sold' end::public.auction_status, now() - make_interval(days => i),
+    now() - make_interval(days => case when i = 26 then 31 else i end)
+  from generate_series(1, 27) i;
+  d := pg_temp.err(format(q, f, c));
+  assert d = '{"status":403,"code":"pro_required","error":"Fonction réservée aux membres Pro","message":"Fonction réservée aux membres Pro"}',
+    coalesce(d::text, 'non Pro accepté');
+  assert pg_temp.err(format(q, f, gen_random_uuid())) = d, 'carte inconnue avant le Pro';
+  d := pg_temp.err(format(q, p, gen_random_uuid()));
+  assert d = '{"status":404,"error":"Carte introuvable","message":"Carte introuvable"}', coalesce(d::text, 'carte inconnue acceptée');
+  r := wm.card_sales(p, c);
+  assert (select array_agg(k order by k) from jsonb_object_keys(r) k) = array['recent', 'sales'], r::text;
+  assert r -> 'sales' = (select jsonb_agg(jsonb_build_object('id', id, 'rarity', snapshot_rarity, 'is_shiny', is_shiny, 'final_price', final_price,
+    'settled_at', settled_at) order by final_price) from public.auctions where card_id = c and final_price <= 25), r ->> 'sales';
+  assert r -> 'recent' = jsonb_path_query_array(r -> 'sales', '$[0 to 19]') and jsonb_array_length(r -> 'recent') = 20, r ->> 'recent';
+  update public.profiles set is_vip = true where id = f;
+  assert wm.card_sales(f, c) = r, 'VIP refusé';
+  begin
+    update wm.config set value = '{"days": 30, "max_rows": 3}' where key = 'sales_detail_window';
+    d := wm.card_sales(p, c);
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d -> 'sales' = jsonb_path_query_array(r -> 'sales', '$[0 to 2]') and d -> 'recent' = d -> 'sales', d::text;
+  perform pg_temp.inv('ventes Pro');
+end $$;
