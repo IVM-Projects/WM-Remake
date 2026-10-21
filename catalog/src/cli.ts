@@ -1,6 +1,7 @@
 // `node catalog/src/cli.ts <commande> --option valeur` : point d'entrée des jobs de catalog.yml.
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
+import { cirrusListing } from './cirrus.ts'
 import { selectCommand } from './compute.ts'
 import { pageviewsCommand } from './pageviews.ts'
 import { dumpsCommand } from './sqldump.ts'
@@ -21,6 +22,7 @@ function count(v: Values, name: string): number | undefined {
 }
 
 const commands: Record<string, (v: Values) => Promise<unknown>> = {
+  'cirrus-list': () => cirrusListing(),
   dumps: (v) => dumpsCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir') }),
   pageviews: (v) => {
     // Options validées avant de lire stdin : sinon une option fausse attend la fin du flux.
