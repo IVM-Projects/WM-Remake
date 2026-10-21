@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { brand } from '@/lib/brand'
-import { Card, type CardFace } from './Card'
+import { Card, showsImage, type CardFace } from './Card'
 
 // Sans DOM (R18) : on lit le HTML rendu. Les préférences sont pilotées par le test.
 const prefs = vi.hoisted(() => ({ sounds: true, hideSensitive: true, ready: true }))
@@ -69,6 +69,13 @@ describe('Card (DOM de R§6.4)', () => {
     expect(html(<Card card={nsfw} />)).not.toContain('upload.wikimedia.org')
     prefs.hideSensitive = false
     expect(html(<Card card={nsfw} />)).toContain(`src="${THUMB}"`)
+  })
+
+  test('showsImage (règle partagée avec la modale) : sans image, masquée, sensible sous la préférence ou non', () => {
+    expect(showsImage({ image_url: null }, false)).toBe(false)
+    expect(showsImage({ image_url: THUMB, hide_image: true }, false)).toBe(false)
+    expect(showsImage({ image_url: THUMB, nsfw_image: true }, true)).toBe(false)
+    expect(showsImage({ image_url: THUMB, nsfw_image: true }, false)).toBe(true)
   })
 
   test('favori (copies possédées) : « Ajouter aux favoris », puis « Retirer des favoris » une fois coché', () => {

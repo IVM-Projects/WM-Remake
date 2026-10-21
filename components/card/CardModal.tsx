@@ -10,7 +10,7 @@ import { formatInt } from '@/lib/format'
 import { usePrefs } from '@/lib/prefs'
 import { rarityOf, type RarityCode } from '@/lib/rarity'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
-import { Card, type CardFace } from './Card'
+import { Card, showsImage, type CardFace } from './Card'
 import { ImageCredit, type Credit } from './ImageCredit'
 import { TagPicker, type Tag } from './TagPicker'
 
@@ -90,10 +90,9 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   const [error, setError] = useState<string | null>(null)
   const needMeta = card.q_score === undefined || card.pageviews === undefined
   const isOwned = !!owned
-  const { hideSensitive } = usePrefs()
-  // Règle de Card.tsx : le crédit accompagne l'image affichée (card_credits ne lit pas hide_image ni nsfw_image).
-  const showsImage = !!card.image_url && !card.hide_image && !(card.nsfw_image && hideSensitive)
-  const [credit, setCredit] = useState<Credit | null>(null)
+  const imageShown = showsImage(card, usePrefs().hideSensitive)
+  // Crédit rangé avec sa carte : une modale réutilisée pour une autre carte n'affiche jamais celui de la précédente.
+  const [credit, setCredit] = useState<(Credit & { card_id: string }) | null>(null)
 
   // À l'ouverture : la méta absente d'une copie (comme l'original, qui lit cards?id=eq.), l'état de la liste de souhaits d'une carte du catalogue.
   useEffect(() => {
@@ -115,12 +114,12 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   }, [card.id, needMeta, isOwned])
 
   useEffect(() => {
-    if (!showsImage) return
+    if (!imageShown) return
     let live = true
     // 404 (carte sans média) ou erreur : aucune ligne.
-    api<Credit | null>(`/api/cards/${card.id}/credits`).then((c) => { if (live) setCredit(c) }, () => {})
+    api<Credit | null>(`/api/cards/${card.id}/credits`).then((c) => { if (live && c) setCredit({ ...c, card_id: card.id }) }, () => {})
     return () => { live = false }
-  }, [card.id, showsImage])
+  }, [card.id, imageShown])
 
   async function toggleStar() {
     // Un PATCH à la fois : un double clic laisserait l'écran et la base en désaccord.
@@ -291,7 +290,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
                     </a>
                   </p>
                   <p>Texte de l&apos;article : CC BY-SA 4.0 — crédits sur la page Wikipédia.</p>
-                  {showsImage && credit && <ImageCredit credit={credit} />}
+                  {imageShown && credit?.card_id === card.id && <ImageCredit credit={credit} />}
                 </div>
               </>
             )}

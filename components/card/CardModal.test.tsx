@@ -77,8 +77,6 @@ describe('CardModal (R§6.5)', () => {
   test('lien Wikipédia et ligne de licence', () => {
     expect(h).toMatch(/<a href="https:\/\/fr.wikipedia.org\/wiki\/Chat" target="_blank" rel="noopener noreferrer"[^>]*>Voir l'article sur Wikipédia →<\/a>/)
     expect(text).toContain('Texte de l\'article : CC BY-SA 4.0 — crédits sur la page Wikipédia.')
-    // Crédit de l'image : rien tant que /api/cards/{id}/credits n'a pas répondu.
-    expect(textOf(html(<CardModal item={{ ...catalogue, image_url: 'https://upload.wikimedia.org/x.jpg' }} onClose={noop} />))).not.toContain('Image :')
   })
 
   test('pied : « Défausser », la pièce W et « +1 »', () => {

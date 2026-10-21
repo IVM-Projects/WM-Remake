@@ -22,20 +22,25 @@ test('pied de page du jeu : mention et lien vers /credits, hors de la nav', asyn
   const footer = page.locator('main footer')
   await expect(footer).toContainText('Projet indépendant de la Fondation Wikimedia')
   await expect(footer.getByRole('link', { name: 'Crédits', exact: true })).toHaveAttribute('href', '/credits')
+  await expect(page.locator('nav a[href="/credits"]')).toHaveCount(0)
 })
 
-// Ouvre la seule copie du joueur ; « Vues (30j) » prouve que les lectures de l'ouverture (méta et crédits) sont parties et revenues.
+// Ouvre la seule copie du joueur, préférences lues avant l'ouverture ; « Vues (30j) » prouve que les lectures de l'ouverture
+// (méta et crédits) sont parties et revenues.
 async function openCopy(page: Page, title: string) {
+  const prefs = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/settings/preferences')
   await page.goto('/collection')
+  await prefs
   await page.getByRole('button', { name: title, exact: true }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByText('Vues (30j) : 0', { exact: true })).toBeVisible()
   return dialog
 }
 
-test('modale : auteur et licence de l\'image affichée, rien quand l\'image est masquée ou absente', async ({ page, login }) => {
+test('modale : auteur et licence de l\'image affichée, rien quand l\'image est masquée, sensible ou absente', async ({ page, login }) => {
   const { uid } = await login()
-  const title = `Zz crédits e2e ${randomUUID().slice(-12)}`
+  // Fin non numérique : le helper collection() d'a11y.spec.ts prend les titres finissant par 0001, 0007…
+  const title = `Zz crédits e2e ${randomUUID().slice(-12)} z`
   // Wikimedia est injoignable du banc : l'image est l'icône du site.
   const id = sql(`insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, image_url)
 values (:'title', 'https://fr.wikipedia.org/wiki/Zz', 'C', 1000, 1000, 'http://127.0.0.1:3100/icon') returning id`, { title })
@@ -62,8 +67,20 @@ values (:'uid', :'id', :'title', 'C', 1000, 1000)`, { id, uid, title })
     await expect(dialog.getByText(/^Image :/)).toHaveCount(0)
     expect(asked).toEqual([])
 
+    // Image sensible, préférence du joueur « masquer » (wm.user_prefs) : ni lecture, ni ligne ; préférence levée : la ligne revient.
+    sql(`update public.cards set hide_image = false, nsfw_image = true where id = :'id';
+insert into wm.user_prefs (user_id, hide_sensitive) values (:'uid', true) on conflict (user_id) do update set hide_sensitive = true`, { id, uid })
+    dialog = await openCopy(page, title)
+    await expect(dialog.getByText(/^Image :/)).toHaveCount(0)
+    expect(asked).toEqual([])
+    sql(`update wm.user_prefs set hide_sensitive = false where user_id = :'uid'`, { uid })
+    dialog = await openCopy(page, title)
+    await expect(dialog.getByText('Image : Jean Dupont, CC BY-SA 4.0', { exact: true })).toBeVisible()
+    expect(asked).toEqual([`/api/cards/${id}/credits`])
+    asked.length = 0
+
     // Carte sans image (son média reste) : pas de ligne non plus.
-    sql(`update public.cards set hide_image = false, image_url = null where id = :'id'`, { id })
+    sql(`update public.cards set nsfw_image = false, image_url = null where id = :'id'`, { id })
     dialog = await openCopy(page, title)
     await expect(dialog.getByText(/^Image :/)).toHaveCount(0)
     expect(asked).toEqual([])
