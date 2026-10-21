@@ -3,6 +3,8 @@ import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { cirrusListing } from './cirrus.ts'
 import { selectCommand } from './compute.ts'
+import { fetchCommand, pickCommand, readmeCommand, sliceCirrusCommand, slicePageviewsCommand, sliceSqlCommand } from './fixtures.ts'
+import { createClient } from './http.ts'
 import { pageviewsCommand } from './pageviews.ts'
 import { dumpsCommand } from './sqldump.ts'
 
@@ -21,6 +23,12 @@ function count(v: Values, name: string): number | undefined {
   return Number(value)
 }
 
+function matching(v: Values, name: string, format: RegExp): string {
+  const value = need(v, name)
+  if (!format.test(value)) throw new Error(`Option --${name} invalide : ${value}`)
+  return value
+}
+
 const commands: Record<string, (v: Values) => Promise<unknown>> = {
   'cirrus-list': () => cirrusListing(),
   dumps: (v) => dumpsCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir') }),
@@ -37,6 +45,19 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
     if (!/^\d+(\.\d+)?$/.test(rate) || !(Number(rate) > 0)) throw new Error(`Option --rate invalide : ${rate}`)
     return selectCommand({ dir: need(v, 'dir'), mode, rate: Number(rate) })
   },
+  'fixtures pick': (v) => pickCommand({ dir: need(v, 'dir'), fixtures: need(v, 'fixtures') }),
+  'fixtures slice-sql': (v) =>
+    sliceSqlCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir'), fixtures: need(v, 'fixtures') }),
+  'fixtures slice-pageviews': (v) => slicePageviewsCommand({ fixtures: need(v, 'fixtures'), input: process.stdin }),
+  'fixtures slice-cirrus': (v) => sliceCirrusCommand({ fixtures: need(v, 'fixtures'), input: process.stdin, output: process.stdout }),
+  'fixtures fetch': (v) => fetchCommand({ dir: need(v, 'dir'), fixtures: need(v, 'fixtures'), client: createClient() }),
+  'fixtures readme': (v) =>
+    readmeCommand({
+      fixtures: need(v, 'fixtures'),
+      month: matching(v, 'month', /^\d{4}-\d{2}$/),
+      cirrusDate: matching(v, 'cirrus-date', /^\d{8}$/),
+      dumpDate: matching(v, 'dump-date', /^\d{4}-\d{2}-\d{2}$/),
+    }),
 }
 
 try {
@@ -44,10 +65,11 @@ try {
     allowPositionals: true,
     options: {
       page: { type: 'string' }, props: { type: 'string' }, dir: { type: 'string' }, 'min-lines': { type: 'string' },
-      mode: { type: 'string' }, rate: { type: 'string' },
+      mode: { type: 'string' }, rate: { type: 'string' }, fixtures: { type: 'string' }, month: { type: 'string' },
+      'cirrus-date': { type: 'string' }, 'dump-date': { type: 'string' },
     },
   })
-  const name = positionals[0] ?? ''
+  const name = positionals.join(' ') // `fixtures pick` : commande en deux mots
   if (!Object.hasOwn(commands, name)) throw new Error(`Commande inconnue : ${name} (${Object.keys(commands).join(', ')})`)
   const result = await commands[name](values)
   // Rien sur stdout pour une commande sans résultat : elle peut écrire son flux sur stdout.

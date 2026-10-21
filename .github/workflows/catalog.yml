@@ -1,0 +1,115 @@
+name: Catalogue
+
+# Catalogue de cartes depuis les dumps et les API Wikimedia (M2), lancé à la main ou par l'API.
+# Mode `fixtures` : tranches réelles d'environ 300 pages pour les tests (M2-7), en artefact `fixtures-raw`.
+# Pas de `schedule` avant le premier chargement réussi (P12).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: sample (échantillon), full (catalogue complet) ou fixtures (tranches pour les tests)
+        type: choice
+        options: [sample, full, fixtures]
+        default: sample
+      target:
+        description: Plan de la base (free = garde de taille)
+        type: choice
+        options: [free, pro]
+        default: free
+      sample_rate:
+        description: Taux d'échantillon forcé (vide = valeur de wm.config)
+        type: string
+        default: ''
+      text_source:
+        description: Source du texte (extracts = repli TextExtracts)
+        type: choice
+        options: [cirrus, extracts]
+        default: cirrus
+      load:
+        description: Charger le résultat dans la base
+        type: boolean
+        default: true
+      artifacts_run_id:
+        description: Run dont reprendre les artefacts (vide = tout recalculer)
+        type: string
+        default: ''
+
+defaults:
+  run:
+    shell: bash # -eo pipefail : un curl coupé fait échouer l'étape
+
+concurrency:
+  group: catalog
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fixtures:
+    if: inputs.mode == 'fixtures'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: sudo apt-get update -q && sudo apt-get install -y -q lbzip2
+
+      - name: Dumps SQL page et page_props
+        run: |
+          mkdir -p work catalog/fixtures/raw
+          # -R : date du fichier distant, reprise dans le README.
+          curl -fsSL --retry 3 -R -o work/page.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz
+          curl -fsSL --retry 3 -R -o work/page_props.sql.gz https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page_props.sql.gz
+          echo "DUMP_DATE=$(date -u -r work/page.sql.gz +%F)" >> "$GITHUB_ENV"
+          node catalog/src/cli.ts dumps --page work/page.sql.gz --props work/page_props.sql.gz --dir work
+
+      - name: Vues du mois précédent
+        run: |
+          M=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)
+          echo "MONTH=$M" >> "$GITHUB_ENV"
+          curl -fsSL "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2" | lbzip2 -dc | grep '^fr.wikipedia ' > work/fr.pv
+          node catalog/src/cli.ts pageviews --dir work < work/fr.pv
+
+      - name: Choix des pages, tranches SQL et vues
+        run: |
+          node catalog/src/cli.ts fixtures pick --dir work --fixtures catalog/fixtures
+          node catalog/src/cli.ts fixtures slice-sql --page work/page.sql.gz --props work/page_props.sql.gz --dir work --fixtures catalog/fixtures
+          node catalog/src/cli.ts fixtures slice-pageviews --fixtures catalog/fixtures < work/fr.pv
+
+      - name: Tranche Cirrus (toutes les parts)
+        run: |
+          L=$(node catalog/src/cli.ts cirrus-list)
+          D=$(jq -r .date <<< "$L")
+          P=$(jq -r '.parts[]' <<< "$L")
+          echo "CIRRUS_DATE=$D" >> "$GITHUB_ENV"
+          : > catalog/fixtures/raw/cirrus.ndjson
+          for p in $P; do
+            curl -fsSL "https://dumps.wikimedia.org/other/cirrus_search_index/$D/index_name%3Dfrwiki_content/$p" | lbzip2 -dc | node catalog/src/cli.ts fixtures slice-cirrus --fixtures catalog/fixtures >> catalog/fixtures/raw/cirrus.ndjson
+          done
+
+      - name: Réponses de Wikidata, Commons et TextExtracts
+        run: |
+          # catalog.tsv relu depuis les tranches (toutes les pages retenues), comme le feront les tests.
+          mkdir -p work/fx
+          node catalog/src/cli.ts dumps --page catalog/fixtures/raw/page.sql --props catalog/fixtures/raw/page_props.sql --dir work/fx
+          node catalog/src/cli.ts pageviews --dir work/fx --min-lines 0 < catalog/fixtures/raw/pageviews.txt
+          node catalog/src/cli.ts select --dir work/fx --mode sample --rate 1
+          node catalog/src/cli.ts fixtures fetch --dir work/fx --fixtures catalog/fixtures
+
+      - name: README et meta.json
+        run: node catalog/src/cli.ts fixtures readme --fixtures catalog/fixtures --month "$MONTH" --cirrus-date "$CIRRUS_DATE" --dump-date "$DUMP_DATE"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fixtures-raw
+          path: catalog/fixtures/
+          retention-days: 7
+          overwrite: true
