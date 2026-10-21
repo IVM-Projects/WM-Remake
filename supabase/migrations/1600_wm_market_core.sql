@@ -99,6 +99,9 @@ declare
   v_win interval := make_interval(secs => (b ->> 'window_s')::int);
   v_n int;
 begin
+  if b is null then
+    raise exception 'rafale inconnue : %', p_kind using errcode = 'XX000';
+  end if;
   if p_kind = 'bid' then
     update wm.user_state set bid_window_count = case when bid_window_start > now() - v_win then bid_window_count + 1 else 1 end,
       bid_window_start = case when bid_window_start > now() - v_win then bid_window_start else now() end
@@ -235,18 +238,24 @@ returns jsonb language sql security definer set search_path = '' as $$
     full join wm.user_rarity_counts k using (user_id, snapshot_rarity, is_shiny)
     where coalesce(a.n, 0) <> coalesce(k.rows, 0) or coalesce(a.c, 0) <> coalesce(k.copies, 0)
     union all
+    -- shortcut: somme globale ; le grand livre cascade par joueur (1000_wm_core.sql:39), donc supprimer un seul côté d'une vente réglée
+    -- la rend non nulle. À revoir avec la suppression de compte (M6).
     select jsonb_build_object('check', 'market_money', 'ledger', l.s, 'held', h.s)
     from (select coalesce(sum(delta), 0) s from wm.wb_ledger where reason in ('bid', 'refund', 'settle')) l,
       (select coalesce(sum(current_bid), 0) s from public.auctions where status = 'active' and current_bidder_id is not null) h
     where l.s + h.s <> 0
     union all
+    -- Réservations d'après le grand livre : débit bid:<id> du miseur sans refund:<id>, montant = −delta. Une seule, du meneur, = current_bid.
     select jsonb_build_object('check', 'reservation', 'auction_id', a.id, 'current_bid', a.current_bid, 'unrefunded', r.amounts)
     from public.auctions a
-    cross join lateral (select coalesce(jsonb_agg(b.amount order by b.amount), '[]') amounts from public.auction_bids b
+    cross join lateral (select coalesce(jsonb_agg(-l.delta order by -l.delta), '[]') amounts, count(*) n, min(-l.delta) amount,
+        bool_and(b.bidder_id = a.current_bidder_id) leader
+      from public.auction_bids b
+      join wm.wb_ledger l on l.reason = 'bid' and l.ref = 'bid:' || b.id and l.user_id = b.bidder_id
       where b.auction_id = a.id
-        and exists (select from wm.wb_ledger l where l.reason = 'bid' and l.ref = 'bid:' || b.id)
-        and not exists (select from wm.wb_ledger l where l.reason = 'refund' and l.ref = 'refund:' || b.id)) r
-    where a.status = 'active' and a.current_bidder_id is not null and r.amounts <> jsonb_build_array(a.current_bid)
+        and not exists (select from wm.wb_ledger f where f.reason = 'refund' and f.ref = 'refund:' || b.id and f.user_id = b.bidder_id)) r
+    where a.status = 'active' and a.current_bidder_id is not null
+      and not coalesce(r.n = 1 and r.amount = a.current_bid and r.leader, false)
     union all
     select jsonb_build_object('check', 'escrow', 'auction_id', a.id, 'problem', 'missing')
     from public.auctions a where a.status = 'active' and not exists (select from wm.auction_escrow e where e.auction_id = a.id)

@@ -93,7 +93,7 @@ end $$;
 
 -- market_tick : la 10e mise de la fenêtre passe et retire la vérification (P3), la suivante est refusée ; fenêtre échue → 1 ;
 -- set_human_verified remet les trois fenêtres à zéro.
-do $$ declare u uuid := pg_temp.player('Tick1'); s wm.user_state; begin
+do $$ declare u uuid := pg_temp.player('Tick1'); s wm.user_state; k text; m text; begin
   update wm.user_state set bid_window_count = 8, bid_window_start = now() - interval '30 seconds' where user_id = u;
   perform wm.market_tick(u, 'bid');
   assert (select bid_window_count = 9 and human_verified_until is not null from wm.user_state where user_id = u), '9e mise';
@@ -111,6 +111,22 @@ do $$ declare u uuid := pg_temp.player('Tick1'); s wm.user_state; begin
   select * into s from wm.user_state where user_id = u;
   assert s.bid_window_count = 0 and s.list_window_count = 0 and s.bid_window_start is null and s.list_window_start is null
     and s.open_window_count = 0 and s.human_verified_until > now(), to_jsonb(s)::text;
+  -- Plafond des mises en vente : la 5e de la fenêtre retire la vérification, la 6e est refusée.
+  update wm.user_state set list_window_count = 4, list_window_start = now() - interval '10 seconds' where user_id = u;
+  perform wm.market_tick(u, 'list');
+  select * into s from wm.user_state where user_id = u;
+  assert s.list_window_count = 5 and s.human_verified_until is null, to_jsonb(s)::text;
+  assert pg_temp.err(format('select wm.market_guard(%L, %L)', u, 'list')) ->> 'code' = 'human_verification_required', '6e mise en vente acceptée';
+  -- Rafale inconnue : erreur interne, jamais un compteur écrit au hasard ni une garde passée sans contrôle.
+  foreach k in array array['market_guard', 'market_tick'] loop
+    begin
+      execute format('select wm.%I(%L, %L)', k, u, 'pack');
+      assert false, k || ' : rafale inconnue acceptée';
+    exception when sqlstate 'XX000' then
+      get stacked diagnostics m = message_text;
+      assert m = 'rafale inconnue : pack', m;
+    end;
+  end loop;
 end $$;
 
 -- Review Focus, pile étiquetée : A (count 1, favorite, étiquetée, en avatar) part entière au séquestre ; B (count 3, deux étiquettes)
@@ -231,7 +247,8 @@ end $$;
 
 -- Invariants du marché (M3-26) sur une vraie réservation, puis chaque violation forcée, vérifiée et annulée.
 do $$ declare s uuid := pg_temp.player('Inv1'); b uuid := pg_temp.player('Inv2', 100); c uuid := pg_temp.card('Invariants marché');
-  k public.user_cards := wm.grant_copy(s, c, false); x uuid; m uuid; e wm.auction_escrow; d jsonb; begin
+  o uuid := pg_temp.player('Inv3'); k public.user_cards := wm.grant_copy(s, c, false); x uuid; m uuid; m2 uuid; e wm.auction_escrow;
+  d jsonb; begin
   insert into public.auctions (seller_id, card_id, user_card_id, snapshot_rarity, snapshot_atk, snapshot_def, base_amount, listing_base_amount, end_at)
   values (s, c, k.id, k.snapshot_rarity, k.snapshot_atk, k.snapshot_def, 10, 10, now() + interval '1 hour') returning id into x;
   perform wm.escrow_put(x, k, 60);
@@ -245,6 +262,36 @@ do $$ declare s uuid := pg_temp.player('Inv1'); b uuid := pg_temp.player('Inv2',
     jsonb_build_object('check', 'reservation', 'auction_id', x, 'current_bid', 51, 'unrefunded', '[50]'::jsonb))
     and jsonb_array_length(d) = 2, d::text;
   update public.auctions set current_bid = 50 where id = x;
+  -- Réservation lue au grand livre ; chaque scénario est annulé par sa sous-transaction (WMT00), d survit à l'annulation.
+  -- (a) Débit bid:<m> porté par un autre joueur que le miseur (devenu meneur) : aucune réservation.
+  begin
+    update public.auction_bids set bidder_id = o where id = m;
+    update public.auctions set current_bidder_id = o where id = x;
+    d := wm.check_invariants();
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d = jsonb_build_array(jsonb_build_object('check', 'reservation', 'auction_id', x, 'current_bid', 50, 'unrefunded', '[]'::jsonb)), d::text;
+  -- (b) Mise de 50 débitée de 40 seulement (m remboursée) : la réservation vaut 40, pas le montant de la ligne de mise.
+  begin
+    insert into public.auction_bids (auction_id, bidder_id, amount) values (x, b, 50) returning id into m2;
+    perform wm.wallet_apply(b, 50, 'refund', 'refund:' || m);
+    perform wm.wallet_apply(b, -40, 'bid', 'bid:' || m2);
+    d := wm.check_invariants();
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d @> jsonb_build_array(jsonb_build_object('check', 'reservation', 'auction_id', x, 'current_bid', 50, 'unrefunded', '[40]'::jsonb),
+    '{"check":"market_money","ledger":-40,"held":50}'::jsonb) and jsonb_array_length(d) = 2, d::text;
+  -- (c) La réservation restante n'est pas celle du meneur.
+  begin
+    update public.auctions set current_bidder_id = o where id = x;
+    d := wm.check_invariants();
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d = jsonb_build_array(jsonb_build_object('check', 'reservation', 'auction_id', x, 'current_bid', 50, 'unrefunded', '[50]'::jsonb)), d::text;
+  perform pg_temp.inv('scénarios de réservation annulés');
   delete from wm.auction_escrow where auction_id = x returning * into e;
   d := wm.check_invariants();
   assert d = jsonb_build_array(jsonb_build_object('check', 'escrow', 'auction_id', x, 'problem', 'missing')), d::text;
