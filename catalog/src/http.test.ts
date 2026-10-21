@@ -165,9 +165,17 @@ test('rafale de 429 hors des 8 tentatives : Retry-After respecté, budget de 30 
   expect(await settle(createClient({ fetchImpl: endless, sleep }).get(URL_A))).toEqual(
     new Error(`Wikimedia : ralentissement persistant (429) sur ${URL_A}`),
   )
-  const waits = sleep.mock.calls.map(([ms]) => ms)
-  expect(waits.reduce((sum, ms) => sum + ms, 0)).toBe(30 * 60_000)
-  expect(waits.at(-1)).toBe(30 * 60_000 - 78 * 23_000)
+  // 78 attentes de 23 s tiennent dans les 30 min ; la 79e n'y tient plus : arrêt sans relance anticipée.
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual(Array(78).fill(23_000))
+
+  sleep.mockClear()
+  const zero = replies(throttled('0'))
+  expect(await settle(createClient({ fetchImpl: zero, sleep }).get(URL_A))).toEqual(
+    new Error(`Wikimedia : ralentissement persistant (429) sur ${URL_A}`),
+  )
+  const zeroWaits = sleep.mock.calls.map(([ms]) => ms)
+  expect(zeroWaits.slice(0, 4)).toEqual([5_000, 10_000, 20_000, 40_000])
+  expect(zeroWaits.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(30 * 60_000)
 
   sleep.mockClear()
   const hour = replies(throttled('3600'))

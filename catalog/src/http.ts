@@ -50,14 +50,17 @@ export function createClient(o: {
     let throttles = 0
     const left = { throttle: BUDGET_MS, maxlag: BUDGET_MS }
 
-    async function transient(what: string) {
-      if (retries >= maxRetries) throw new Error(`Wikimedia : abandon après ${maxRetries} nouvelles tentatives (${what}) sur ${url}`)
+    async function transient(what: string, cause?: unknown) {
+      if (retries >= maxRetries) {
+        throw new Error(`Wikimedia : abandon après ${maxRetries} nouvelles tentatives (${what}) sur ${url}`, { cause })
+      }
       await sleep(backoff(retries++))
     }
-    // Attente demandée par le serveur : hors maxRetries, ≤ 15 min, prise sur un budget de 30 min.
+    // Attente demandée par le serveur : hors maxRetries, ≤ 15 min, prise sur un budget de 30 min. Une attente qui ne
+    // tient plus dans le budget arrête tout de suite, plutôt que de relancer avant l'heure dite par le serveur.
     async function serverWait(kind: 'throttle' | 'maxlag', ms: number, message: string) {
-      if (left[kind] <= 0) throw new Error(message)
-      const wait = Math.min(ms, MAX_WAIT_MS, left[kind])
+      const wait = Math.min(ms, MAX_WAIT_MS)
+      if (wait > left[kind]) throw new Error(message)
       left[kind] -= wait
       await sleep(wait)
     }
@@ -71,13 +74,14 @@ export function createClient(o: {
         res = await fetchImpl(url, init)
         if (res.ok) text = await res.text()
         else await res.body?.cancel()
-      } catch {
-        await transient('réseau')
+      } catch (cause) {
+        await transient('réseau', cause)
         continue
       }
       const ra = retryAfterMs(res)
       if (res.status === 429 || (res.status === 503 && ra !== undefined)) {
-        await serverWait('throttle', ra ?? backoff(throttles++), `Wikimedia : ralentissement persistant (${res.status}) sur ${url}`)
+        // Retry-After: 0 (ou absent) → attente croissante : une attente nulle ne prendrait rien au budget et bouclerait sans fin.
+        await serverWait('throttle', ra || backoff(throttles++), `Wikimedia : ralentissement persistant (${res.status}) sur ${url}`)
         continue
       }
       if (TRANSIENT.has(res.status)) {
