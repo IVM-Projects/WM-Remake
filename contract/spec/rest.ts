@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
 import { accessToken, giveCards, makeUser, psql } from '../users.ts'
 import { Card, CARD_COLUMNS } from './catalog.ts'
+import { listed, seller } from './market.ts'
 
 const KEY = 'sb_publishable_test'
 
@@ -38,6 +39,8 @@ const tag = (env: ContractEnv, uid: string, name: string) =>
 const anyCards = (env: ContractEnv, n: number) => sql(env, `select id from public.cards order by id limit :'n'::int`, { n: String(n) }).split('\n')
 const MINIMAL = { prefer: 'return=minimal' }
 const REPRESENTATION = { prefer: 'return=representation', 'content-profile': 'public' }
+// Sélection de rest/v1/auctions lue par les clients (R§3.5).
+const AUCTION_COLUMNS = 'id,card_id,seller_id,base_amount,listing_base_amount,current_bid,current_bidder_id,final_price,status,end_at,settled_at,winner_id,created_at,snapshot_rarity,is_shiny'
 
 const Profile = z.object({ id: z.uuid(), username: z.string() }).loose()
 const Synced = z.strictObject({
@@ -245,6 +248,46 @@ export const restSpecs: RouteSpec[] = [
         sql(env, `insert into public.wishlist_items (user_id, card_id) values (:'me', :'kept'), (:'me', :'gone')`, { me, kept, gone })
         await status(await rest(env, `wishlist_items?user_id=eq.${me}&card_id=eq.${gone}`, { method: 'DELETE', uid: me }), 204)
         assert.equal(sql(env, `select string_agg(card_id::text, ',') from public.wishlist_items where user_id = :'me'`, { me }), kept)
+      },
+    },
+  ]),
+  spec('GET', 'auctions', 'R§3.5', [
+    {
+      name: 'sélection du R§3.5, seller_id=eq.&status=eq.active&order=end_at.asc → l\'enchère active d\'un autre, card embarquée ; POST → 403 42501 ; anon → 401',
+      run: async (env) => {
+        const [me] = players(env)
+        const s = seller(env, { cards: 2 })
+        const [kept, gone] = s.copies.map((copy) => listed(env, s.uid, copy))
+        sql(env, `select wm.cancel_auction(:'uid', :'id')`, { uid: s.uid, id: gone })
+        const query = `auctions?select=${AUCTION_COLUMNS},card:cards(wikipedia_title,rarity,image_url)&seller_id=eq.${s.uid}&status=eq.active&order=end_at.asc`
+        const rows = (await status(await rest(env, query, { uid: me }), 200)) as Array<{ id: string; card: Record<string, unknown> }>
+        // L'objet embarqué sort de jsonb, qui trie ses clés : comparées triées.
+        assert.deepEqual(rows.map((r) => [r.id, Object.keys(r), Object.keys(r.card).sort()]),
+          [[kept, [...AUCTION_COLUMNS.split(','), 'card'], ['image_url', 'rarity', 'wikipedia_title']]])
+        assert.equal(rows[0].card.wikipedia_title, sql(env, `select c.wikipedia_title from public.cards c join public.auctions a on a.card_id = c.id
+where a.id = :'id'`, { id: kept }))
+        await pgError(await rest(env, 'auctions', { method: 'POST', uid: me, body: { seller_id: me }, headers: MINIMAL }), 403, '42501')
+        await status(await rest(env, 'auctions?select=id'), 401)
+      },
+    },
+  ]),
+  spec('GET', 'auction_bids', 'R§3.5', [
+    {
+      name: 'select=auction_id,amount,placed_at&bidder_id=eq.<moi>&order=placed_at.desc → mes mises, la plus récente d\'abord ; PATCH → 403 42501',
+      run: async (env) => {
+        const s = seller(env, { cards: 2 })
+        const [a, b] = s.copies.map((copy) => listed(env, s.uid, copy))
+        const [me, other] = [0, 1].map(() => makeUser(env.backend.databaseUrl, { balance: 1000, humanVerified: true }).uid)
+        const place = (uid: string, id: string, amount: number) =>
+          sql(env, `select wm.place_bid(:'uid', :'id', :'amount'::int)`, { uid, id, amount: String(amount) })
+        place(me, a, 100)
+        place(other, b, 100)
+        place(me, b, 110)
+        const rows = (await status(await rest(env, `auction_bids?select=auction_id,amount,placed_at&bidder_id=eq.${me}&order=placed_at.desc`,
+          { uid: me }), 200)) as Array<Record<string, unknown>>
+        assert.deepEqual(rows.map((r) => [r.auction_id, r.amount]), [[b, 110], [a, 100]])
+        assert.deepEqual(Object.keys(rows[0]), ['auction_id', 'amount', 'placed_at'])
+        await pgError(await rest(env, `auction_bids?bidder_id=eq.${me}`, { method: 'PATCH', uid: me, body: { amount: 1 }, headers: MINIMAL }), 403, '42501')
       },
     },
   ]),

@@ -10,6 +10,10 @@ export const CollectionSort = z.enum(['rarity', 'obtained_at', 'added', 'name', 
 export const boolParam = z.enum(['1', 'true', '0', 'false']).optional().transform((v) => v === '1' || v === 'true')
 export const Username = z.string().min(1).max(64)
 export const AuctionParams = z.object({ auctionId: z.uuid() })
+// GET /api/marketplace : page à partir de 1, gardée ici pour la clé du cache et en SQL (P24) ; tri validé en SQL (« Tri inconnu »).
+export const MarketQuery = z.object({ page: z.coerce.number().int().min(1, 'La page commence à 1').max(2_147_483_647).default(1),
+  limit: z.coerce.number().int().optional(), sort: z.string().optional(), q: z.string().optional(), rarity: rarityList.optional(), mine: boolParam,
+  card_id: z.uuid().optional() })
 
 // Filtres de /api/my-collection et de /stats ; une clé inconnue (pending, stats, sort pour /stats) est ignorée.
 export const CollectionFilters = z.object({
