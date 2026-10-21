@@ -138,3 +138,32 @@ export function batchUrls(base: string, values: string[], max: number, maxLength
   if (n > 0) urls.push(url)
   return urls
 }
+
+// Valeurs d'une URL de batchUrls (dernier paramètre) : la reprise sait quels ids un lot couvre.
+export const batchValues = (url: string): string[] => url.slice(url.lastIndexOf('=') + 1).split('%7C').map(decodeURIComponent)
+
+// Délai d'un job en minutes depuis l'appel ; sans `deadlineMin`, jamais atteint.
+export function deadline(o: { deadlineMin?: number; now?: () => number }): () => boolean {
+  const now = o.now ?? Date.now
+  const end = now() + (o.deadlineMin ?? Infinity) * 60_000
+  return () => now() >= end
+}
+
+// Lots demandés 3 à la fois (plafond des requêtes en vol ; le client borne concurrence et débit) tant que le délai
+// n'est pas atteint ; chaque corps passe à `onBody` dès son arrivée. Rend false si des lots restent.
+export async function fetchBatches(
+  client: Client,
+  urls: string[],
+  late: () => boolean,
+  onBody: (url: string, body: unknown) => Promise<void>,
+): Promise<boolean> {
+  let next = 0
+  async function worker() {
+    while (next < urls.length && !late()) {
+      const url = urls[next++]
+      await onBody(url, await client.get(url))
+    }
+  }
+  await Promise.all([worker(), worker(), worker()])
+  return next === urls.length
+}
