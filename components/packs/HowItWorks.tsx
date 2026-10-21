@@ -4,10 +4,7 @@ import { CircleHelp, X } from 'lucide-react'
 import { useId, useLayoutEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { formatInt } from '@/lib/format'
-import { RARITY } from '@/lib/rarity'
-
-// Vues humaines mensuelles de l'article fr.wikipedia (R§5.2, lues dans la modale d'origine).
-const MIN_VIEWS = { L: 20_000, UR: 5_000, SR: 1_000, R: 250, PC: 50 } as const
+import { MIN_VIEWS, RARITY } from '@/lib/rarity'
 
 // Modale « Comment ça marche ? » de /pulls (R§2.2) : règles des paquets et seuils de rareté.
 export function HowItWorks() {
