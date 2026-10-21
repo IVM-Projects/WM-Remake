@@ -1,6 +1,7 @@
 // `node catalog/src/cli.ts <commande> --option valeur` : point d'entrée des jobs de catalog.yml.
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
+import { selectCommand } from './compute.ts'
 import { pageviewsCommand } from './pageviews.ts'
 import { dumpsCommand } from './sqldump.ts'
 
@@ -27,12 +28,22 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
     const minLines = count(v, 'min-lines')
     return pageviewsCommand({ input: createInterface({ input: process.stdin, crlfDelay: Infinity }), dir, minLines })
   },
+  select: (v) => {
+    const mode = need(v, 'mode')
+    if (mode !== 'full' && mode !== 'sample') throw new Error(`Option --mode invalide : ${mode} (full, sample)`)
+    const rate = need(v, 'rate')
+    if (!/^\d+(\.\d+)?$/.test(rate) || !(Number(rate) > 0)) throw new Error(`Option --rate invalide : ${rate}`)
+    return selectCommand({ dir: need(v, 'dir'), mode, rate: Number(rate) })
+  },
 }
 
 try {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
-    options: { page: { type: 'string' }, props: { type: 'string' }, dir: { type: 'string' }, 'min-lines': { type: 'string' } },
+    options: {
+      page: { type: 'string' }, props: { type: 'string' }, dir: { type: 'string' }, 'min-lines': { type: 'string' },
+      mode: { type: 'string' }, rate: { type: 'string' },
+    },
   })
   const name = positionals[0] ?? ''
   if (!Object.hasOwn(commands, name)) throw new Error(`Commande inconnue : ${name} (${Object.keys(commands).join(', ')})`)
