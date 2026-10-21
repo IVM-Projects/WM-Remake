@@ -359,12 +359,11 @@ values (:'t', 'https://fr.wikipedia.org/wiki/' || replace(:'t', ' ', '_'), :'r',
 const copyOf = (env: ContractEnv, uid: string, card: string) =>
   sql(env, `insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
 select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards where id = :'card' returning id`, { uid, card })
-// Une copie neuve de `card` chez `uid` (vérifié), mise en vente ; renvoie l'id de l'enchère.
+// La carte du cas n'est pas dans le seed (giveCards) : une copie posée à la main, vendue par l'id catalogue (M3-14).
 function sellNew(env: ContractEnv, uid: string, card: string, base = 100, minutes = 60): string {
   copyOf(env, uid, card)
   return listed(env, uid, card, base, minutes)
 }
-const verified = (env: ContractEnv) => makeUser(db(env), { humanVerified: true }).uid
 
 // Clé répétée (rarity) : passer des paires.
 const list = async (env: ContractEnv, uid: string, query: ConstructorParameters<typeof URLSearchParams>[0]) =>
@@ -386,10 +385,10 @@ async function poll<T>(read: () => Promise<T>, done: (v: T) => boolean, ms: numb
 }
 const salesOf = (card: string, scope = '') => `/api/marketplace/cards/${card}/sales${scope && `?scope=${scope}`}`
 
-// Deux ventes R de la même carte, à 11 puis 12, réglées par /settle ; renvoie l'id de la carte.
+// 11 et 12 : la moyenne 11,5 éprouve l'arrondi du résumé (round → 12).
 async function twoSales(env: ContractEnv): Promise<string> {
   const card = cardOf(env, title(), 'R')
-  const uid = verified(env)
+  const uid = bidder(env, 0)
   for (const price of [11, 12]) {
     const id = sellNew(env, uid, card, price)
     const b = bidder(env)
@@ -412,7 +411,7 @@ export const marketList: RouteSpec = {
       run: async (env) => {
         const t = title()
         const card = cardOf(env, t)
-        const id = sellNew(env, verified(env), card)
+        const id = sellNew(env, bidder(env, 0), card)
         const owner = makeUser(db(env)).uid
         copyOf(env, owner, card)
         const page = await list(env, owner, { q: t })
@@ -421,10 +420,11 @@ export const marketList: RouteSpec = {
       },
     },
     {
-      name: 'page=0 → 400 « La page commence à 1 » ; sort=xyz → 400 « Tri inconnu » ; q=a → 400 « … au moins 2 caractères » (relus en cache)',
+      name: '400 invalid_request, lus deux fois : page=0 et \\0 dans q ou sort (zod) ; sort=xyz « Tri inconnu » et q=a « … au moins 2 caractères » (SQL, relus en cache)',
       run: async (env) => {
         const uid = makeUser(db(env)).uid
-        for (const [query, error] of [['page=0', 'La page commence à 1'], ['sort=xyz', 'Tri inconnu'], ['q=a', 'La recherche demande au moins 2 caractères']] as const) {
+        for (const [query, error] of [['page=0', 'La page commence à 1'], ['q=%00ab', 'Caractère invalide'], ['sort=%00', 'Caractère invalide'],
+          ['sort=xyz', 'Tri inconnu'], ['q=a', 'La recherche demande au moins 2 caractères']] as const) {
           for (let i = 0; i < 2; i++) await refused(await api(env, `/api/marketplace?${query}`, { uid }), 400, error, 'invalid_request')
         }
       },
@@ -433,7 +433,7 @@ export const marketList: RouteSpec = {
       name: 'q sans accents trouve le titre accentué ; rarity répétable ; card_id strict',
       run: async (env) => {
         const t = title()
-        const vendor = verified(env)
+        const vendor = bidder(env, 0)
         const [r, sr, c] = ['R', 'SR', 'C'].map((rarity) => cardOf(env, `${t} ${rarity}`, rarity))
         const [onR, onSR, onC] = [r, sr, c].map((card) => sellNew(env, vendor, card))
         const uid = makeUser(db(env)).uid
@@ -444,18 +444,31 @@ export const marketList: RouteSpec = {
       },
     },
     {
-      name: 'sort=ending_soon : une enchère échue non réglée en tête (recent : la plus récente) ; limit=100 → au plus 50',
+      name: 'sort=ending_soon : une enchère échue non réglée en tête (recent : la plus récente)',
       run: async (env) => {
         const t = title()
-        const vendor = verified(env)
+        const vendor = bidder(env, 0)
         const due = sellNew(env, vendor, cardOf(env, `${t} a`))
         expire(env, due)
         const soon = sellNew(env, vendor, cardOf(env, `${t} b`), 100, 10)
         const uid = makeUser(db(env)).uid
         assert.deepEqual(ids((await list(env, uid, { q: t, sort: 'ending_soon' })).auctions), [due, soon])
         assert.deepEqual(ids((await list(env, uid, { q: t, sort: 'recent' })).auctions), [soon, due])
-        const all = await list(env, uid, { limit: '100' })
-        assert.deepEqual([all.auctions.length, all.hasMore], [Math.min(all.total, 50), all.total > 50])
+      },
+    },
+    {
+      name: '51 enchères actives d\'une carte, limit=100 → 50, hasMore, total 51',
+      run: async (env) => {
+        const t = title()
+        const card = cardOf(env, t)
+        // 11 vendeurs gratuits à 5 ventes au plus : la limite de M3-10, et la 5e de la rafale passe encore (P3).
+        const uids = Array.from({ length: 11 }, () => bidder(env, 0))
+        sql(env, `insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+select (string_to_array(:'uids', ','))[i / 5 + 1]::uuid, id, wikipedia_title, rarity, category, atk, def from public.cards, generate_series(0, 50) i
+where id = :'card';
+select count(wm.create_auction(user_id, id, 100, 60)) from public.user_cards where card_id = :'card'`, { uids: uids.join(','), card })
+        const page = await list(env, makeUser(db(env)).uid, { q: t, limit: '100' })
+        assert.deepEqual([page.auctions.length, page.hasMore, page.total], [50, true, 51])
       },
     },
     {
@@ -483,7 +496,7 @@ export const marketList: RouteSpec = {
       name: 'cache : la réponse de la mise porte le nouveau current_bid, la liste l\'affiche en moins de 5 s (profil market, 3 s au plus)',
       run: async (env) => {
         const t = title()
-        const id = sellNew(env, verified(env), cardOf(env, t))
+        const id = sellNew(env, bidder(env, 0), cardOf(env, t))
         const uid = bidder(env)
         assert.equal((await list(env, uid, { q: t })).auctions[0].current_bid, null)
         assert.equal((await bid(env, uid, id, 100)).current_bid, 100)
