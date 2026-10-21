@@ -136,7 +136,7 @@ Format : ce qui a été tranché — coût si c'est faux.
 - P9 — Trois migrations selon le chemin de déploiement : `1500` et `1510` (avec `DELETE`), `1520` (sans le mot `delete`, même en commentaire).
 - P10 — `route()` gagne `call` (cache de `/api/cards`) et `headers` (posés sur un 200, crédits).
 - P11 — TextExtracts en complément (page sans ouverture utilisable) et en repli (`text_source: extracts`) ; `load` refuse le repli tant que `catalog_stats_frozen = false`, pour ne pas réécrire les stats avec des liens entrants absents.
-- P12 — `schedule` mensuel (le 3) ajouté seulement après le premier chargement réussi (fait le 2026-10-21, après le run 39615766155).
+- P12 — `schedule` mensuel (le 3) ajouté seulement après le premier chargement réussi (ajouté le 2026-10-21 après le run 39615766155, actif dès la fusion dans `develop`).
 - P13 — Fichiers d'aide `tsv.ts` et `http.ts` : un seul format TSV, un seul client limité pour les trois API.
 - P14 — Erreurs P0001 de la partie partagée rendues, pas levées : une erreur levée dans `'use cache: remote'` perd son `code` et devient un 500.
 - P15 — Pas d'image sans licence : `image_url` nul et pas de ligne `media.csv` ; auteur = `Attribution`, sinon `Artist`, en texte brut ; `license_url` seulement en `http(s)`.
@@ -166,7 +166,7 @@ Format : ce qui a été tranché — coût si c'est faux.
 - C9 et D§10.2 : quota par rang de hachage au lieu de « hachage du `page_id` < 9 % » (M2-1).
 - D§10.2 : badge lu dans `page_props`, pas dans les modèles de Cirrus (M2-4) ; dump Cirrus au nouvel emplacement `other/cirrus_search_index/`, en 21 parts (M2-5) ; 3 requêtes en vol au lieu de 4 (M2-6, plafond 2026 de Wikimedia) ; `catalog_merge(p_mode, p_limit)` en boucle puis `catalog_finalize` au lieu d'un seul appel (M2-9) ; `cards.csv` sans `id`, `hide_image`, `nsfw_image` ni `created_at`, avec `page_id`, au lieu des « colonnes miroir exactes ».
 - D§10.2 et M2-6 : images locales de frwiki abandonnées, Commons seulement (M2-R6).
-- D§10.2 : les ouvertures d'infobox de Cirrus passent par TextExtracts (M2-R5), qui devient la source de ≈ 53 % des résumés au lieu d'un complément rare.
+- D§10.2 : les ouvertures d'infobox de Cirrus passent par TextExtracts (M2-R5), qui devient la source de ≈ 53 % des résumés au lieu d'un complément rare (55 % mesuré sur l'échantillon chargé le 2026-10-21).
 - D§10.1 : un `incoming_links` inconnu reçoit le percentile neutre 0,5 au lieu d'être lu comme 0 (M2-R7).
 - D§10.4 : tranches cohérentes sur un même ensemble de pages au lieu de la « tête de chaque vrai dump » (M2-7).
 - D§10.3.1 : un nouvel article dont le titre appartient déjà à une autre carte ne reçoit pas de carte (P7).
