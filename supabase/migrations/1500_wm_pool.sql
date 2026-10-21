@@ -35,24 +35,32 @@ begin
   if v_r = p_rarity then
     return;
   end if;
+  if not exists (select from public.cards where id = p_card_id) then
+    perform wm.raise_err(404, null, 'Carte introuvable');
+  end if;
   -- Une rareté verrouillée à la fois ; un déplacement verrouille l'ancienne puis la nouvelle, sans risque tant que le merge est seul à déplacer.
   if v_r is not null then
     perform wm.pool_remove(p_card_id);
   end if;
   insert into wm.catalog_stats (rarity, n) values (p_rarity, 0) on conflict do nothing;
   select n into v_n from wm.catalog_stats where rarity = p_rarity for update;
+  -- Relu sous le verrou : un ajout concurrent de la même carte a pu passer le contrôle du début.
+  if exists (select from wm.draw_pool where card_id = p_card_id and rarity = p_rarity) then
+    return;
+  end if;
   insert into wm.draw_pool (rarity, seq, card_id) values (p_rarity, v_n + 1, p_card_id);
   update wm.catalog_stats set n = v_n + 1 where rarity = p_rarity;
 end $$;
 
--- Sans écriture. Rareté au prorata des poids (non objet : n_r), puis numéro uniforme lu par PK ; null si rien n'est tirable.
+-- Sans écriture. Rareté au prorata des poids (non objet : n_r ; valeur non numérique : 0), puis numéro uniforme lu par PK ; null si rien n'est tirable.
 -- Une seule instruction : catalog_stats et draw_pool lus dans le même instantané. CTE materialized : chaque random() tiré une fois, pas par ligne.
 create or replace function wm.pick_card(p_weights jsonb, p_exclude public.rarity[] default '{}')
 returns uuid language sql security definer set search_path = '' as $$
   with x as materialized (select random() a, random() b),
   s as (
     select rarity, n, sum(w) over (order by rarity) cum, sum(w) over () tot
-    from (select rarity, n, case when jsonb_typeof(p_weights) = 'object' then coalesce((p_weights ->> rarity::text)::numeric, 0) else n end w
+    from (select rarity, n, case when jsonb_typeof(p_weights) is distinct from 'object' then n
+                                 when jsonb_typeof(p_weights -> rarity::text) = 'number' then (p_weights ->> rarity::text)::numeric else 0 end w
           from wm.catalog_stats where n > 0 and rarity <> all (p_exclude)) a
     where w > 0
   ),

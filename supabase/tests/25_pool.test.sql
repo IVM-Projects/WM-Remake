@@ -71,20 +71,26 @@ do $$ declare u uuid := tests.make_user('Pool1'); x uuid; d jsonb; begin
   assert pg_temp.ids('L') = array[pg_temp.id('Pool L2')] and pg_temp.dense(), pg_temp.state()::text;
 end $$;
 
--- Carte absente → false, rien ne bouge ; pool_add répété → une seule ligne, rien ne bouge au second appel.
-do $$ declare s jsonb := pg_temp.state(); x uuid := pg_temp.card('Pool absente', 'C'); begin
+-- Carte absente du pool → false, rien ne bouge ; du catalogue → 404 de grant_copy ; pool_add répété → une seule ligne, rien ne bouge au second appel.
+do $$ declare s jsonb := pg_temp.state(); x uuid := pg_temp.card('Pool absente', 'C'); d jsonb; begin
   assert not wm.pool_remove(x) and not wm.pool_remove(gen_random_uuid()) and pg_temp.state() = s, pg_temp.state()::text;
+  d := pg_temp.err(format('select wm.pool_add(%L, %L)', gen_random_uuid(), 'C'));
+  assert d = '{"status":404,"error":"Carte introuvable","message":"Carte introuvable"}'::jsonb and pg_temp.state() = s, coalesce(d::text, 'accepté');
   perform wm.pool_add(x, 'C');
   s := pg_temp.state();
   perform wm.pool_add(x, 'C');
   assert pg_temp.state() = s and (select count(*) from wm.draw_pool where card_id = x) = 1 and pg_temp.dense(), pg_temp.state()::text;
 end $$;
 
--- pick_card : une carte du pool, de la rareté pondérée ; toutes raretés exclues → null.
+-- pick_card : une carte du pool, de la rareté pondérée ; poids non numérique = 0 (une faute de config ne casse pas les paquets) ;
+-- toutes raretés exclues → null.
 do $$ declare x uuid := wm.pick_card(null); begin
   assert exists (select from wm.draw_pool where card_id = x), coalesce(x::text, 'null');
   x := wm.pick_card('{"R":1}');
   assert (select rarity from wm.draw_pool where card_id = x) = 'R', coalesce(x::text, 'null');
+  x := wm.pick_card('{"C":"abc","R":1}');
+  assert (select rarity from wm.draw_pool where card_id = x) = 'R', coalesce(x::text, 'null');
+  assert wm.pick_card('{"C":"abc"}') is null and wm.pick_card('{"C":true,"R":{},"L":null}') is null, 'poids non numérique compté';
   assert wm.pick_card(null, '{C,PC,R,SR,UR,L}') is null, 'tirage malgré toutes les raretés exclues';
 end $$;
 
