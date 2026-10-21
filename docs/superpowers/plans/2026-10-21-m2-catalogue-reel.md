@@ -59,7 +59,7 @@
   - `catalog/fixtures/expected/` : `cards.csv` et `media.csv` produits par le pipeline à partir de `raw/`, fichiers de référence des tests.
   - Ordre : les parseurs `sqldump` et `pageviews` sont écrits d'abord sur des échantillons à la main conformes aux formats relevés (`notes-external.md`) ; le mode `fixtures` les utilise ; les autres parseurs se testent ensuite sur les vraies tranches.
 - **M2-8. `catalog.yml` sur `develop` tôt.** `workflow_dispatch` exige que le fichier soit sur la branche par défaut (`develop`) tant que le workflow n'a jamais tourné. Dès que le mode `fixtures` est prêt, le contrôleur fusionne la branche dans `develop` (`--no-ff`, R3) ; ensuite le workflow se lance par l'API sur la branche de travail. `persist-credentials: false` sur chaque `actions/checkout` (aussi dans `ci.yml`). Coût si faux : un merge de plus.
-- **M2-9. Fusion par lots, finalisation à part.** `wm.catalog_merge(p_mode text, p_limit int default 50000)` traite au plus `p_limit` lignes de `wm.catalog_stage` non traitées, en **une** transaction : correspondance (`card_source.page_id`, sinon `(lang, wikipedia_title)`), insertion des nouvelles cartes (`gen_random_uuid()`), mise à jour de la seule liste blanche du §6.3 (et `atk`, `def`, `q_score` seulement si `catalog_stats_frozen = false`), `card_media`, et le pool par *swap-with-last* avec `catalog_stats` dans la même transaction. Le script de chargement boucle jusqu'à 0. `wm.catalog_finalize(p_mode text)` sort du pool les cartes absentes du chargement courant (mode `full` : absentes du dump ; mode `sample` : hors échantillon), vide le stage et écrit un résumé dans `wm.catalog_runs`. Jamais de `delete` sur `public.cards`. `catalog_frozen = true` → les deux fonctions ne font rien et le disent. Deux passages identiques = même état, mêmes ids (test). Coût si faux : une boucle dans `load.ts`.
+- **M2-9. Fusion par lots, finalisation à part.** `wm.catalog_merge(p_mode text, p_limit int default 10000)` traite au plus `p_limit` lignes de `wm.catalog_stage` non traitées (sans ligne dans `wm.catalog_stage_result`, M2-R4), en **une** transaction : correspondance (`card_source.page_id`, sinon `(lang, wikipedia_title)`), insertion des nouvelles cartes (`gen_random_uuid()`), mise à jour de la seule liste blanche du §6.3 (et `atk`, `def`, `q_score` seulement si `catalog_stats_frozen = false`), `card_media`, et le pool par *swap-with-last* avec `catalog_stats` dans la même transaction. Le script de chargement boucle jusqu'à 0. `wm.catalog_finalize(p_mode text)` sort du pool les cartes absentes du chargement courant (mode `full` : absentes du dump ; mode `sample` : hors échantillon), vide le stage et écrit un résumé dans `wm.catalog_runs`. Jamais de `delete` sur `public.cards`. `catalog_frozen = true` → les deux fonctions ne font rien et le disent. Deux passages identiques = même état, mêmes ids (test). Coût si faux : une boucle dans `load.ts`.
 - **M2-10. Pool *swap-with-last*.** `wm.pool_add(p_card_id uuid, p_rarity public.rarity)` et `wm.pool_remove(p_card_id uuid)` (déplacer la dernière ligne de la rareté dans le trou, `n -= 1`), utilisées par le merge et la finalisation. `wm.rebuild_draw_pool()` reste pour le seed du banc. Un test vérifie que le pool reste dense (`seq` = 1..n sans trou, `n` = `catalog_stats.n`) après un mélange d'ajouts, de retraits et de changements de rareté. Coût si faux : aucun sur les tirages, `catalog_empty` sinon.
 - **M2-11. Tirage pur et χ² déterministe.** Le choix d'une carte sort de `wm.draw_cards` dans `wm.pick_card(p_weights jsonb, p_exclude public.rarity[]) returns uuid` (sans écriture) ; `draw_cards` l'appelle. Test SQL : `setseed(0.42)`, 100 000 appels de `pick_card` sur le pool du banc, χ² de la rareté contre `n_r / N` (5 ddl, seuil 20,515 à α = 0,001) et uniformité de `seq` dans la plus grosse rareté en 20 classes (19 ddl, seuil 43,82). Le même contrôle, sans `setseed`, tourne une fois sur la démo après le chargement et est consigné. Coût si faux : un test instable, d'où `setseed`.
 - **M2-12. Sort des cartes d'essai.** Démo : elles sortent du pool au premier vrai `catalog_finalize` (absentes du chargement), restent dans `public.cards` (18 copies d'un joueur les référencent, clés étrangères NO ACTION) et disparaissent du catalogue et de la recherche. Leur suppression, avec celle des copies, est une étape humaine différée (destructive en production). Banc : le seed reste le catalogue de développement (E2E et contrat en dépendent) ; les tests du merge tournent en transaction annulée. Coût si faux : 2 000 lignes inertes sur la démo.
@@ -90,7 +90,7 @@
 
 - **P1. Job `select`** entre `pageviews` et les jobs `text`, `wikidata` et `commons` : l'échantillon (M2-1) dépend des vues, et M2-5 et M2-6 en ont besoin avant de lire le texte, Wikidata et Commons.
 - **P2. `sample_rate` vit dans `wm.config`** (C30 : constante réglable sans déploiement). Le job `select` le lit par `psql` ; l'entrée `sample_rate` de `catalog.yml` est un forçage facultatif, vide par défaut. La Task 13 écrit la valeur mesurée dans la migration (M2-3 la plaçait comme défaut du workflow).
-- **P3. Deux tables de stage** (`wm.catalog_stage` pour `cards.csv`, `wm.catalog_stage_media` pour `media.csv`) et une colonne `result` par ligne, qui remplit le résumé de `catalog_runs`. `catalog_finalize` refuse un stage vide ou inachevé (409) : sans cela, un second appel viderait le pool.
+- **P3. Deux tables de stage** (`wm.catalog_stage` pour `cards.csv`, `wm.catalog_stage_media` pour `media.csv`) et une table étroite `wm.catalog_stage_result(page_id, result)` (M2-R4 : écrire `result` dans la ligne du stage la réécrirait et doublerait le stage pendant le chargement), qui remplit le résumé de `catalog_runs`. `catalog_finalize` refuse un stage vide ou inachevé (409) : sans cela, un second appel viderait le pool.
 - **P4. Taille de la base gardée à quatre moments** (taille = somme sur `pg_database`) :
   1. avant `\copy` : `taille + lignes × STAGE_BYTES_PER_ROW ≤ 450e6` ; un second passage sans nouvelle carte ne paie que le stage, et la contrainte de pic de `rateFor` (Task 13) garantit qu'il passe au régime établi ;
   2. après `\copy` : `taille (stage compris) + nouvelles cartes × BYTES_PER_CARD ≤ 450e6` ;
@@ -566,7 +566,8 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
   | `wm.card_source` | `card_id uuid pk → public.cards`, `page_id bigint not null unique` |
   | `wm.card_media` | `card_id uuid pk → public.cards`, `file text not null`, `author text`, `license text`, `license_url text` |
   | `wm.card_removals` (P8) | `card_id uuid pk → public.cards`, `reason text`, `removed_by uuid`, `removed_at timestamptz not null default now()` |
-  | `wm.catalog_stage` | `page_id bigint pk`, les 13 autres colonnes de `CARD_CSV_COLUMNS` dans le même ordre (types de `public.cards`, `atk`, `def` et `pageviews` `not null`), puis `result text` (hors CSV : `\copy` nomme ses colonnes) |
+  | `wm.catalog_stage` | `page_id bigint pk`, les 13 autres colonnes de `CARD_CSV_COLUMNS` dans le même ordre (types de `public.cards`, `atk`, `def` et `pageviews` `not null`) ; jamais modifiée (M2-R4) |
+  | `wm.catalog_stage_result` (M2-R4) | `page_id bigint pk`, `result text not null` |
   | `wm.catalog_stage_media` | `page_id bigint pk`, `file text not null`, `author`, `license`, `license_url` |
   | `wm.catalog_runs` | `id bigint identity pk`, `mode text not null`, `finished_at timestamptz not null default now()`, `summary jsonb not null` |
 
@@ -574,8 +575,8 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
 
   | Fonction | Rôle |
   |---|---|
-  | `wm.catalog_merge(p_mode text, p_limit int default 50000) returns jsonb` | `{processed, frozen: false}` ou `{processed: 0, frozen: true}` ; `p_mode` hors `full`/`sample` → 400 `invalid_request` « Mode de chargement inconnu » |
-  | `wm.catalog_finalize(p_mode text) returns jsonb` | Résumé `{mode, staged, inserted, updated, unchanged, renamed, conflicts, pool_out, pool: {L, UR, SR, R, PC, C}}`, aussi écrit dans `catalog_runs` ; `{frozen: true}` si gelé ; stage vide → 409 `catalog_stage_empty` « Aucun chargement à finaliser » ; lignes sans `result` → 409 `catalog_stage_pending` « Chargement inachevé : relancer catalog_merge » |
+  | `wm.catalog_merge(p_mode text, p_limit int default 10000) returns jsonb` | `{processed, frozen: false}` ou `{processed: 0, frozen: true}` ; `p_mode` hors `full`/`sample` → 400 `invalid_request` « Mode de chargement inconnu » ; `p_limit` nul ou < 1 → 400 « Taille de lot invalide » |
+  | `wm.catalog_finalize(p_mode text) returns jsonb` | Résumé `{mode, staged, inserted, updated, unchanged, renamed, conflicts, pool_out, pool: {L, UR, SR, R, PC, C}}`, aussi écrit dans `catalog_runs` ; `{frozen: true}` si gelé ; stage vide → 409 `catalog_stage_empty` « Aucun chargement à finaliser » ; lignes du stage sans résultat → 409 `catalog_stage_pending` « Chargement inachevé : relancer catalog_merge » |
 
   **Règles de `catalog_merge`**, sur les `p_limit` premières lignes `result is null` par `page_id`, en une transaction :
   1. Carte = `card_source.page_id`, sinon une carte de même `(lang, wikipedia_title)` **sans** `card_source` (option A, D§10.3.1), qui reçoit alors son `card_source`.
@@ -584,7 +585,7 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
   4. `card_media` (sauf drapeau image) : upsert depuis `catalog_stage_media`, suppression de la ligne si la page n'a plus de média ; seulement si une valeur diffère.
   5. Pool : carte dans `card_removals` → `pool_remove` ; sinon `pool_add(carte, rareté)`.
 
-  **`catalog_finalize`** : `pool_remove` de chaque carte du pool dont le `page_id` (par `card_source`) n'est pas dans le stage, cartes sans `card_source` comprises (le seed sur la démo, M2-12) ; résumé compté sur `result` ; `truncate` des deux tables de stage. Aucune ligne de `public.cards` n'est supprimée.
+  **`catalog_finalize`** : `pool_remove` de chaque carte du pool dont le `page_id` (par `card_source`) n'est pas dans le stage, cartes sans `card_source` comprises (le seed sur la démo, M2-12) ; résumé compté sur `catalog_stage_result` joint au stage ; `truncate` des trois tables de stage. Aucune ligne de `public.cards` n'est supprimée.
 
 - [ ] **Step 1: Test qui échoue** (`26_catalog_merge.test.sql`, transaction annulée, stage rempli par `insert` dans le test, `pg_temp.err` repris de `10_wm_core.test.sql`) :
   - Premier passage sur 6 pages (une par rareté, dont 3 avec média) : 6 cartes, 6 `card_source`, 3 `card_media`, pool et `catalog_stats` à 1 par rareté. `finalize` → `inserted: 6`, stage vide, une ligne dans `catalog_runs`.
@@ -623,10 +624,10 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
   - `firstCsvRecords(path: string, n: number): Promise<string>` (en-tête + `n` premiers enregistrements, découpés par un lecteur CSV : un champ guillemeté peut contenir un saut de ligne) ;
   - `loadCommand(o: { dir: string; mode: Mode; target: 'free' | 'pro'; db: string; batch?: number }): Promise<Record<string, unknown>>`, dans l'ordre :
     1. `checkTextSource` (`counts.json`, `wm.config.catalog_stats_frozen`) ; taille (`SIZE_SQL`) et `guardBeforeCopy` ;
-    2. `truncate wm.catalog_stage, wm.catalog_stage_media` ; essai : `firstCsvRecords(cards.csv, 10)` copié par `\copy`, compte = 10 vérifié, `truncate` (journal : `essai \copy : 10 lignes`) ;
+    2. `truncate wm.catalog_stage, wm.catalog_stage_media, wm.catalog_stage_result` (les trois tables, partout où le chargement vide le stage : un résultat resté d'un chargement interrompu ferait sauter sa page, M2-R4) ; essai : `firstCsvRecords(cards.csv, 10)` copié par `\copy`, compte = 10 vérifié, `truncate` (journal : `essai \copy : 10 lignes`) ;
     3. `\copy wm.catalog_stage (<CARD_CSV_COLUMNS>) from 'cards.csv' with (format csv, header true)` et `\copy wm.catalog_stage_media (<MEDIA_CSV_COLUMNS>) from 'media.csv' with (format csv, header true)` ;
-    4. `guardAfterCopy` avec la taille (`SIZE_SQL`) et les lignes du stage sans `card_source` ; refus → `truncate` des stages et erreur ;
-    5. boucle `select wm.catalog_merge(<mode>, <batch>)` jusqu'à `processed = 0` (défaut 50 000) ; après chaque lot, `guardBatch(taille)` (refus → arrêt en erreur, stage laissé inachevé) et journal de la taille et, si la requête est permise, de `select sum(size) from pg_ls_waldir()` ; `frozen` → `truncate` des stages, sortie 0 avec `Catalogue gelé : rien chargé` ;
+    4. `guardAfterCopy` avec la taille (`SIZE_SQL`) et les lignes du stage sans `card_source` ; refus → `truncate` des trois tables de stage et erreur ;
+    5. boucle `select wm.catalog_merge(<mode>, <batch>)` jusqu'à `processed = 0` (défaut 10 000, M2-R4) ; après chaque lot, `guardBatch(taille)` (refus → arrêt en erreur, stage laissé inachevé) et journal de la taille et, si la requête est permise, de `select sum(size) from pg_ls_waldir()` ; `frozen` → `truncate` des trois tables de stage, sortie 0 avec `Catalogue gelé : rien chargé` ;
     6. `catalog_finalize`, puis `vacuum (analyze) public.cards, wm.draw_pool, wm.card_source, wm.card_media` ;
     7. `maxShareGap(catalog_stats, counts.full).points` > 1 → erreur `Parts de rareté hors tolérance : <écart> points` ;
     8. impression du résumé JSON (écarts en points et relatif compris).
@@ -639,7 +640,7 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
   - `checkTextSource('extracts', false)` → message ; `('extracts', true)` et `('cirrus', false)` → `null`.
   - `maxShareGap({L: 1, C: 99, …0}, {L: 2, C: 98, …0})` → `points` 1, `relative` 0.5 ; des parts égales → `{0, 0}`.
   - `firstCsvRecords` sur un fichier dont le 3e enregistrement a un `summary` guillemeté contenant `\n` → 10 enregistrements entiers, relisibles.
-- [ ] **Step 2: Test de bout en bout qui échoue** (`15_catalog_load.test.sh`, gabarit de `12_packs_concurrency.test.sh` : `set -euo pipefail`, `q()`, `trap cleanup EXIT`. Le nettoyage relève d'abord les `card_id` de `card_source`, les retire du pool, supprime `card_media`, puis ces cartes, puis `card_source` et `catalog_runs`, et relance `wm.rebuild_draw_pool()`.)
+- [ ] **Step 2: Test de bout en bout qui échoue** (`15_catalog_load.test.sh`, gabarit de `12_packs_concurrency.test.sh` : `set -euo pipefail`, `q()`, `trap cleanup EXIT`. Le nettoyage relève d'abord les `card_id` de `card_source`, les retire du pool, supprime leurs lignes `card_media` et `card_source` (clés étrangères NO ACTION : avant les cartes), puis ces cartes et `catalog_runs`, vide les trois tables de stage et relance `wm.rebuild_draw_pool()`.)
   - Chargement de `catalog/fixtures/expected` (`--mode sample --target free --db "$DATABASE_URL"`) :
     - `inserted` = nombre de lignes de `cards.csv`, journal contenant `essai \copy : 10 lignes` ;
     - `catalog_stats` = comptes par rareté de `cards.csv`, à l'unité (taux 1, D§10.4) ;
@@ -652,6 +653,7 @@ Si le job échoue : corriger dans un commit sur la branche et relancer sur elle 
     - aucune `23505` au lancement du `load` ;
     - toutes les cartes ont ` v2` et les 20 cartes échangées sont dans leur nouvelle rareté au pool ;
     - `ids` = `ids1`, pool dense, stage vide ;
+    - le résumé du `load` compte `unchanged: 50` et `updated` = lignes − 50 (les résultats laissés par l'interruption ont été effacés par la troncature ; sans elle, les 50 pages seraient sautées) ;
     - 0 tirage `null` (pas de 503 pendant une fusion).
   - `wm.check_invariants()` = `[]`.
 - [ ] **Step 3: `npm test -- catalog/src/load.test.ts && npm run test:db`** → échec.

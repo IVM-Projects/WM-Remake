@@ -87,6 +87,7 @@ begin
   if (select value from wm.config where key = 'catalog_frozen') = 'true'::jsonb then
     return jsonb_build_object('processed', 0, 'frozen', true);
   end if;
+  -- shortcut: chaque lot relit le stage depuis la première page (anti-jointure), négligeable pour l'échantillon ; au M8 (mode full), reprendre après le dernier page_id traité.
   v_pages := array(select s.page_id from wm.catalog_stage s
                    where not exists (select from wm.catalog_stage_result o where o.page_id = s.page_id) order by s.page_id limit p_limit);
 
