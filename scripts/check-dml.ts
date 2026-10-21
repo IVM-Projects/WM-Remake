@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 const DML = /\b(delete\s+from|update\s+\S+(\s+(as\s+)?\w+)?\s+set)\b/gi
 
 // Chaque DELETE/UPDATE d'une instruction n'est gardé que par un WHERE situé avant le DML suivant (CTE d'écriture comprises).
-// shortcut: découpe sur `;` sans lire les chaînes ni les commentaires /* */, et un WHERE de sous-requête garde le DML ; un vrai parseur si un faux négatif gêne.
+// shortcut: découpe sur `;` sans lire les chaînes ni les commentaires /* */, et un WHERE de sous-requête garde le DML ; un vrai parseur si un faux positif ou négatif gêne.
 export function unguardedDml(sql: string): string[] {
   return sql.replace(/--.*$/gm, '').split(';').flatMap((s) => {
     const at = [...s.matchAll(DML)].map((m) => m.index)

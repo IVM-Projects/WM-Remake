@@ -71,7 +71,7 @@ do $$ declare u uuid := tests.make_user('Pool1'); x uuid; d jsonb; begin
   assert pg_temp.ids('L') = array[pg_temp.id('Pool L2')] and pg_temp.dense(), pg_temp.state()::text;
 end $$;
 
--- Carte absente du pool → false, rien ne bouge ; du catalogue → 404 de grant_copy ; pool_add répété → une seule ligne, rien ne bouge au second appel.
+-- Carte absente du pool → false, rien ne bouge ; du catalogue → 404 de pool_add (même message que grant_copy) ; pool_add répété → une seule ligne, rien ne bouge au second appel.
 do $$ declare s jsonb := pg_temp.state(); x uuid := pg_temp.card('Pool absente', 'C'); d jsonb; begin
   assert not wm.pool_remove(x) and not wm.pool_remove(gen_random_uuid()) and pg_temp.state() = s, pg_temp.state()::text;
   d := pg_temp.err(format('select wm.pool_add(%L, %L)', gen_random_uuid(), 'C'));

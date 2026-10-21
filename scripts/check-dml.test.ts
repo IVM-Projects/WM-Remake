@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { unguardedDml } from './check-dml.ts'
 
@@ -25,7 +26,7 @@ describe('unguardedDml', () => {
 })
 
 describe('CLI check-dml', () => {
-  const cli = new URL('./check-dml.ts', import.meta.url).pathname
+  const cli = fileURLToPath(new URL('./check-dml.ts', import.meta.url))
   const run = (files: Record<string, string>) => {
     const dir = mkdtempSync(join(tmpdir(), 'check-dml-'))
     try {
