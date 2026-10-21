@@ -292,7 +292,7 @@ export async function computeCommand(o: {
   }))
   // Une part text-*.tsv manquante passerait pour des pages absentes, et des milliers d'appels TextExtracts.
   if (absent > Math.max(1, rows.length / 100)) {
-    throw new Error(`Pages absentes de Cirrus : ${absent} sur ${rows.length} (plus de 1 %), une part text-*.tsv manque-t-elle ?`)
+    throw new Error(`Pages absentes de Cirrus : ${absent} sur ${rows.length} (plus de 1 %), une part text-*.tsv manque-t-elle, ou des documents Cirrus mal formés ont-ils été sautés ?`)
   }
 
   // Pages retenues sans résumé Cirrus (ouvertures d'infobox comprises, M2-R5 ; toutes en repli) : même sélection que

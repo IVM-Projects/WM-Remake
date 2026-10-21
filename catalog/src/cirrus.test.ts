@@ -147,9 +147,12 @@ test('gardes de format : champs renommés, lignes d’index et documents illisib
   const redirects = [4, 5, 6].map((id) => noLinks(id, { page_type: 'redirect' }))
   expect((await run('sample', [], pairs([doc(1), doc(2), noLinks(3), ...redirects]))).rows).toHaveLength(3)
 
-  // template absent ou non tableau sur plus de la moitié des lignes, dès 100 lignes : règle d'infobox V3 ou Lua éteinte.
+  // template absent, non tableau ou sans nom texte sur plus de la moitié des lignes, dès 100 lignes : règle d'infobox éteinte.
   const hundred = (withTemplate: number) =>
-    Array.from({ length: 100 }, (_, i) => ({ ...doc(i + 1), ...(i < withTemplate ? { template: ['Modèle:Portail'] } : i % 2 ? { template: 'x' } : {}) }))
+    Array.from({ length: 100 }, (_, i) => ({
+      ...doc(i + 1),
+      ...(i < withTemplate ? { template: ['Modèle:Portail'] } : [{ template: 'x' }, {}, { template: [{ name: 'Modèle:Infobox en Lua' }] }][i % 3]),
+    }))
   await expect(run('sample', [], pairs(hundred(49)))).rejects.toThrow('Format Cirrus inattendu : 51 documents sur 100 sans template')
   expect((await run('sample', [], pairs(hundred(50)))).rows).toHaveLength(100)
 })

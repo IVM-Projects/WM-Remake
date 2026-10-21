@@ -449,7 +449,7 @@ test('computeCommand : plus de 1 % des pages absentes de Cirrus (part text-*.tsv
   await writeTsv(join(dir, 'text-00000.tsv'), [[2, 3000, null, null], [4, 100, 0, null]])
   const o = { dir, out: join(dir, 'out'), mode: 'sample', month: '2026-09', textDate: '2026-10-18', textSource: 'cirrus' } as const
   await expect(computeCommand({ ...o, client: { get: () => Promise.reject(new Error('appel inattendu')) } })).rejects.toThrow(
-    'Pages absentes de Cirrus : 2 sur 4 (plus de 1 %), une part text-*.tsv manque-t-elle ?',
+    'Pages absentes de Cirrus : 2 sur 4 (plus de 1 %), une part text-*.tsv manque-t-elle, ou des documents Cirrus mal formés ont-ils été sautés ?',
   )
 })
 

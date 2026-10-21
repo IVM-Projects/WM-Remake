@@ -136,7 +136,8 @@ export async function cirrusCommand(o: { dir: string; part: string; mode: Mode; 
       docs++
       if (d.namespace !== 0 || d.page_type === 'redirect') continue
       if (d.incoming_links === undefined) noLinks++
-      if (d.template === undefined) noTemplate++
+      // Un tableau vidé par le filtre (éléments devenus objets) compte aussi : la règle d'infobox ne verrait plus rien.
+      if (!d.template?.length) noTemplate++
       const text = selected.has(d.page_id) ? cleanOpening(d.opening_text ?? '') : ''
       yield [d.page_id, d.text_bytes, d.incoming_links ?? null, usableOpening(text, d.title, d.template) ? cutSummary(text, SUMMARY_MAX[o.mode]) : null]
     }
