@@ -9,6 +9,7 @@ export const pageParam = intParam.default(0)
 export const CollectionSort = z.enum(['rarity', 'obtained_at', 'added', 'name', 'atk', 'def', 'starred'])
 export const boolParam = z.enum(['1', 'true', '0', 'false']).optional().transform((v) => v === '1' || v === 'true')
 export const Username = z.string().min(1).max(64)
+export const AuctionParams = z.object({ auctionId: z.uuid() })
 
 // Filtres de /api/my-collection et de /stats ; une clé inconnue (pending, stats, sort pour /stats) est ignorée.
 export const CollectionFilters = z.object({
