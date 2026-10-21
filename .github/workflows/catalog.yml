@@ -50,7 +50,7 @@ jobs:
   fixtures:
     if: inputs.mode == 'fixtures'
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 355 # ≈ 24 Go téléchargés puis décompressés l'un après l'autre ; plafond des runners hébergés : 360
     env:
       NODE_OPTIONS: --max-old-space-size=6144
     steps:
@@ -78,6 +78,7 @@ jobs:
           echo "MONTH=$M" >> "$GITHUB_ENV"
           # Sur disque d'abord : un flux coupé ou figé tuerait le run, un fichier se retente.
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 --speed-limit 100000 --speed-time 300 -o work/pv.bz2 "https://dumps.wikimedia.org/other/pageview_complete/monthly/${M:0:4}/$M/pageviews-${M/-/}-user.bz2"
+          df -h .
           lbzip2 -dc work/pv.bz2 | grep '^fr.wikipedia ' > work/fr.pv
           rm work/pv.bz2
           node catalog/src/cli.ts pageviews --dir work < work/fr.pv
@@ -121,8 +122,8 @@ jobs:
           retention-days: 7
           overwrite: true
 
-      # Run de 4 h en échec : garder ce qui est déjà tranché pour le diagnostic.
-      - if: failure()
+      # Run long en échec ou coupé par timeout-minutes (annulation, failure() faux) : garder ce qui est déjà tranché.
+      - if: failure() || cancelled()
         uses: actions/upload-artifact@v7
         with:
           name: fixtures-partial
