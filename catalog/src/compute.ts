@@ -21,6 +21,7 @@ export type CatalogRow = {
   selected: boolean
 }
 
+// rate = taux effectif : 1 en mode full, le taux donné en mode sample.
 export type Counts = { mode: Mode; rate: number; full: Record<RarityCode, number>; selected: Record<RarityCode, number> }
 
 const UTF8 = new TextEncoder()
@@ -31,25 +32,46 @@ export function fnv1a32(s: string): number {
   return h >>> 0
 }
 
+// Champ numérique d'un TSV du pipeline : une ligne tronquée ou mal formée arrête le job au lieu de donner NaN.
+function num(f: (string | null)[], i: number, file: string, line: number): number {
+  const v = f[i]
+  if (!v || !Number.isFinite(Number(v))) {
+    throw new Error(`Nombre attendu dans ${file}, ligne ${line}, colonne ${i + 1} : ${v === undefined ? '(absent)' : (v ?? '\\N')}`)
+  }
+  return Number(v)
+}
+
 // pages.tsv ⋈ props.tsv (sans homonymies) ⋈ views.tsv ; ordre de pages.tsv.
 export async function joinCatalog(dir: string): Promise<CatalogRow[]> {
-  const props = new Map<number, (string | null)[]>()
-  for await (const f of readTsv(join(dir, 'props.tsv'))) props.set(Number(f[0]), f)
+  const props = new Map<number, { image: string | null; qid: string | null; badge: number; disambig: boolean }>()
+  let line = 0
+  for await (const f of readTsv(join(dir, 'props.tsv'))) {
+    line++
+    const page_id = num(f, 0, 'props.tsv', line)
+    props.set(page_id, { image: f[1], qid: f[2], badge: num(f, 3, 'props.tsv', line), disambig: num(f, 4, 'props.tsv', line) === 1 })
+  }
   const byId = new Map<number, number>()
   const byTitle = new Map<string, number>()
-  for await (const [id, title, views] of readTsv(join(dir, 'views.tsv'))) {
-    if (id === null) byTitle.set(String(title), Number(views))
-    else byId.set(Number(id), Number(views))
+  line = 0
+  for await (const f of readTsv(join(dir, 'views.tsv'))) {
+    line++
+    const views = num(f, 2, 'views.tsv', line)
+    if (f[0] === null) byTitle.set(String(f[1]), views)
+    else byId.set(num(f, 0, 'views.tsv', line), views)
   }
   const rows: CatalogRow[] = []
-  for await (const [id, title, len] of readTsv(join(dir, 'pages.tsv'))) {
-    const page_id = Number(id)
+  line = 0
+  for await (const f of readTsv(join(dir, 'pages.tsv'))) {
+    line++
+    const page_id = num(f, 0, 'pages.tsv', line)
+    const len = num(f, 2, 'pages.tsv', line)
     const p = props.get(page_id)
-    if (p?.[4] === '1') continue
-    const views = (byId.get(page_id) ?? 0) + (byTitle.get(String(title)) ?? 0)
+    if (p?.disambig) continue
+    const title = String(f[1])
+    const views = (byId.get(page_id) ?? 0) + (byTitle.get(title) ?? 0)
     rows.push({
-      page_id, title: String(title), len: Number(len), views, rarity: rarityForViews(views),
-      image: p?.[1] ?? null, qid: p?.[2] ?? null, badge: p ? Number(p[3]) : 0, selected: false,
+      page_id, title, len, views, rarity: rarityForViews(views),
+      image: p?.image ?? null, qid: p?.qid ?? null, badge: p?.badge ?? 0, selected: false,
     })
   }
   return rows
@@ -74,6 +96,8 @@ export function selectSample(rows: CatalogRow[], rate: number): Set<number> {
 
 // M2-2 : (rang − 1) / (n − 1), ex æquo au rang moyen ; n = 1 → 0,5.
 export function pct(values: number[]): number[] {
+  // Un NaN rend le comparateur incohérent et désordonne tout le tri, pas seulement sa ligne.
+  if (!values.every(Number.isFinite)) throw new Error('pct : valeur non finie')
   const n = values.length
   if (n === 1) return [0.5]
   const order = values.map((_, i) => i).sort((a, b) => values[a] - values[b])
@@ -97,9 +121,13 @@ export function statsV1(
   return rows.map((_, i) => ({ atk: Math.round(1000 + 9000 * text[i]), def: Math.round(1000 + 9000 * qp[i]), q_score: q[i] }))
 }
 
-// Bandeau de tête : une phrase jusqu'à la première fin de phrase suivie d'un blanc, ou jusqu'à la fin du texte.
-const BANNER =
-  /^(?:Pour les articles homonymes|Pour l['’]article homonyme|Pour les articles ayant des titres homonymes|Ne doit pas être confondu|Ne pas confondre|Cet article concerne|Pour un article plus général|«[^»]*»\s*redirige ici)[^]*?(?:[.!?…](?=\s|$)|$)\s*/
+// Fin de phrase : ponctuation, puis « » » (après un blanc éventuel) ou « ) » éventuels, puis un blanc ou la fin du texte.
+const STOP = String.raw`[.!?…](?:\s?»|\))?(?=\s|$)`
+const STOPS = new RegExp(STOP, 'g')
+// Bandeau de tête : une phrase jusqu'à la première fin de phrase, ou jusqu'à la fin du texte.
+const BANNER = new RegExp(
+  String.raw`^(?:Pour les articles homonymes|Pour l['’]article homonyme|Pour les articles ayant des titres homonymes|Ne doit pas être confondu|Ne pas confondre|Cet article concerne|Pour un article plus général|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)\s*`,
+)
 
 export function cleanOpening(text: string): string {
   // Une espace insécable seule est gardée (typographie française) ; tabulations et sauts de ligne deviennent des espaces.
@@ -112,9 +140,14 @@ export const hasOpening = (text: string | undefined): boolean => cleanOpening(te
 
 export function cutSummary(text: string, max: number): string {
   if (text.length <= max) return text
-  // Le caractère d'indice max ne sert qu'à voir si une fin de phrase à max − 1 est suivie d'un blanc.
-  const sentence = text.slice(0, max + 1).match(/^[^]*[.!?…](?=\s)/)
-  if (sentence) return sentence[0]
+  // Dernière fin de phrase (guillemet fermant compris) qui tient dans les max premiers caractères ; le blanc qui la
+  // suit est lu dans le texte entier, donc un « » » au-delà de max écarte la phrase au lieu de couper la citation.
+  let end = 0
+  for (const m of text.matchAll(STOPS)) {
+    if (m.index + m[0].length > max) break
+    end = m.index + m[0].length
+  }
+  if (end) return text.slice(0, end)
   const head = text.slice(0, max)
   return (head.match(/^[^]*\S(?=\s)/)?.[0] ?? head.slice(0, max - 1)) + '…'
 }

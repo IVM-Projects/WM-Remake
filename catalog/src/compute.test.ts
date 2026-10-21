@@ -17,6 +17,7 @@ import {
 } from './compute.ts'
 import type { CatalogRow, Counts } from './compute.ts'
 import { readTsv, writeTsv } from './tsv.ts'
+import type { Field } from './tsv.ts'
 
 const root = await mkdtemp(join(tmpdir(), 'wm-compute-'))
 afterAll(() => rm(root, { recursive: true, force: true }))
@@ -32,6 +33,9 @@ test('pct : rang percentile, ex æquo au rang moyen, n = 1 → 0,5', () => {
   expect(pct([30, 10, 20, 20])).toEqual([1, 0, 0.5, 0.5])
   expect(pct([7])).toEqual([0.5])
   expect(pct([])).toEqual([])
+  // Un NaN rend le comparateur du tri incohérent et désordonne toutes les valeurs.
+  expect(() => pct([3, NaN, 1, 2])).toThrow('pct : valeur non finie')
+  expect(() => pct([1, Infinity])).toThrow('pct : valeur non finie')
 })
 
 test('statsV1 : q_score, ATK et DEF (D§10.1)', () => {
@@ -79,25 +83,29 @@ test('selectSample : une rareté de 3 pages garde 1 page', () => {
 })
 
 let n = 0
-async function catalogDir() {
+async function catalogDir(over: Partial<Record<'pages.tsv' | 'props.tsv' | 'views.tsv', Field[][]>> = {}) {
   const dir = await mkdtemp(join(root, `${n++}-`))
-  await writeTsv(join(dir, 'pages.tsv'), [
-    [1, 'Chat', 1000],
-    [2, 'Chat_(homonymie)', 200],
-    [3, 'Chien', 500],
-    [4, 'Oiseau', 300],
-  ])
-  await writeTsv(join(dir, 'props.tsv'), [
-    [1, 'Chat.jpg', 'Q146', 1, 0],
-    [2, null, 'Q1', 0, 1],
-    [3, null, null, 0.6, 0],
-  ])
-  await writeTsv(join(dir, 'views.tsv'), [
-    [1, null, 245],
-    [2, null, 99999],
-    [null, 'Chat', 5],
-    [null, 'Inconnu', 7],
-  ])
+  const files = {
+    'pages.tsv': [
+      [1, 'Chat', 1000],
+      [2, 'Chat_(homonymie)', 200],
+      [3, 'Chien', 500],
+      [4, 'Oiseau', 300],
+    ],
+    'props.tsv': [
+      [1, 'Chat.jpg', 'Q146', 1, 0],
+      [2, null, 'Q1', 0, 1],
+      [3, null, null, 0.6, 0],
+    ],
+    'views.tsv': [
+      [1, null, 245],
+      [2, null, 99999],
+      [null, 'Chat', 5],
+      [null, 'Inconnu', 7],
+    ],
+    ...over,
+  }
+  for (const [name, rows] of Object.entries(files)) await writeTsv(join(dir, name), rows)
   return dir
 }
 
@@ -111,6 +119,21 @@ test('joinCatalog : homonymie exclue, vues par id + par titre, propriétés repo
   ])
 })
 
+test('joinCatalog : une ligne tronquée ou un nombre mal formé arrête la jointure', async () => {
+  const run = async (over: Parameters<typeof catalogDir>[0]) => joinCatalog(await catalogDir(over))
+  await expect(run({ 'pages.tsv': [[1, 'Chat', 1000], [5, 'Truc']] })).rejects.toThrow(
+    'Nombre attendu dans pages.tsv, ligne 2, colonne 3 : (absent)',
+  )
+  await expect(run({ 'pages.tsv': [['x', 'Chat', 1000]] })).rejects.toThrow('Nombre attendu dans pages.tsv, ligne 1, colonne 1 : x')
+  await expect(run({ 'views.tsv': [[1, null, 245], [null, 'Chat', 'abc']] })).rejects.toThrow(
+    'Nombre attendu dans views.tsv, ligne 2, colonne 3 : abc',
+  )
+  await expect(run({ 'views.tsv': [[1, null, null]] })).rejects.toThrow('Nombre attendu dans views.tsv, ligne 1, colonne 3 : \\N')
+  await expect(run({ 'props.tsv': [[1, 'Chat.jpg', 'Q146', 1]] })).rejects.toThrow(
+    'Nombre attendu dans props.tsv, ligne 1, colonne 5 : (absent)',
+  )
+})
+
 test('cleanOpening : bandeaux de tête retirés, espaces réduits', () => {
   expect(cleanOpening('Pour les articles homonymes, voir Chat (homonymie). Le chat est un mammifère.')).toBe(
     'Le chat est un mammifère.',
@@ -118,6 +141,7 @@ test('cleanOpening : bandeaux de tête retirés, espaces réduits', () => {
   const banners = [
     'Pour les articles homonymes, voir X.',
     "Pour l'article homonyme, voir X.",
+    'Pour l’article homonyme, voir X.',
     'Pour les articles ayant des titres homonymes, voir X.',
     'Ne doit pas être confondu avec Y.',
     'Ne pas confondre avec Z.',
@@ -130,6 +154,10 @@ test('cleanOpening : bandeaux de tête retirés, espaces réduits', () => {
   expect(cleanOpening('  Le   chat\n est  un mammifère.  ')).toBe('Le chat est un mammifère.')
   expect(cleanOpening('Le chat est un mammifère. Ne pas confondre avec le lynx.')).toBe(
     'Le chat est un mammifère. Ne pas confondre avec le lynx.',
+  )
+  // Point dans un titre entre guillemets : le bandeau finit après le « » ».
+  expect(cleanOpening('Cet article concerne le roman «\u00a0Le Chat.\u00a0» Le chat est un mammifère.')).toBe(
+    'Le chat est un mammifère.',
   )
   expect(hasOpening('Pour les articles homonymes, voir X.')).toBe(false)
   expect(hasOpening(undefined)).toBe(false)
@@ -146,6 +174,12 @@ test('cutSummary : fin de phrase dans les max premiers caractères, sinon dernie
   for (const max of [1, 5, 600, 1200]) expect(cutSummary(long, max).length).toBeLessThanOrEqual(max)
   // Point à l'indice max : hors des max premiers caractères.
   expect(cutSummary('Abcd. Efgh. Ijk', 10)).toBe('Abcd.')
+  // Fin de phrase suivie d'un « » » (après une insécable ou non) ou d'une « ) » : pas de coupe dans la citation.
+  const quote = 'Il dit «\u00a0Bonjour.\u00a0» puis part. Et la suite.'
+  expect(cutSummary(quote, 25)).toBe('Il dit «\u00a0Bonjour.\u00a0»')
+  expect(cutSummary('Il dit «Bonjour.» puis part. Et la suite.', 22)).toBe('Il dit «Bonjour.»')
+  expect(cutSummary(quote, 17)).not.toContain('Bonjour.')
+  expect(cutSummary('Né à Paris (en 1900.) Puis Lyon. Etc.', 25)).toBe('Né à Paris (en 1900.)')
 })
 
 test('selectCommand : catalog.tsv et counts.json cohérents ; mode full retient tout', async () => {
