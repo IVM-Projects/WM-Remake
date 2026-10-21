@@ -126,11 +126,15 @@ export function statsV1(
 // Une ponctuation suivie de « » » ne finit la phrase qu'avec ce guillemet : « Ça ira ! », dit-il ne s'arrête pas à « ! ».
 const STOP = String.raw`[.!?…](?:\s?»|\)|(?!\s?»))(?=\s|$)`
 const STOPS = new RegExp(STOP, 'g')
-// Bandeau de tête : une phrase jusqu'à la première fin de phrase, ou jusqu'à la fin du texte.
+// Bandeau de tête (relevés dans les tranches réelles de Cirrus : homonymie, ébauche, sources, label, article principal…) :
+// une phrase jusqu'à la première fin de phrase, ou jusqu'à la fin du texte ; « (comment ?) » est pris dans le début
+// pour ne pas finir là. « Trouver des sources » et « Sur les autres projets » n'ont pas de fin de phrase : bornés à part.
 const BANNER = new RegExp(
-  String.raw`^(?:Pour les articles homonymes|Pour l['’]article homonyme|Pour les articles ayant des titres homonymes|Ne doit pas être confondu|Ne pas confondre|Cet article concerne|Pour un article plus général|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)\s*`,
+  String.raw`^(?:(?:Pour [^.!?]*?,\s?vo(?:ir|yez)|Ne doit pas être confondu|Ne pas confondre|Cet article (?:concerne|traite|est une ébauche|est orphelin|ne cite|ne s['’]appuie|peut contenir)|Cette page (?:d['’]homonymie|est une très courte ébauche|contient des caractères spéciaux)|Vous lisez un «|Vous pouvez (?:partager vos connaissances en l['’]améliorant \(comment\s?\?\)|aider en ajoutant|également enrichir les pages)|Articles? principa(?:l|ux)\s?:|Moins de trois articles lui sont liés|Si vous disposez d['’]ouvrages|En pratique\s?:\s?Quelles sources sont attendues\s?\?\s?Comment ajouter mes sources|À l['’]instar du célèbre «|L['’]article peut contenir des analyses|Pour améliorer la vérifiabilité|S['’]ils s['’]affichent mal|Voir la page de discussion pour plus de détails|Consultez la liste des tâches|«[^»]*»\s*redirige ici)[^]*?(?:${STOP}|$)|Trouver des sources sur «[^»]*»\s?:[^]*?\(wd\)\s?trouver des œuvres sur Wikidata|Sur les autres projets Wikimedia\s?:(?:[^,]*,\s?sur (?:le |la )?Wik\S*(?: Commons)?)+)\s*`,
 )
 
+// shortcut: le texte d'infobox de opening_text (titre, légende, « Navigation ») et les bandeaux qui le suivent restent,
+// à reprendre si les résumés de la démo en souffrent (TextExtracts, plus propre, coûte un appel par lot de 20 pages).
 export function cleanOpening(text: string): string {
   // Une espace insécable seule est gardée (typographie française) ; tabulations et sauts de ligne deviennent des espaces.
   let t = text.replace(/\s{2,}|[\t\n\r]/g, ' ').trim()

@@ -1,8 +1,9 @@
 // `node catalog/src/cli.ts <commande> --option valeur` : point d'entrée des jobs de catalog.yml.
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
-import { cirrusListing } from './cirrus.ts'
+import { cirrusCommand, cirrusListing } from './cirrus.ts'
 import { selectCommand } from './compute.ts'
+import type { Mode } from './compute.ts'
 import { fetchCommand, pickCommand, readmeCommand, sliceCirrusCommand, slicePageviewsCommand, sliceSqlCommand } from './fixtures.ts'
 import { createClient } from './http.ts'
 import { pageviewsCommand } from './pageviews.ts'
@@ -29,8 +30,23 @@ function matching(v: Values, name: string, format: RegExp): string {
   return value
 }
 
+function mode(v: Values): Mode {
+  const value = need(v, 'mode')
+  if (value !== 'full' && value !== 'sample') throw new Error(`Option --mode invalide : ${value} (full, sample)`)
+  return value
+}
+
 const commands: Record<string, (v: Values) => Promise<unknown>> = {
   'cirrus-list': () => cirrusListing(),
+  cirrus: (v) => {
+    // Options validées avant de lire stdin, comme pour pageviews ; part sans « / » : text-<part>.tsv reste dans --dir.
+    const o = { dir: need(v, 'dir'), part: matching(v, 'part', /^\w+$/), mode: mode(v) }
+    // readline créé au premier tour de boucle, après la lecture de catalog.tsv : créé avant, il perdrait des lignes.
+    const input = (async function* () {
+      yield* createInterface({ input: process.stdin, crlfDelay: Infinity })
+    })()
+    return cirrusCommand({ ...o, input })
+  },
   dumps: (v) => dumpsCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir') }),
   pageviews: (v) => {
     // Options validées avant de lire stdin : sinon une option fausse attend la fin du flux.
@@ -39,11 +55,10 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
     return pageviewsCommand({ input: createInterface({ input: process.stdin, crlfDelay: Infinity }), dir, minLines })
   },
   select: (v) => {
-    const mode = need(v, 'mode')
-    if (mode !== 'full' && mode !== 'sample') throw new Error(`Option --mode invalide : ${mode} (full, sample)`)
+    const m = mode(v)
     const rate = need(v, 'rate')
     if (!/^\d+(\.\d+)?$/.test(rate) || !(Number(rate) > 0)) throw new Error(`Option --rate invalide : ${rate}`)
-    return selectCommand({ dir: need(v, 'dir'), mode, rate: Number(rate) })
+    return selectCommand({ dir: need(v, 'dir'), mode: m, rate: Number(rate) })
   },
   'fixtures pick': (v) => pickCommand({ dir: need(v, 'dir'), fixtures: need(v, 'fixtures') }),
   'fixtures slice-sql': (v) =>
@@ -66,7 +81,7 @@ try {
     options: {
       page: { type: 'string' }, props: { type: 'string' }, dir: { type: 'string' }, 'min-lines': { type: 'string' },
       mode: { type: 'string' }, rate: { type: 'string' }, fixtures: { type: 'string' }, month: { type: 'string' },
-      'cirrus-date': { type: 'string' }, 'dump-date': { type: 'string' },
+      'cirrus-date': { type: 'string' }, 'dump-date': { type: 'string' }, part: { type: 'string' },
     },
   })
   const name = positionals.join(' ') // `fixtures pick` : commande en deux mots

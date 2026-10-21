@@ -200,6 +200,37 @@ test('cutSummary : fin de phrase dans les max premiers caractères, sinon dernie
   expect(cutSummary(quote, 17)).toBe('Il dit…')
 })
 
+test('cleanOpening : bandeaux relevés dans les tranches réelles de Cirrus', () => {
+  // Phrases recopiées de raw/cirrus.ndjson (insécables comprises) ; les deux dernières n'ont pas de fin de phrase.
+  const banners = [
+    'Cet article est une ébauche concernant l’athlétisme, le sport universitaire et Rome.',
+    'Vous pouvez partager vos connaissances en l’améliorant (comment ?) selon les recommandations des projets correspondants.',
+    'Vous pouvez partager vos connaissances en l’améliorant (comment ?).',
+    'Cet article ne cite pas suffisamment ses sources (octobre 2022).',
+    "Si vous disposez d'ouvrages ou d'articles de référence ou si vous connaissez des sites web de qualité traitant du thème abordé ici, merci de compléter l'article en donnant les références utiles à sa vérifiabilité et en les liant à la section « Notes et références ».",
+    'En pratique : Quelles sources sont attendues ? Comment ajouter mes sources ?',
+    'Vous lisez un « article de qualité » labellisé en 2009.',
+    'Article principal : Tournoi de tennis US Clay Court.',
+    "Pour l'instrument d'orchestre, voir Hautbois.",
+    'Pour plus d’informations, voyez le projet associé.',
+    "Cet article traite de l'épreuve masculine.",
+    'Cet article est orphelin. Moins de trois articles lui sont liés (avril 2020). Vous pouvez aider en ajoutant des liens vers [[Meyor]] dans les articles relatifs au sujet.',
+    "Cette page est une très courte ébauche oubliée. À l'instar du célèbre « Une pomme est un fruit » qui a marqué l'histoire de Wikipédia, n'hésitez pas à la développer (comment ?) Vous pouvez également enrichir les pages proposées dans la rubrique « Pommes à croquer » du bistro du jour.",
+    'Cette page d’homonymie répertorie des personnes partageant un même patronyme germanique.',
+    "Cet article ne s'appuie pas, ou pas assez, sur des sources secondaires ou tertiaires (octobre 2019). L'article peut contenir des analyses et interprétations inexactes ou inédites de sources primaires. Pour améliorer la vérifiabilité de l'article ainsi que son intérêt encyclopédique, il est nécessaire, quand des sources primaires sont citées, de les associer à des analyses faites par des sources secondaires.",
+    'Cette page contient des caractères spéciaux ou non latins. S’ils s’affichent mal (▯, ?, etc.), consultez la page d’aide Unicode.',
+    'Cet article peut contenir un travail inédit ou des déclarations non vérifiées (septembre 2022). Vous pouvez aider en ajoutant des références ou en supprimant le contenu inédit. Voir la page de discussion pour plus de détails.',
+    'Consultez la liste des tâches à accomplir en page de discussion.',
+    "Trouver des sources sur « Trilogie d'Albert Simonin » : Archive Wikiwix Bing Cairn DuckDuckGo E. Universalis Gallica Google G. Books G. News G. Scholar Persée Qwant (zh) Baidu (ru) Yandex (wd) trouver des œuvres sur Wikidata",
+    'Sur les autres projets Wikimedia : AKA, sur le Wiktionnaire Aka, sur le Wiktionnaire aka, sur Wikimedia Commons',
+  ]
+  expect(cleanOpening(`${banners.join(' ')} Le chat est un mammifère.`)).toBe('Le chat est un mammifère.')
+  for (const b of banners) expect(cleanOpening(`${b} Le chat, sur le toit, dort.`)).toBe('Le chat, sur le toit, dort.')
+  // Une phrase ordinaire qui commence comme un bandeau reste.
+  expect(cleanOpening("À l'instar des autres romans, le récit est long.")).toBe("À l'instar des autres romans, le récit est long.")
+  expect(cleanOpening('Cet article présente la liste des maires.')).toBe('Cet article présente la liste des maires.')
+})
+
 test('cleanOpening : bandeau dont le titre cité finit par « ! » ou « ? »', () => {
   expect(cleanOpening('Cet article concerne la chanson « Ça ira ! », pas le film. Le texte est connu.')).toBe('Le texte est connu.')
   expect(cleanOpening('Cet article concerne la collection « Que sais-je ? ». Le livre est court.')).toBe('Le livre est court.')
