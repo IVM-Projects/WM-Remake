@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
@@ -6,6 +6,7 @@ import { RARITY } from '../../lib/rarity.ts'
 import type { RarityCode } from '../../lib/rarity.ts'
 import {
   cleanOpening,
+  computeCommand,
   cutSummary,
   fnv1a32,
   hasOpening,
@@ -17,6 +18,8 @@ import {
   usableOpening,
 } from './compute.ts'
 import type { CatalogRow, Counts } from './compute.ts'
+import { extractsUrls } from './extracts.ts'
+import type { Client } from './http.ts'
 import { readTsv, writeTsv } from './tsv.ts'
 import type { Field } from './tsv.ts'
 
@@ -48,6 +51,16 @@ test('statsV1 : q_score, ATK et DEF (D§10.1)', () => {
   expect(s.map((r) => r.q_score)).toEqual([0, 60.75, 91.25])
   expect(s.map((r) => r.atk)).toEqual([1000, 5500, 10000])
   expect(s.map((r) => r.def)).toEqual([1000, 5500, 10000])
+})
+
+test('statsV1 : liens inconnus hors du classement, au rang neutre 0,5 (M2-R7)', () => {
+  const s = statsV1([
+    { text_bytes: 100, incoming_links: 0, badge: 0 },
+    { text_bytes: 200, incoming_links: null, badge: 0 },
+    { text_bytes: 300, incoming_links: 5, badge: 0 },
+  ])
+  // Liens : 0 et 5 classés seuls (0 et 1), l'inconnu à 0,5 ; texte 0, 0,5 et 1.
+  expect(s.map((r) => r.q_score)).toEqual([0, 40, 80])
 })
 
 const row = (page_id: number, rarity: RarityCode): CatalogRow => ({
@@ -295,6 +308,22 @@ test('hasOpening : ouverture d’infobox (M2-R5) refusée, vraie phrase d’ouve
   expect(usableOpening('', 'Chat')).toBe(false)
 })
 
+test('hasOpening : infobox V3 ou en Lua dans les modèles → légende en tête, ouverture refusée ; v2 acceptée', () => {
+  const text = "Cave Balve Entrée de la Balver Höhle en 2014. La Balver Höhle est une grotte d'Allemagne."
+  expect(hasOpening(text, 'Balver Höhle')).toBe(true)
+  expect(hasOpening(text, 'Balver Höhle', ['Modèle:Infobox Grotte', 'Modèle:Infobox en Lua'])).toBe(false)
+  expect(hasOpening(text, 'Balver Höhle', ['Modèle:Infobox Club sportif', 'Modèle:Infobox V3/Début'])).toBe(false)
+  expect(hasOpening(text, 'Balver Höhle', ['Modèle:Infobox Commune de France', 'Modèle:Infobox/Début', 'Modèle:Portail'])).toBe(true)
+})
+
+test('cleanOpening : barre de portails en dernière ligne retirée (TextExtracts), « Portail » dans le texte gardé', () => {
+  const extract = 'Pierfrancesco Chili est un pilote de moto italien.\n\n Portail des sports motocyclistes   Portail de l’Italie'
+  expect(cleanOpening(extract)).toBe('Pierfrancesco Chili est un pilote de moto italien.')
+  expect(cleanOpening('Le portail est en fer.\nPortail de l’église, il date de 1600.\nIl est classé.')).toBe(
+    'Le portail est en fer. Portail de l’église, il date de 1600. Il est classé.',
+  )
+})
+
 test('cleanOpening : bandeau dont le titre cité finit par « ! » ou « ? »', () => {
   expect(cleanOpening('Cet article concerne la chanson « Ça ira ! », pas le film. Le texte est connu.')).toBe('Le texte est connu.')
   expect(cleanOpening('Cet article concerne la collection « Que sais-je ? ». Le livre est court.')).toBe('Le livre est court.')
@@ -330,4 +359,87 @@ test('selectCommand : catalog.tsv et counts.json cohérents ; mode full retient 
   expect(all.selected).toEqual(all.full)
   const again = await Array.fromAsync(readTsv(join(dir, 'catalog.tsv')))
   expect(again.map((l) => l[8])).toEqual(['1', '1', '1'])
+})
+
+// Dossier écrit à la main : 1 a sa licence et son résumé Cirrus ; 2 a une image sans licence, des liens inconnus et pas de
+// résumé Cirrus ; 3 manque à Cirrus ; 4 n'est pas retenue.
+async function computeDir(): Promise<string> {
+  const dir = await mkdtemp(join(root, 'compute-'))
+  const zero = { L: 0, UR: 0, SR: 0, R: 0, PC: 0, C: 0 }
+  const counts: Counts = { mode: 'sample', rate: 0.5, full: { ...zero, L: 1, R: 1, C: 2 }, selected: { ...zero, L: 1, R: 1, C: 1 } }
+  await writeFile(join(dir, 'counts.json'), JSON.stringify(counts))
+  await writeTsv(join(dir, 'catalog.tsv'), [
+    [1, 'Chat_noir', 1000, 30000, 'L', 'Libre.jpg', 'Q1', 1, 1],
+    [2, 'Sans_licence', 2000, 10, 'C', 'Sans.jpg', 'Q2', 0, 1],
+    [3, 'Absente', 500, 300, 'R', null, null, 0, 1],
+    [4, 'Hors', 100, 0, 'C', null, null, 0, 0],
+  ])
+  await writeTsv(join(dir, 'text-00000.tsv'), [[1, 5000, 10, 'Le chat noir est un chat.'], [2, 3000, null, null], [4, 100, 0, null]])
+  await writeTsv(join(dir, 'desc.tsv'), [['Q1', 'chat'], ['Q2', null]])
+  await writeTsv(join(dir, 'media.tsv'), [
+    ['Libre.jpg', 'Auteur', 'CC BY-SA 4.0', 'https://creativecommons.org/licenses/by-sa/4.0', 'https://upload.wikimedia.org/x/Libre.jpg'],
+    ['Sans.jpg', 'Auteur', null, null, 'https://upload.wikimedia.org/x/Sans.jpg'],
+  ])
+  return dir
+}
+
+const extractsClient = (ids: number[]): Client => {
+  const pages = [
+    { pageid: 1, extract: 'Le chat noir, vu par TextExtracts.' },
+    { pageid: 2, extract: 'Pour les articles homonymes, voir Sans. Texte de la page deux.' },
+    { pageid: 3, extract: 'Une page, absente de Cirrus.' },
+  ]
+  const url = extractsUrls(ids)[0]
+  return {
+    async get(u) {
+      if (u !== url) throw new Error(`URL inconnue : ${u}`)
+      return { batchcomplete: true, query: { pages: pages.filter((p) => ids.includes(p.pageid)) } }
+    },
+  }
+}
+
+const HEADER = 'page_id,wikipedia_title,wikipedia_url,lang,rarity,atk,def,q_score,pageviews,pageviews_refreshed_at,qscore_refreshed_at,category,summary,image_url'
+
+test('computeCommand : pas d’image sans licence, complément TextExtracts, page absente de Cirrus, liens inconnus', async () => {
+  const dir = await computeDir()
+  const out = join(dir, 'out')
+  const o = { dir, out, mode: 'sample', month: '2026-12', textDate: '2026-10-18', textSource: 'cirrus', client: extractsClient([2, 3]) } as const
+  const counts = await computeCommand(o)
+  // 3 absente : text_bytes = len (500, ATK 4000) ; liens de 2 et 3 au rang 0,5.
+  const dates = '2027-01-01T00:00:00Z,2026-10-18T00:00:00Z'
+  expect(await readFile(join(out, 'cards.csv'), 'utf8')).toBe([
+    HEADER,
+    `1,Chat noir,https://fr.wikipedia.org/wiki/Chat_noir,fr,L,10000,10000,100,30000,${dates},chat,Le chat noir est un chat.,https://upload.wikimedia.org/x/Libre.jpg`,
+    `2,Sans licence,https://fr.wikipedia.org/wiki/Sans_licence,fr,C,7000,7000,47.5,10,${dates},,Texte de la page deux.,`,
+    `3,Absente,https://fr.wikipedia.org/wiki/Absente,fr,R,4000,4000,32.5,300,${dates},,"Une page, absente de Cirrus.",`,
+    '',
+  ].join('\n'))
+  expect(await readFile(join(out, 'media.csv'), 'utf8')).toBe(
+    'page_id,file,author,license,license_url\n1,Libre.jpg,Auteur,CC BY-SA 4.0,https://creativecommons.org/licenses/by-sa/4.0\n',
+  )
+  const written = JSON.parse(await readFile(join(out, 'counts.json'), 'utf8'))
+  expect(written).toEqual(counts)
+  expect(counts).toMatchObject({
+    mode: 'sample', rate: 0.5, month: '2026-12', text_date: '2026-10-18', text_source: 'cirrus',
+    cirrus_absent: 1, links_unknown: 2, summaries: { cirrus: 1, extracts: 2, none: 0 },
+  })
+  // Reprise : extracts.tsv couvre déjà le lot, aucun appel.
+  await computeCommand({ ...o, client: { get: () => Promise.reject(new Error('appel inattendu')) } })
+})
+
+test('computeCommand, repli extracts : text_bytes = len, liens à 0, tous les résumés de TextExtracts', async () => {
+  const dir = await computeDir()
+  const out = join(dir, 'out')
+  const o = { dir, out, mode: 'sample', month: '2026-09', textDate: '2026-10-18', textSource: 'extracts', client: extractsClient([1, 2, 3]) } as const
+  const counts = await computeCommand(o)
+  const rows = (await readFile(join(out, 'cards.csv'), 'utf8')).trim().split('\n').slice(1)
+  expect(rows.map((r) => r.split(',').slice(5, 8))).toEqual([['7000', '10000', '67.5'], ['10000', '7000', '62.5'], ['4000', '4000', '32.5']])
+  expect(rows[0]).toContain('"Le chat noir, vu par TextExtracts."')
+  expect(counts).toMatchObject({ text_source: 'extracts', cirrus_absent: 0, links_unknown: 0, summaries: { cirrus: 0, extracts: 3, none: 0 } })
+})
+
+test('computeCommand : mode différent de celui de select refusé', async () => {
+  const dir = await computeDir()
+  const o = { dir, out: join(dir, 'out'), mode: 'full', month: '2026-09', textDate: '2026-10-18', textSource: 'cirrus' } as const
+  await expect(computeCommand(o)).rejects.toThrow('Mode full différent de celui de select (sample)')
 })

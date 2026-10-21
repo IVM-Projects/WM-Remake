@@ -1,5 +1,5 @@
 {
-  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=37129%7C57455%7C64190%7C106998%7C118752%7C118780%7C120939%7C223878%7C333486%7C398899%7C522698%7C543958%7C623348%7C624301%7C656005%7C772653%7C773625%7C955391%7C956120%7C1126435": {
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=37129%7C57455%7C64190%7C106998%7C118752%7C118780%7C120939%7C223878%7C333486%7C398899%7C444355%7C522698%7C543958%7C623348%7C624301%7C656005%7C772653%7C773625%7C955391%7C956120": {
     "batchcomplete": true,
     "query": {
       "pages": [
@@ -64,6 +64,12 @@
           "extract": "La monnaie fiduciaire est la monnaie comprenant les pièces modernes et les billets de banque. C'est un instrument financier dont la valeur nominale est supérieure à la valeur intrinsèque ; la confiance (fiducia en latin) que lui accorde l'utilisateur comme valeur d'échange, moyen de paiement, et donc comme monnaie, repose sur un principe de garantie défendu par une institution centralisatrice."
         },
         {
+          "pageid": 444355,
+          "ns": 0,
+          "title": "Paul Nikolaïevitch Demidoff",
+          "extract": "Pavel Nikolaïevitch Demidov (en russe : Павел Николаевич Демидов), francisé en Paul Demidoff,  est né le 6 août 1798 et mort le 25 mars 1840. Cet héritier richissime servit dans la Guerre patriotique de 1812 et fonda en 1831 le prix Demidoff, décerné par l'Académie des sciences de Russie."
+        },
+        {
           "pageid": 522698,
           "ns": 0,
           "title": "Ryan Reynolds",
@@ -116,20 +122,20 @@
           "ns": 0,
           "title": "Alex D. Linz",
           "extract": "Alexander David Linz est un acteur américain né le 3 janvier 1989 à Santa Barbara, en Californie (États-Unis). Il a tourné dans plusieurs films de Disney. Il est surnommé child actor en référence à ses nombreuses apparitions dans des films durant son enfance."
-        },
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=1126435%7C1149417%7C1238033%7C1296218%7C1403939%7C1405499%7C1469533%7C1494686%7C1588917%7C1598292%7C1603503%7C1695012%7C1836072%7C1849361%7C1864481%7C1887604%7C2151401%7C2620642%7C2882598%7C2902126": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
         {
           "pageid": 1126435,
           "ns": 0,
           "title": "Moto Hagio",
           "extract": "Moto Hagio (萩尾望都, Hagio Moto) est une mangaka japonaise née le 12 mai 1949 à Ōmuta. Elle a principalement dessiné pour le compte de la maison d'édition Shōgakukan dans le domaine du shōjo manga, le manga féminin.\nElle commence sa carrière en 1969, et avec ses consœurs du Groupe de l'an 24, donne ses lettres de noblesse au shōjo manga dans les années 1970, jusqu'alors déconsidéré par les critiques et éditeurs de manga. Récompensée par plus de douze prix et décorations au Japon et à l'international, elle est regardée comme l'une des contributrices les plus importantes de l'histoire du manga.\nConnue en dehors du Japon comme une pionnière du genre boys' love — histoires d'amour entre personnages masculins — avec Le Cœur de Thomas, elle est surtout appréciée au Japon pour ses œuvres de science-fiction comme Nous sommes onze ! ou Barbara, l'entre-deux-monde. Marquée par une relation difficile avec ses parents, la majorité de ses œuvres mettent en avant le thème de la famille dysfonctionnelle, avec une forte psychologisation de ses personnages."
-        }
-      ]
-    }
-  },
-  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=1149417%7C1238033%7C1296218%7C1403939%7C1405499%7C1469533%7C1494686%7C1588917%7C1603503%7C1695012%7C1836072%7C1849361%7C1864481%7C1887604%7C2151401%7C2620642%7C2882598%7C2902126%7C2911616%7C3030859": {
-    "batchcomplete": true,
-    "query": {
-      "pages": [
+        },
         {
           "pageid": 1149417,
           "ns": 0,
@@ -177,6 +183,12 @@
           "ns": 0,
           "title": "An-Nâsir Muhammad ben Qalâ'ûn",
           "extract": "An-Nâsir Muhammad ben Qalâ'ûn (en arabe : ناصر الدين محمد بن قلاوون) est un sultan mamelouk bahrite d’Égypte de 1293 à 1295 et de 1299 à 1309 et enfin après une courte interruption du 5 mars 1310 à 1341. Il est né au Caire en 1285 et mort au Caire en 1341.\nDe toute la dynastie bahrite, il est le sultan au plus long règne."
+        },
+        {
+          "pageid": 1598292,
+          "ns": 0,
+          "title": "Association sportive et culturelle de Remire",
+          "extract": "L'Association Sportive et Culturelle de Remire est un club guyanais de football basé à Remire-Montjoly."
         },
         {
           "pageid": 1603503,
@@ -237,7 +249,14 @@
           "ns": 0,
           "title": "Fells Point",
           "extract": "Fells Point est un quartier de la ville de Baltimore, dans le Maryland (États-Unis).\nSitué à l'est de l'Inner Harbor et de Little Italy dans l'estuaire du Patapsco, Fells Point est un quartier portuaire reconverti et classé dans le Registre national des lieux historiques. Aujourd'hui, il est connu pour sa grande concentration de bars et de restaurants et attire de nombreux touristes."
-        },
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=2911616%7C3030859%7C3140630%7C3147905%7C3202950%7C3289939%7C3310912%7C3382915%7C3406168%7C3650318%7C3946575%7C3980794%7C4113170%7C4323150%7C4382640%7C4437742%7C4668393%7C4737713%7C4746079%7C4759617": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
         {
           "pageid": 2911616,
           "ns": 0,
@@ -249,14 +268,13 @@
           "ns": 0,
           "title": "Heavenly Forest",
           "extract": "Heavenly Forest (ただ、君を愛してる, Tada, kimi o aishiteru) est un film japonais de Takehiko Shinjō sortie en 2006. C'est l'histoire de deux jeunes étudiants : Makoto Segawa et Shizuru Satonaka."
-        }
-      ]
-    }
-  },
-  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=3147905%7C3202950%7C3289939%7C3310912%7C3382915%7C3406168%7C3650318%7C3946575%7C3980794%7C4323150%7C4382640%7C4437742%7C4668393%7C4737713%7C4746079%7C4759617%7C4764283%7C4801255%7C5008415%7C5094023": {
-    "batchcomplete": true,
-    "query": {
-      "pages": [
+        },
+        {
+          "pageid": 3140630,
+          "ns": 0,
+          "title": "Atlasaurus",
+          "extract": "Atlasaurus est un genre fossile de dinosaure sauropode du Bathonien du Jurassique moyen. Une seule espèce fossile est connue : Atlasaurus imelakei Monbaron et al., 1999."
+        },
         {
           "pageid": 3147905,
           "ns": 0,
@@ -312,6 +330,12 @@
           "extract": "Maggie McNamara est une actrice américaine, née le 18 juin 1928 à New York où elle est morte le 18 février 1978."
         },
         {
+          "pageid": 4113170,
+          "ns": 0,
+          "title": "Akio Sugino",
+          "extract": "Akio Sugino (杉野 昭夫, Sugino Akio), né le 19 septembre 1944 est un chara-designer et animateur japonais."
+        },
+        {
           "pageid": 4323150,
           "ns": 0,
           "title": "Joseph-Étienne Dussault",
@@ -352,7 +376,14 @@
           "ns": 0,
           "title": "Double dames des Internationaux de France 2005",
           "extract": "Cet article présente les résultats détaillés du double dames de l’édition 2005 des Internationaux de France de tennis qui est disputé du 23 mai au 5 juin 2005. Ce tournoi est le deuxième de la tournée du Grand Chelem."
-        },
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=4764283%7C4801255%7C5008415%7C5094023%7C5350472%7C5477773%7C5607210%7C5702860%7C5783403%7C5972638%7C6108012%7C6284784%7C6297406%7C6328158%7C6472944%7C7037577%7C7062588%7C7090138%7C7155315%7C7309192": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
         {
           "pageid": 4764283,
           "ns": 0,
@@ -376,14 +407,7 @@
           "ns": 0,
           "title": "Fricot des barques",
           "extract": "Le fricot des barques, mets spécifique aux mariniers du Rhône d'Arles, qui le consommaient sur leurs barques, est une variante de la broufado."
-        }
-      ]
-    }
-  },
-  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=5350472%7C5607210%7C5783403%7C5972638%7C6108012%7C6284784%7C6297406%7C6328158%7C6472944%7C7037577%7C7062588%7C7090138%7C7309192%7C7353635%7C7695596%7C7728246%7C7735499%7C7876972%7C7940578%7C7995129": {
-    "batchcomplete": true,
-    "query": {
-      "pages": [
+        },
         {
           "pageid": 5350472,
           "ns": 0,
@@ -391,10 +415,22 @@
           "extract": "Raphaël Masson est un conservateur du patrimoine, adjoint du directeur du Centre de recherche du château de Versailles, responsable du programme de recherche sur les grandes fêtes du château de Versailles.\nEn 2018, il participe à l'émission Secrets d'Histoire consacrée à  Marie-Thérèse de France, intitulée  Madame Royale, l'orpheline de la Révolution, diffusée le 12 juillet 2018 sur France 2.\nAujourd’hui, il s’occupe du théâtre de la Reine à Versailles."
         },
         {
+          "pageid": 5477773,
+          "ns": 0,
+          "title": "Lathyrus niger",
+          "extract": "Lathyrus niger, la Gesse noire, est une espèce de plantes à fleurs de la famille des Fabaceae (de la sous-famille des Faboideae selon la classification phylogénétique). C'est une plante herbacée vivace originaire d'Europe et d'Afrique du Nord."
+        },
+        {
           "pageid": 5607210,
           "ns": 0,
           "title": "Yuriy Nikitin",
           "extract": "Yuriy Viktorovych Nikitin (en ukrainien : Юрій Вікторович Нікітін), né le 15 juillet 1978 à Kherson, est un gymnaste trampoliniste ukrainien."
+        },
+        {
+          "pageid": 5702860,
+          "ns": 0,
+          "title": "Colonne de Charles-Félix",
+          "extract": "La colonne de Charles-Félix est une colonne commémorative élevée à Bonneville (Haute-Savoie), en France, en l'honneur de Charles-Félix de Savoie, à l'occasion de ses travaux d'endiguement de l'Arve."
         },
         {
           "pageid": 5783403,
@@ -457,16 +493,35 @@
           "extract": "Basawan ou Basavan (actif de 1580 à 1600), était un peintre en miniature indienne de style Moghol Il était connu de ses contemporains comme un habile coloriste et un fin observateur de la nature humaine, ainsi que pour son usage du portrait dans les illustrations de l'Akbarnama, biographie officielle de l'empereur moghol Akbar, considéré comme une innovation dans l'art indien."
         },
         {
+          "pageid": 7155315,
+          "ns": 0,
+          "title": "Association sportive olympique de Missira",
+          "extract": "L'ASO Missira est un club malien de football basé à Bamako."
+        },
+        {
           "pageid": 7309192,
           "ns": 0,
           "title": "Tour du Pétrole",
           "extract": "La tour du Pétrole est un monument historique situé à Ammerschwihr, dans le département français du Haut-Rhin."
-        },
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=7353635%7C7369901%7C7695596%7C7728246%7C7735499%7C7876972%7C7940578%7C7995129%7C8276541%7C9231184%7C9624536%7C9648789%7C9796552%7C9822004%7C9911777%7C9988492%7C10024221%7C10391924%7C10396664%7C10440116": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
         {
           "pageid": 7353635,
           "ns": 0,
           "title": "Contarinia tritici",
           "extract": "Contarinia tritici (la cécidomyie des fleurs du blé ou cécidomyie jaune du blé) est une espèce d'insectes diptères nématocères de la famille des Cecidomyiidae, d'origine eurasiatique.\nCet insecte est une cécidomyie inféodée aux plantes de la famille des Poaceae. C'est un ravageur sporadique de certaines céréales cultivées, en particulier le blé, l'orge, l'avoine et le seigle.\nLes dégâts sont causés par les larves qui se développent dans les fleurs, empêchant la formation des graines ou dégradant leur qualité."
+        },
+        {
+          "pageid": 7369901,
+          "ns": 0,
+          "title": "Imagawa Ujiteru",
+          "extract": "Imagawa Ujiteru (今川 氏輝, 1513-7 avril 1536) est un daimyo de la période Sengoku à la tête du clan Imagawa de la province de Suruga. Son nom d'enfance était Ryuomaru (竜 王 丸). Son père était Imagawa Ujichika et sa mère était Jukei-ni (décédée en 1568). Il était le frère d' Imagawa Yoshimoto ."
         },
         {
           "pageid": 7695596,
@@ -503,14 +558,13 @@
           "ns": 0,
           "title": "Moulin de Mormoulins",
           "extract": "Le moulin de Mormoulins est un moulin à eau situé sur l'Eure dans le hameau de Mormoulins de la commune française de Chaudon dans le département d'Eure-et-Loir en région Centre-Val de Loire. Il est inscrit au titre de monument historique depuis 2003."
-        }
-      ]
-    }
-  },
-  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=9231184%7C9624536%7C9648789%7C9796552%7C9911777%7C9988492%7C10391924%7C10396664%7C10440116%7C10443913%7C10804569%7C11170040%7C11451781%7C11747395%7C11855694%7C11934764%7C11934772%7C12084285%7C12129158%7C12132603": {
-    "batchcomplete": true,
-    "query": {
-      "pages": [
+        },
+        {
+          "pageid": 8276541,
+          "ns": 0,
+          "title": "Championnat de Finlande de hockey sur glace 1933-1934",
+          "extract": "La saison 1933-1934 est la sixième saison de la SM-sarja.\nLe HSK Helsinki remporte le 6e titre de champion de Finlande en terminant à la première place du classement."
+        },
         {
           "pageid": 9231184,
           "ns": 0,
@@ -536,6 +590,12 @@
           "extract": "Hamparan Perak est une ville indonésienne située dans la province de Sumatra du Nord."
         },
         {
+          "pageid": 9822004,
+          "ns": 0,
+          "title": "Armstrong Siddeley Viper",
+          "extract": "Le Viper est un turboréacteur britannique développé par Armstrong Siddeley, puis par les compagnies qui lui ont succédé, Bristol Siddeley et Rolls-Royce Limited. Il entra en service en 1953 et resta en service au sein de la Royal Air Force jusqu'en janvier 2011, équipant ses appareils d'entraînement à la navigation Dominie T1."
+        },
+        {
           "pageid": 9911777,
           "ns": 0,
           "title": "Florent Mulot",
@@ -546,6 +606,12 @@
           "ns": 0,
           "title": "Gouvernement Aznar-Cabañas",
           "extract": "Le Gouvernement de Juan Bautista Aznar-Cabañas est le gouvernement du royaume d'Espagne en fonction le 18 février 1931 au 14 avril 1931. Faisant suite au gouvernement Berenguer, il se trouve dans une période de transition après la fin de la dictature de Primo de Rivera et l'instauration de la Seconde République espagnole.\nLe 12 avril ont lieu des élections municipales, remportées en majorité par les Républicains (notamment à Madrid, Valence et Barcelone). Le 14 avril 1931, la République est proclamée et le roi Alphonse XIII quitte l'Espagne."
+        },
+        {
+          "pageid": 10024221,
+          "ns": 0,
+          "title": "Grotte de Ban Fa Suai",
+          "extract": "La grotte de Ban Fa Suai est un site du Pléistocène supérieur découvert en 2000 en Thaïlande. C'est un exemple de site pléistocène du nord de la Thaïlande.\nLa grotte se situe dans la montagne du Doi Chiang Dao, à 4 km de Pha Daeng et à 80 km au nord-ouest de Chiang Mai, dans le changwat de Chiang Mai, au nord de la Thaïlande. La caverne de Ban Fa Suai (ou Tham Ban Fa Suai), également dénommée grotte du Moine, donne sur un petit ruisseau appartenant au réseau fluvial du Huai Mae Pla Lao."
         },
         {
           "pageid": 10391924,
@@ -564,7 +630,14 @@
           "ns": 0,
           "title": "Free (chanson de Stevie Wonder)",
           "extract": "Free est une chanson de l'auteur-compositeur-interprète américain Stevie Wonder, enregistrée pour son album Characters en 1987. Sixième et dernier extrait de l'album à paraître en single en mai 1989, le single n'a connu qu'un succès limité et ne s'est pas classé au Billboard Hot 100.\nEn France, Free doit sa notoriété à son utilisation pour une publicité de la Banque populaire en 1993, ce qui lui permet de ressortir en single et restera cinq semaines dans le classement national des meilleurs ventes."
-        },
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=10443913%7C10804569%7C11170040%7C11451781%7C11747395%7C11855694%7C11934764%7C11934772%7C12084285%7C12129158%7C12132603%7C12180533%7C12263897%7C12324802%7C12328861%7C12392155%7C12553559%7C12790118%7C12828437%7C12906564": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
         {
           "pageid": 10443913,
           "ns": 0,
@@ -630,14 +703,7 @@
           "ns": 0,
           "title": "Siège de Corroy",
           "extract": "Le siège du château de Corroy (juillet-août 1542) s'inscrit dans le cadre des opérations militaires menées dans le Brabant, par l'armée des duchés de Clèves et de Gueldre, dressés contre le Saint Empire. Ces actions se situent au cœur de la neuvième guerre d'Italie."
-        }
-      ]
-    }
-  },
-  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=12180533%7C12263897%7C12324802%7C12328861%7C12392155%7C12553559%7C12790118%7C12828437%7C12906564%7C13191644%7C13194648%7C13313430%7C13324767%7C13392240%7C13534054%7C13557262%7C13945554%7C13981739%7C14012199%7C14093806": {
-    "batchcomplete": true,
-    "query": {
-      "pages": [
+        },
         {
           "pageid": 12180533,
           "ns": 0,
@@ -691,7 +757,14 @@
           "ns": 0,
           "title": "Jonathan Hodgson",
           "extract": "Jonathan Hodgson, né en 1960, est un réalisateur d'animation britannique, fondateur de la société de production Hodgson Films, pour laquelle il a réalisé plusieurs courts métrages, et vainqueur à 2 reprises du BAFTA du meilleur court-métrage d'animation."
-        },
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=13191644%7C13194648%7C13313430%7C13324767%7C13392240%7C13534054%7C13557262%7C13945554%7C13981739%7C14012199%7C14093806%7C14280740%7C14287824%7C14420391%7C14498198%7C14508076%7C14691698%7C14703112%7C15033834%7C15219884": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
         {
           "pageid": 13191644,
           "ns": 0,
@@ -757,14 +830,7 @@
           "ns": 0,
           "title": "Borowo (Poméranie-Occidentale)",
           "extract": "Borowo est une localité polonaise de la gmina mixte de Kalisz Pomorski, située dans le powiat de Drawsko en voïvodie de Poméranie-Occidentale. Elle se trouve à environ 29 km au sud de la ville de Drawsko Pomorskie et 89 km à l'est de Szczecin, la capitale régionale."
-        }
-      ]
-    }
-  },
-  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=14280740%7C14287824%7C14420391%7C14498198%7C14508076%7C14691698%7C14703112%7C15033834%7C15354522%7C15412213%7C15634371%7C15682761%7C15901601%7C16003634%7C16173432%7C16216136%7C16321313%7C16365581%7C16465198%7C16516517": {
-    "batchcomplete": true,
-    "query": {
-      "pages": [
+        },
         {
           "pageid": 14280740,
           "ns": 0,
@@ -814,10 +880,35 @@
           "extract": "Gianni Martucci, né Gian Antonio Martucci le 22 mai 1942 à Ancône (Marches), est un réalisateur et scénariste italien."
         },
         {
+          "pageid": 15219884,
+          "ns": 0,
+          "title": "Balver Höhle",
+          "extract": "La Balver Höhle (grotte de Balve) est une grotte située à Balve, en Allemagne. Il s'agit de la plus grande grotte utilisée comme lieu culturel en Europe.\nElle a accueilli de nombreux évènements et festivals depuis 1985, première année du Festspiele Balver Höhle."
+        }
+      ]
+    }
+  },
+  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=15307293%7C15354522%7C15402088%7C15412213%7C15634371%7C15682761%7C15901601%7C16003634%7C16173432%7C16216136%7C16321313%7C16365581%7C16465198%7C16516517%7C16827134%7C16963173%7C17102931%7C17379736%7C17598530%7C17633222": {
+    "batchcomplete": true,
+    "query": {
+      "pages": [
+        {
+          "pageid": 15307293,
+          "ns": 0,
+          "title": "Norton Knatchbull (3e comte Mountbatten de Birmanie)",
+          "extract": "Norton Louis Philip Knatchbull, 3e comte Mountbatten de Birmanie (né le 8 octobre 1947), connu jusqu'en 2005 sous le nom de Lord Romsey et jusqu'en 2017 sous le nom de Lord Brabourne, est un pair britannique."
+        },
+        {
           "pageid": 15354522,
           "ns": 0,
           "title": "Léon de Catane",
           "extract": "Saint Léon de Catane ou Léon le thaumaturge († 789), est un saint sicilien, évêque de la ville de Catane au VIIIe siècle. Il est réputé pour avoir accompli des miracles, en particulier des guérisons. Sa mémoire est célébrée le 20 février."
+        },
+        {
+          "pageid": 15402088,
+          "ns": 0,
+          "title": "Seizième district congressionnel de Floride",
+          "extract": "La 16e district congressionnel de Floride est une circonscription électorale du Congrès américain qui englobe l'est du comté de Hillsborough et l'intégralité du comté de Manatee. Au cours du cycle de redécoupage de 2020, le district a été retiré de Sarasota et du comté de Sarasota pour inclure davantage de banlieues est de Tampa, y compris Riverview et des parties de Brandon au sud de la Florida State Road 60.\nLe district est actuellement représenté par le républicain Vern Buchanan.\nLe 16e district a été créé à la suite du cycle de redécoupage après le recensement de 1980.\nLorsque la législature de Floride a procédé au redécoupage en 2002 après le recensement américain de 2000, un tribunal fédéral a décrit les limites du 16e district et du 23e district comme un exemple de gerrymandering et d'« exercice brutal du pouvoir législatif majoritaire ».\nDe 2013 à 2017, le district comprend le comté de Sarasota et la majeure partie du comté de Manatee. Après un redécoupage ordonné par le tribunal pour les élections de 2016, le district a été déplacé vers le nord pour inclure le sud du comté de Hillsborough, tandis que le sud du comté de Sarasota a été transféré dans le 17e district."
         },
         {
           "pageid": 15412213,
@@ -884,14 +975,13 @@
           "ns": 0,
           "title": "Kurt Gassen",
           "extract": "Kurt Gassen (né le 9 novembre 1892 à Berlin sous le nom d'Otto Gustav Curt Gassen et mort le 11 avril 1981 à Hambourg) est un bibliothécaire et auteur allemand."
-        }
-      ]
-    }
-  },
-  "https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts&exintro=1&explaintext=1&exlimit=20&pageids=16963173%7C17102931%7C17379736%7C17598530%7C17633222": {
-    "batchcomplete": true,
-    "query": {
-      "pages": [
+        },
+        {
+          "pageid": 16827134,
+          "ns": 0,
+          "title": "Force de sécurité des frontières",
+          "extract": "La force de sécurité des frontières (en anglais : Border Security Force ; BSF) est une force centrale de police armée en Inde sous la tutelle du ministère de l'Intérieur. Chargée de surveiller les frontières de l'Inde avec le Pakistan et le Bangladesh, l'unité est créée à la suite de la guerre indo-pakistanaise de 1965 pour assurer la sécurité des frontières de l'Inde et pour des questions connexes.\nLa BSF passa de 25 bataillons en 1965 à 193 bataillons avec un effectif autorisé de 270 000 personnes, y compris une escadre aérienne en expansion, une escadre nautique, un régiment d'artillerie et des unités spécialisées. Il s’agit actuellement de la plus grande force de sécurité aux frontières au monde. La BSF est qualifiée de « première ligne de défense » des territoires indiens."
+        },
         {
           "pageid": 16963173,
           "ns": 0,

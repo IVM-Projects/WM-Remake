@@ -53,6 +53,7 @@ export type CirrusDoc = {
   opening_text?: string
   text_bytes: number
   incoming_links?: number
+  template?: string[]
 }
 
 const parse = (line: string): unknown => {
@@ -102,6 +103,7 @@ export async function* cirrusDocs(lines: AsyncIterable<string>): AsyncGenerator<
       opening_text: typeof d.opening_text === 'string' ? d.opening_text : undefined,
       text_bytes: d.text_bytes as number,
       incoming_links: Number.isInteger(d.incoming_links) ? (d.incoming_links as number) : undefined,
+      template: Array.isArray(d.template) ? d.template.filter((m): m is string => typeof m === 'string') : undefined,
     }
   }
   // Flux coupé ou vide : jamais une part sans erreur.
@@ -129,7 +131,7 @@ export async function cirrusCommand(o: { dir: string; part: string; mode: Mode; 
       if (d.namespace !== 0 || d.page_type === 'redirect') continue
       if (d.incoming_links === undefined) noLinks++
       const text = selected.has(d.page_id) ? cleanOpening(d.opening_text ?? '') : ''
-      yield [d.page_id, d.text_bytes, d.incoming_links ?? null, usableOpening(text, d.title) ? cutSummary(text, SUMMARY_MAX[o.mode]) : null]
+      yield [d.page_id, d.text_bytes, d.incoming_links ?? null, usableOpening(text, d.title, d.template) ? cutSummary(text, SUMMARY_MAX[o.mode]) : null]
     }
   })())
   // Le champ manque sur les pages récentes (environ 12 % du slice) ; sur la plupart des lignes, il a été renommé.

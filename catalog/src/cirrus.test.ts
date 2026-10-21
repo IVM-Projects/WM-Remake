@@ -78,7 +78,7 @@ test('tranche réelle, mode sample : une ligne par document hors redirection, no
   const withSummary = new Set(rows.filter((r) => r[3] !== null).map((r) => Number(r[0])))
   const extracts = JSON.parse(await readFile(join(raw, 'extracts.json'), 'utf8')) as Record<string, unknown>
   const missing = selected.filter((id) => !withSummary.has(id))
-  expect(missing).toHaveLength(145)
+  expect(missing).toHaveLength(160)
   // Clés de raw/extracts.json = exactement les lots des Règles de lots de `fixtures fetch` (plus les 40 premiers ids).
   const batches = new Set([...extractsUrls(missing), ...extractsUrls(selected.slice(0, 40))])
   expect(batches.size).toBe(10)

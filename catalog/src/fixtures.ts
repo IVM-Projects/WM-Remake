@@ -224,8 +224,8 @@ export async function fetchCommand(o: {
   // Résumé Cirrus utilisable : document de l'espace 0, pas une redirection, qui passe hasOpening (règle de cirrusCommand).
   const opening = new Set<number>()
   for await (const line of openLines(join(raw, 'cirrus.ndjson'))) {
-    const d = JSON.parse(line) as { page_id?: number; namespace?: number; title?: string; page_type?: string; opening_text?: string }
-    if (d.page_id !== undefined && d.namespace === 0 && d.page_type !== 'redirect' && hasOpening(d.opening_text, d.title)) opening.add(d.page_id)
+    const d = JSON.parse(line) as { page_id?: number; namespace?: number; title?: string; page_type?: string; opening_text?: string; template?: string[] }
+    if (d.page_id !== undefined && d.namespace === 0 && d.page_type !== 'redirect' && hasOpening(d.opening_text, d.title, d.template)) opening.add(d.page_id)
   }
   const ids = rows.map((r) => r.id)
   const extractUrls = [...new Set([...extractsUrls(ids.filter((id) => !opening.has(id))), ...extractsUrls(ids.slice(0, 40))])]

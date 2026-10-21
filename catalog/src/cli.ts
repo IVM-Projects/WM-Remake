@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { cirrusCommand, cirrusListing } from './cirrus.ts'
 import { commonsCommand } from './commons.ts'
-import { selectCommand } from './compute.ts'
+import { computeCommand, selectCommand } from './compute.ts'
 import type { Mode } from './compute.ts'
 import { fetchCommand, pickCommand, readmeCommand, sliceCirrusCommand, slicePageviewsCommand, sliceSqlCommand } from './fixtures.ts'
 import { createClient } from './http.ts'
@@ -64,6 +64,19 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
     return cirrusCommand({ ...o, input })
   },
   commons: (v) => commonsCommand(resumable(v)),
+  compute: (v) => {
+    const textSource = need(v, 'text-source')
+    if (textSource !== 'cirrus' && textSource !== 'extracts') throw new Error(`Option --text-source invalide : ${textSource} (cirrus, extracts)`)
+    return computeCommand({
+      dir: need(v, 'dir'),
+      out: need(v, 'out'),
+      mode: mode(v),
+      month: matching(v, 'month', /^\d{4}-(0[1-9]|1[0-2])$/),
+      textDate: matching(v, 'text-date', /^\d{4}-\d{2}-\d{2}$/),
+      textSource,
+      client: createClient(),
+    })
+  },
   dumps: (v) => dumpsCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir') }),
   pageviews: (v) => {
     // Options validées avant de lire stdin : sinon une option fausse attend la fin du flux.
@@ -104,7 +117,7 @@ try {
       mode: { type: 'string' }, rate: { type: 'string' }, fixtures: { type: 'string' }, month: { type: 'string' },
       'cirrus-date': { type: 'string' }, 'dump-date': { type: 'string' }, part: { type: 'string' },
       'per-minute': { type: 'string' }, concurrency: { type: 'string' }, 'deadline-min': { type: 'string' },
-      only: { type: 'string' },
+      only: { type: 'string' }, out: { type: 'string' }, 'text-date': { type: 'string' }, 'text-source': { type: 'string' },
     },
   })
   const name = positionals.join(' ') // `fixtures pick` : commande en deux mots
