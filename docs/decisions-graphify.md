@@ -113,7 +113,7 @@ Format : ce qui a été tranché — coût si c'est faux.
 - M2-9 — Fusion par lots (`wm.catalog_merge(p_mode, p_limit)`, une transaction par lot), finalisation à part (`wm.catalog_finalize`) : un lot court ne tient pas de verrou longtemps, jamais de `delete` sur `public.cards`, `catalog_frozen` arrête tout.
 - M2-10 — Pool par *swap-with-last* (`wm.pool_add`, `wm.pool_remove`) dans la transaction du merge : le pool reste dense, `cards_page` et le tirage en dépendent.
 - M2-11 — Tirage pur `wm.pick_card` sorti de `draw_cards`, χ² déterministe par `setseed(0.42)` sur 100 000 appels dans `test:db`, et une fois sans `setseed` sur la démo : un test stable et une preuve sur les vraies données.
-- M2-12 — Cartes d'essai : hors du pool au premier vrai `catalog_finalize` sur la démo, gardées dans `public.cards` (18 copies d'un joueur, clés étrangères NO ACTION) ; leur suppression est une étape humaine différée ; le banc garde le seed comme catalogue de développement.
+- M2-12 — Cartes d'essai : hors du pool au premier vrai `catalog_finalize` sur la démo, gardées dans `public.cards` (copies d'un joueur : 18 à la décision, 80 au chargement du 2026-10-21 ; clés étrangères NO ACTION) ; leur suppression est une étape humaine différée ; le banc garde le seed comme catalogue de développement.
 - M2-13 — Catalogue = cartes du pool, recherche comprise : sinon cartes d'essai et cartes retirées resteraient visibles ; `rest/v1/cards` inchangé.
 - M2-14 — Cache de `/api/cards` : partie partagée `wm.cards_page_shared` en `'use cache: remote'` (tag `catalog`, une heure), overlay par joueur `wm.cards_overlay` non caché, chemin par joueur pour `wishlist` et `missing` ; contrat de réponse inchangé.
 - M2-15 — `POST /api/cron/revalidate` : `x-cron-secret` comparé en temps constant, secret absent → 503 (échec fermé), mauvais → 401, sinon `revalidateTag('catalog', 'max')` ; appelé en fin de `load`.
@@ -136,7 +136,7 @@ Format : ce qui a été tranché — coût si c'est faux.
 - P9 — Trois migrations selon le chemin de déploiement : `1500` et `1510` (avec `DELETE`), `1520` (sans le mot `delete`, même en commentaire).
 - P10 — `route()` gagne `call` (cache de `/api/cards`) et `headers` (posés sur un 200, crédits).
 - P11 — TextExtracts en complément (page sans ouverture utilisable) et en repli (`text_source: extracts`) ; `load` refuse le repli tant que `catalog_stats_frozen = false`, pour ne pas réécrire les stats avec des liens entrants absents.
-- P12 — `schedule` mensuel (le 3) ajouté seulement après le premier chargement réussi.
+- P12 — `schedule` mensuel (le 3) ajouté seulement après le premier chargement réussi (fait le 2026-10-21, après le run 39615766155).
 - P13 — Fichiers d'aide `tsv.ts` et `http.ts` : un seul format TSV, un seul client limité pour les trois API.
 - P14 — Erreurs P0001 de la partie partagée rendues, pas levées : une erreur levée dans `'use cache: remote'` perd son `code` et devient un 500.
 - P15 — Pas d'image sans licence : `image_url` nul et pas de ligne `media.csv` ; auteur = `Attribution`, sinon `Artist`, en texte brut ; `license_url` seulement en `http(s)`.

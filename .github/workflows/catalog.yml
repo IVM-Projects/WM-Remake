@@ -4,8 +4,10 @@ name: Catalogue
 # Mode `fixtures` : tranches réelles d'environ 300 pages pour les tests (M2-7), en artefact `fixtures-raw`.
 # Modes `sample` et `full` : dumps → vues → échantillon → texte Cirrus (une part par job), Wikidata et Commons
 # (reprenables par le cache) → compute, en artefact `catalog-out` (cards.csv, media.csv, counts.json).
-# Pas de `schedule` avant le premier chargement réussi (P12).
+# Mensuel (P12) depuis le premier chargement réussi (run 39615766155) : échantillon Free, taux lu dans wm.config.
 on:
+  schedule:
+    - cron: '41 5 3 * *' # le 3 à 05:41 UTC, après les dumps du 1er
   workflow_dispatch:
     inputs:
       mode:
