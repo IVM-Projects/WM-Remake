@@ -634,3 +634,137 @@ do $$ declare s uuid := pg_temp.player('IdemMise1'); a uuid := pg_temp.player('I
     and (select wikibidous_balance from public.profiles where id = a) = 90, 'mise rejouée';
   perform pg_temp.inv('mise idempotente');
 end $$;
+
+-- Règlement (1630, M3-18).
+-- Les enchères échues des blocs précédents sont réglées d'abord : les comptes ci-dessous ne portent que sur celles de ce bloc.
+-- Non échue → {id, status: active, settled: false}, rien ne change ; inconnue → null.
+do $$ declare s uuid := pg_temp.player('Regle1'); x uuid; a jsonb; e jsonb; r jsonb; begin
+  perform wm.settle_due_auctions(100000);
+  x := pg_temp.listing(s, pg_temp.card('Règlement marché'));
+  a := (select to_jsonb(u) from public.auctions u where id = x);
+  e := (select to_jsonb(k) from wm.auction_escrow k where auction_id = x);
+  r := wm.settle_auction(x);
+  assert r = jsonb_build_object('id', x, 'status', 'active', 'settled', false), r::text;
+  assert (select to_jsonb(u) from public.auctions u where id = x) = a and (select to_jsonb(k) from wm.auction_escrow k where auction_id = x) = e
+    and not exists (select from public.notifications where data ->> 'auction_id' = x::text), 'non échue modifiée';
+  assert wm.settle_auction(gen_random_uuid()) is null, 'inconnue';
+end $$;
+
+-- Review Focus, invendue : copie brillante, favorite, étiquetée, obtenue le 1er janvier, échue sans mise → settled_unsold, settled_at =
+-- heure réelle (P7), nouvelle ligne au vendeur (id neuf, count 1, pas favorite, sans étiquettes, obtained_at d'origine), plus de séquestre,
+-- une auction_unsold sans amount.
+do $$ declare s uuid := pg_temp.player('Invendue1'); c uuid := pg_temp.card('Invendue marché', 'UR');
+  k public.user_cards := wm.grant_copy(s, c, true); t uuid; x uuid; t0 timestamptz; r jsonb; a public.auctions; u public.user_cards; begin
+  update public.user_cards set starred = true, obtained_at = '2026-01-01 08:00+00' where id = k.id returning * into k;
+  insert into public.tags (user_id, name) values (s, 'invendue-1') returning id into t;
+  insert into public.user_card_tags (user_card_id, tag_id) values (k.id, t);
+  x := wm.create_auction(s, k.id, 10, 60) ->> 'auction_id';
+  update public.auctions set end_at = now() - interval '1 minute' where id = x;
+  t0 := clock_timestamp();
+  r := wm.settle_auction(x);
+  assert r = jsonb_build_object('id', x, 'status', 'settled_unsold', 'settled', true), r::text;
+  select * into a from public.auctions where id = x;
+  assert a.status = 'settled_unsold' and a.settled_at > t0 and a.settled_at < clock_timestamp() and a.winner_id is null
+    and a.final_price is null, to_jsonb(a)::text;
+  assert (select count(*) from public.user_cards where user_id = s) = 1, 'copies du vendeur';
+  select * into u from public.user_cards where user_id = s;
+  assert u.id <> k.id and u.count = 1 and not u.starred and u.obtained_at = '2026-01-01 08:00+00', to_jsonb(u)::text;
+  assert to_jsonb(u) - array['id', 'starred'] = to_jsonb(k) - array['id', 'starred'], 'copie rendue différente de l''originale';
+  assert not exists (select from public.user_card_tags where user_card_id = u.id), 'étiquettes sur la copie rendue';
+  assert not exists (select from wm.auction_escrow where auction_id = x), 'séquestre encore là';
+  assert (select jsonb_agg(jsonb_build_array(user_id, type, data ? 'amount')) from public.notifications where data ->> 'auction_id' = x::text)
+    = jsonb_build_array(jsonb_build_array(s, 'auction_unsold', false)), 'auction_unsold';
+  perform pg_temp.inv('invendue');
+end $$;
+
+-- Vendue (B mène à 11) → settled_sold, gagnant B, prix 11 ; copie chez B à obtained_at = settled_at ; vendeur crédité de 11 par settle:<id> ;
+-- auction_won pour B et auction_sold pour le vendeur, amount 11. Idempotence : un second règlement → settled false, grand livre, copies et
+-- notifications inchangés.
+do $$ declare s uuid := pg_temp.player('Vendue1'); a uuid := pg_temp.player('Vendue2', 100); b uuid := pg_temp.player('Vendue3', 100);
+  c uuid := pg_temp.card('Vendue marché'); x uuid := pg_temp.listing(s, c); r jsonb; au public.auctions; n bigint[]; begin
+  perform wm.place_bid(a, x, 10);
+  perform wm.place_bid(b, x, 11);
+  update public.auctions set end_at = now() - interval '1 minute' where id = x;
+  r := wm.settle_auction(x);
+  assert r = jsonb_build_object('id', x, 'status', 'settled_sold', 'settled', true), r::text;
+  select * into au from public.auctions where id = x;
+  assert au.status = 'settled_sold' and au.winner_id = b and au.final_price = 11 and au.current_bid = 11 and au.settled_at > now(),
+    to_jsonb(au)::text;
+  assert (select count(*) from public.user_cards where user_id = b) = 1
+    and (select count = 1 and not starred and card_id = c and obtained_at = au.settled_at from public.user_cards where user_id = b),
+    'copie gagnée';
+  assert not exists (select from wm.auction_escrow where auction_id = x), 'séquestre encore là';
+  assert (select jsonb_agg(jsonb_build_array(user_id, delta, balance_after)) from wm.wb_ledger where ref = 'settle:' || x)
+    = jsonb_build_array(jsonb_build_array(s, 11, 11)), 'crédit du vendeur';
+  assert (select array_agg(wikibidous_balance order by username) from public.profiles where id in (s, a, b)) = array[11, 100, 89], 'soldes';
+  assert (select jsonb_agg(jsonb_build_array(type, user_id, data -> 'amount') order by type) from public.notifications
+          where data ->> 'auction_id' = x::text and type in ('auction_won', 'auction_sold'))
+    = jsonb_build_array(jsonb_build_array('auction_sold', s, 11), jsonb_build_array('auction_won', b, 11)), 'auction_won et auction_sold';
+  n := array[(select count(*) from wm.wb_ledger), (select count(*) from public.user_cards), (select count(*) from public.notifications)];
+  r := wm.settle_auction(x);
+  assert r = jsonb_build_object('id', x, 'status', 'settled_sold', 'settled', false), r::text;
+  assert n = array[(select count(*) from wm.wb_ledger), (select count(*) from public.user_cards), (select count(*) from public.notifications)],
+    'second règlement qui écrit';
+  perform pg_temp.inv('vendue');
+end $$;
+
+-- settle_due_auctions : 3 échues (une avec mise) et 1 non échue → 3 ; p_limit 2 sur 3 → les 2 plus anciennes (end_at), puis 1, puis 0.
+-- Séquestre supprimé à la main (P9) : cette enchère est sautée (sa sous-transaction est annulée, sans notification), les autres sont
+-- réglées ; séquestre réinséré, elle se règle ensuite.
+do $$ declare s uuid := pg_temp.player('Lot1', 0, true); b uuid := pg_temp.player('Lot2', 1000); c uuid := pg_temp.card('Lot marché');
+  x uuid[]; e wm.auction_escrow; n int; l text := current_setting('client_min_messages'); begin
+  x := array(select pg_temp.listing(s, c) from generate_series(1, 4));
+  perform wm.place_bid(b, x[1], 10);
+  update public.auctions set end_at = now() - interval '1 minute' where id = any (x[1:3]);
+  n := wm.settle_due_auctions();
+  assert n = 3, 'réglées : ' || n;
+  assert (select array_agg(status::text order by array_position(x, id)) from public.auctions where id = any (x))
+    = array['settled_sold', 'settled_unsold', 'settled_unsold', 'active'], 'statuts';
+  x := array(select pg_temp.listing(s, c) from generate_series(1, 3));
+  update public.auctions set end_at = now() - make_interval(mins => 10 - array_position(x, id)) where id = any (x);
+  assert wm.settle_due_auctions(2) = 2, 'limite 2';
+  assert (select array_agg(status::text order by array_position(x, id)) from public.auctions where id = any (x))
+    = array['settled_unsold', 'settled_unsold', 'active'], 'pas les plus anciennes';
+  assert wm.settle_due_auctions(2) = 1 and wm.settle_due_auctions(2) = 0, 'reste';
+  x := array(select pg_temp.listing(s, c) from generate_series(1, 3));
+  perform wm.place_bid(b, x[2], 10);
+  update public.auctions set end_at = now() - interval '1 minute' where id = any (x);
+  delete from wm.auction_escrow where auction_id = x[2] returning * into e;
+  perform set_config('client_min_messages', 'error', true);  -- avertissement attendu de la sous-transaction en erreur
+  n := wm.settle_due_auctions();
+  perform set_config('client_min_messages', l, true);
+  assert n = 2, 'réglées malgré le séquestre absent : ' || n;
+  assert (select array_agg(status::text order by array_position(x, id)) from public.auctions where id = any (x))
+    = array['settled_unsold', 'active', 'settled_unsold'], 'statuts avec séquestre absent';
+  assert not exists (select from public.notifications where data ->> 'auction_id' = x[2]::text)
+    and not exists (select from wm.wb_ledger where ref = 'settle:' || x[2]), 'sous-transaction en erreur qui écrit';
+  insert into wm.auction_escrow select (e).*;
+  perform pg_temp.inv('lot');
+  assert wm.settle_auction(x[2]) ->> 'settled' = 'true', 'réglée après le retour du séquestre';
+  perform pg_temp.inv('lot réglé');
+end $$;
+
+-- settle_request (P8, P11) : inconnue ou retirée → 404 ; non échue → 409 ; échue → {auction} réglée, owned true pour le gagnant, false pour un
+-- tiers ; même clé → même réponse ; sans clé → même réponse ; un seul crédit du vendeur.
+do $$ declare s uuid := pg_temp.player('Finaliser1'); b uuid := pg_temp.player('Finaliser2', 100); o uuid := pg_temp.player('Finaliser3');
+  c uuid := pg_temp.card('Finaliser marché'); x uuid := pg_temp.listing(s, c); y uuid := pg_temp.listing(s, c);
+  q text := 'select wm.settle_request(%L, %L)'; d jsonb; r jsonb; a public.auctions; begin
+  d := pg_temp.err(format(q, o, gen_random_uuid()));
+  assert d = '{"status":404,"error":"Enchère introuvable","message":"Enchère introuvable"}', coalesce(d::text, 'inconnue acceptée');
+  perform wm.cancel_auction(s, y);
+  assert pg_temp.err(format(q, o, y)) = d, 'retirée acceptée';
+  perform wm.place_bid(b, x, 10);
+  d := pg_temp.err(format(q, o, x));
+  assert d = '{"status":409,"error":"L''enchère n''est pas encore terminée","message":"L''enchère n''est pas encore terminée"}',
+    coalesce(d::text, 'non échue acceptée');
+  assert (select status = 'active' and settled_at is null from public.auctions where id = x), 'non échue réglée';
+  update public.auctions set end_at = now() - interval '1 minute' where id = x;
+  r := wm.settle_request(b, x, 'finaliser-1');
+  select * into a from public.auctions where id = x;
+  assert r = jsonb_build_object('auction', wm.auction_json(a) || '{"owned": true}') and a.status = 'settled_sold' and a.winner_id = b, r::text;
+  assert wm.settle_request(b, x, 'finaliser-1') = r, 'rejeu différent';
+  assert wm.settle_request(b, x) = r, 'rappel sans clé différent';
+  assert wm.settle_request(o, x) = jsonb_build_object('auction', r -> 'auction' || '{"owned": false}'), 'tiers';
+  assert (select count(*) from wm.wb_ledger where ref = 'settle:' || x) = 1, 'vendeur crédité plusieurs fois';
+  perform pg_temp.inv('settle_request');
+end $$;
