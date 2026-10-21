@@ -7,6 +7,13 @@ assertBrandSafe(brand.name, gateEnv()?.password);
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
+  // Profils du marché (M3-22, lib/market-cache.ts) : expire doit dépasser revalidate, stale ne descend pas sous 30 s (cacheLife.md).
+  // market : jamais servie au-delà de 3 s (D§8.4) ; auction sert aussi aux codes occupés rendus (P10).
+  cacheLife: {
+    market: { stale: 30, revalidate: 2, expire: 3 },
+    auction: { stale: 30, revalidate: 1, expire: 2 },
+    sales: { stale: 30, revalidate: 60, expire: 120 },
+  },
   partialPrefetching: true,
   poweredByHeader: false,
   turbopack: {

@@ -28,9 +28,12 @@ function parseDetail(details: string | null | undefined): Record<string, unknown
   }
 }
 
+// Verrou, délai, interblocage (P29), PostgREST sans connexion ou pool saturé : 503 BUSY ; aussi rendus par lib/market-cache.ts (P10).
+export const BUSY_CODES = new Set(['55P03', '57014', '40P01', 'PGRST000', 'PGRST003'])
+
 // Seul le détail JSON de wm.raise_err (P0001) est recopié ; tout le reste devient un 500 sans rien de Postgres.
 export function toHttpError(err: { code?: string; message?: string; details?: string | null }): HttpError {
-  if (err.code === '55P03' || err.code === '57014') return { ...fail(503, BUSY, 'BUSY'), retryAfter: 1 }
+  if (BUSY_CODES.has(err.code ?? '')) return { ...fail(503, BUSY, 'BUSY'), retryAfter: 1 }
   const detail = err.code === 'P0001' ? parseDetail(err.details) : null
   const { status, ...body } = detail ?? {}
   if (typeof status !== 'number' || !Number.isInteger(status) || status < 400 || status > 599) return fail(500, INTERNAL)
@@ -84,10 +87,13 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
   args?: (input: I, ctx: RouteCtx & { params: P }) => Record<string, unknown>
   // Remplace la RPC (cache de /api/cards) ; `fn` reste le nom journalisé.
   call?: (args: Record<string, unknown>) => Promise<RpcResult>
-  // Posés sur un 200 seulement.
+  // Statut d'un succès (201 pour une création), 200 par défaut.
+  status?: number
+  // Posés sur un succès seulement.
   headers?: Record<string, string>
 }): (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response> {
   const auth = opts.auth ?? true
+  const ok = opts.status ?? 200
 
   async function run(req: NextRequest, ctx: RouteCtx): Promise<Outcome> {
     if (auth) {
@@ -126,7 +132,7 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
     }
     const { data, error } = opts.call ? await opts.call(args) : await createAdminClient().schema('wm').rpc(opts.fn, args)
     if (error) return { ...toHttpError(error), pgCode: error.code }
-    return { status: 200, body: data ?? null }
+    return { status: ok, body: data ?? null }
   }
 
   return async (req, { params }) => {
@@ -155,7 +161,7 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
     }))
     // 429/503 sans échéance connue (un `pre` compris) : Retry-After: 1 quand même, les clients l'attendent.
     const retryAfter = out.retryAfter || (out.status === 429 || out.status === 503 ? 1 : undefined)
-    const headers = retryAfter ? { 'Retry-After': String(retryAfter) } : out.status === 200 ? opts.headers : undefined
+    const headers = retryAfter ? { 'Retry-After': String(retryAfter) } : out.status === ok ? opts.headers : undefined
     return Response.json(out.body, { status: out.status, headers })
   }
 }

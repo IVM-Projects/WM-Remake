@@ -83,7 +83,20 @@ describe('route()', () => {
     expect(res.headers.get('Retry-After')).toBe('3')
   })
 
-  it.each(['55P03', '57014'])('%s → 503 BUSY + Retry-After: 1', async (code) => {
+  it('status: 201 → 201 avec le corps de la RPC et les headers ; une erreur reste 409, sans headers', async () => {
+    signedIn()
+    const handler = route({ fn: 'fn', status: 201, headers: { 'Cache-Control': 'no-store' } })
+    const res = await handler(req({ method: 'POST' }), ctx)
+    expect(res.status).toBe(201)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    pgError({ code: 'P0001', details: '{"status":409,"error":"m","message":"m"}' })
+    const bad = await handler(req({ method: 'POST' }), ctx)
+    expect(bad.status).toBe(409)
+    expect(bad.headers.get('cache-control')).toBeNull()
+  })
+
+  it.each(['55P03', '57014', '40P01', 'PGRST000', 'PGRST003'])('%s → 503 BUSY + Retry-After: 1', async (code) => {
     signedIn()
     pgError({ code })
     const res = await route({ fn: 'fn' })(req(), ctx)
