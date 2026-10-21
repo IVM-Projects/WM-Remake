@@ -1,6 +1,6 @@
 # Journal des vérifications
 
-Projet Supabase de démo « WMR » (`iggurckxmoagsajzrnwd`, org « WM Prod », eu-west-1, Postgres 17.11). Vérifications faites via le MCP Supabase (`execute_sql`, `apply_migration`, `get_advisors`) et, pour PostgREST, par `curl` avec la clé publiable (rôle `anon`). Complété aux Tasks 14 (M0) et 16 (M1).
+Projet Supabase de démo « WMR » (`iggurckxmoagsajzrnwd`, org « WM Prod », eu-west-1, Postgres 17.11). Vérifications faites via le MCP Supabase (`execute_sql`, `apply_migration`, `get_advisors`) et, pour PostgREST, par `curl` avec la clé publiable (rôle `anon`). Complété aux Tasks 14 (M0), 16 (M1), 13 et 17 (M2).
 
 ## M0 — Task 12 : migrations, schéma exposé, conseillers
 
@@ -157,3 +157,44 @@ après fusion, finalisation et vacuum : base 702504012 octets, pic 954293324 oct
 | `nFull` | total du catalogue complet | 2 773 461 (ajusté par le contrôleur si le `counts.json` du run de la Task 9 diffère) | 2026-10-21 |
 | Taux | `rateFor` | régime établi : (350e6 − base) / 2 485 = 128 280 cartes ; pic : (450e6 − base) / 3 296 = 127 056 cartes, qui limite ; 127 056 / 2 773 461 = 0,0458 → `sample_rate` = 0,045 (vaut jusqu'à `nFull` = 2 823 465) | 2026-10-21 |
 | Projection de la démo | 0,045 × 2 773 461 ≈ 124 806 cartes | avec les constantes : 341,4 Mo établis, 442,6 Mo au pic ; avec les mesures brutes : 313,2 Mo établis, 318,3 Mo au pic du premier chargement, 414,4 Mo au pic d'un passage mensuel | 2026-10-21 |
+
+## M2 — livraison
+
+Dépôt `IVM-Projects/WM-Remake` (public, M2-R1), projet Supabase `iggurckxmoagsajzrnwd`, projet Vercel `wmr`, 2026-10-21. Ordre suivi (R32, M2-18) : secrets, migrations, fusion dans `develop`, chargement. Runs lus par le MCP GitHub et `gh run view` ; base par le MCP Supabase ; production par `curl`.
+
+### Runs Actions et CI
+
+| Élément | Méthode | Résultat | Date |
+|---|---|---|---|
+| Run `fixtures` | `catalog.yml` (`mode: fixtures`, `load: false`) sur 71d0db1, run 39571498963 | Vert en 80 min : dumps 3 min, pageviews 25 min, Cirrus 50 min, API 9 s. Artefact `fixtures-raw` (sha256 égal au condensé de l'API) → `catalog/fixtures` (commit 190804a) : 299 `page_id` (250 tirés par hachage, 10 de chacune des raretés L, UR, SR et R, 3 AdQ, 3 BA, 3 SVG), 1,9 Mo, README avec CC BY-SA 4.0 et la date de chaque source ; mois des vues 2026-09, instantané Cirrus 2026-10-18 | 2026-10-21 |
+| Run de construction seule | `catalog.yml` (`mode: sample`, `sample_rate` forcé à 0,09, `load: false`) sur 7398414, run 39597929105 | dumps 3 min (12:13–12:16Z) ; pageviews 25 min ; select 1 min ; `text` 21 parts vertes sur 21, ≈ 3 min chacune, 10 en parallèle, 9 min en tout (12:42–12:51Z), gardes de Cirrus non déclenchées (ratio `incoming_links` compris) ; wikidata 47 min (12:42–13:29Z) ; commons 57 min (12:42–13:39Z, 2 requêtes en vol, M2-R8) ; `compute` lancé à 13:39Z puis **annulé** à 14:19Z : redondant, le run réel recalcule tout et n'écrit rien avant `load`, et les caches sont par branche. Valide le pipeline à 0,09 ; le chargement prend 0,045 (M2-3), et la garde aurait refusé 0,09 avant l'envoi | 2026-10-21 |
+| CI de la branche | `ci.yml` (`workflow_dispatch`) | Vert sur d16e4db (39570856124), 8ff07e7 (39573186739, χ² sous `setseed` sur postgres:17), 5e29292 (39581904168), 7398414 (39597932919) et baafaf8 (39614871733, après la vague finale M2-R10). 79b46c6 (`??` → `||` et docs) n'a pas eu de run à lui : il est dans la fusion 0ac05cb | 2026-10-21 |
+| CI de `develop` | `ci.yml` sur les fusions | Vert sur fa5d3c8 (39571493436, fusion précoce M2-8) et 0ac05cb (39615754311, fusion du M2) | 2026-10-21 |
+| Suite locale | tête 79b46c6 | `npm test` : 39 fichiers, 379 tests ; `test:db` 17 fichiers, contrat 90 cas, E2E 127 tests (vague finale, baafaf8) | 2026-10-21 |
+
+### Démo
+
+Secrets posés par l'utilisateur vers 13:00Z ; migrations et contrôles de la base vers 13:25Z ; fusion à 14:18Z ; chargement lancé à 14:19Z.
+
+| Élément | Méthode | Résultat | Date |
+|---|---|---|---|
+| Secrets | étape humaine (écrans du Step 2) | GitHub : secrets du dépôt `SUPABASE_DB_URL` et `CRON_SECRET` ; Vercel : `CRON_SECRET` (Production). Vercel a aussi reçu `SUPABASE_DB_URL` (Production), que l'app ne lit pas : retrait conseillé | 2026-10-21 |
+| Propriétaire des objets `wm` | MCP, lecture seule | Schéma et fonctions `wm` à `postgres`, l'utilisateur du pooler (`postgres.<ref>`) : `EXECUTE` en propriétaire pour `psql` | 2026-10-21 |
+| Migrations `1500`, `1510`, `1520` | SQL Editor, un seul fichier en une transaction (préparé depuis 315e106, répété sur une base du banc d'avant le M2 : 0 → 9 fonctions, `COMMIT`) ; `1520` y est passée aussi, au lieu du MCP prévu | 9 fonctions listées. Historique ajouté par le MCP : versions `20261021131700`, `…01`, `…02` (`created_by = 'sql-editor'`) ; note de `sample_rate` mise au texte de 1fd31c4 | 2026-10-21 |
+| Configuration | `select key, value from wm.config where key in ('catalog_frozen', 'catalog_stats_frozen', 'sample_rate')` | `false`, `false`, `0.045` | 2026-10-21 |
+| Invariants et pool avant chargement | `wm.check_invariants()` ; requête de densité de la Task 10 ; comptes | `[]` ; 2 000 cartes, pool 2 000 dense (min 1, max n, distinct = n = `catalog_stats.n` par rareté : C 1 000, PC 600, R 280, SR 90, UR 24, L 6) ; `card_source` 0, stage 0 ; `cards_page(null)` total 2 000 ; `pick_card` répond ; taille 31 723 381 o | 2026-10-21 |
+| Cache de schéma de PostgREST | `curl` `POST /rest/v1/rpc/cards_overlay`, `cards_page_shared` et `card_credits`, `Content-Profile: wm`, clé publiable | 401 `42501` pour les trois : fonctions connues du cache, refusées à `anon` | 2026-10-21 |
+| Conseiller sécurité | `get_advisors` `security` | Rien de nouveau du M2. Restent : `search_path` de `wm_index.search_text` (R14), fonctions `SECURITY DEFINER` du miroir `public` (voulues, M1), protection des mots de passe divulgués désactivée (réglage Auth) | 2026-10-21 |
+| Fusion précoce (M2-8) | `git merge --no-ff` dans `develop` (fa5d3c8), build Vercel | `dpl_CkVo3qENkGkfCn2cXuCvmf1UGBNm` READY ; `/api/health` 200 (`db: ok`) ; seuls `lib/rarity.ts` et `HowItWorks.tsx` touchaient l'app | 2026-10-21 |
+| Fusion du M2 | `git merge --no-ff` dans `develop` (0ac05cb, 14:18Z), après la CI verte sur baafaf8 | `dpl_6bKr6XuD1hX1C7BuVUqQJs25bVWP` READY | 2026-10-21 |
+| `/api/health` et revalidation | `curl` | `/api/health` 200 ; `POST /api/cron/revalidate` sans en-tête → 401 `cron_unauthorized` (`CRON_SECRET` présent côté Vercel ; 503 voudrait dire absent) ; mauvais secret → 401 ; API des crédits et `/credits` derrière la porte (401 et 307 sans cookie de porte, voulu) | 2026-10-21 |
+| Run de chargement | `catalog.yml` (`mode: sample`, `target: free`, `load: true`, `sample_rate` lu dans `wm.config` = 0,045) sur `develop` 0ac05cb, run 39615766155, lancé à 14:19Z ; dumps verts en 3 min avec le User-Agent du projet | *(à relever après le run 39615766155)* : durée de chaque job | 2026-10-21 |
+| Essai `\copy` par le pooler | journal de `load` (`essai \copy : 10 lignes`) | *(à relever après le run 39615766155)* | … |
+| Résumé du chargement | journal de `load` : résumé de `catalog_finalize`, taille après chaque lot, `curl` de revalidation | *(à relever après le run 39615766155)* : `inserted`, `updated`, `unchanged`, `conflict`, `pool_out` (≥ 2 000 pour les cartes d'essai) ; taille maximale vue (≤ 450e6) ; revalidation 200 | … |
+| Parts de rareté | `wm.catalog_stats` contre `counts.json` de `catalog-out` (`gh run download -n catalog-out`) | *(à relever après le run 39615766155)* : écart en points par rareté (≤ 1) et écart relatif | … |
+| Pool et cartes d'essai | requête de densité de la Task 10 ; cartes d'essai au pool ; `count(*)` de `public.cards` ; copies du joueur de démo | *(à relever après le run 39615766155)* : pool dense, 0 carte d'essai au pool, `public.cards` = 2 000 + cartes chargées, 18 copies intactes | … |
+| Taille et disque | `SIZE_SQL` (MCP) ; taille du disque relevée par l'humain (**Project Settings → Database**) | *(à relever après le run 39615766155)* : taille ≤ 350e6, disque | … |
+| Licences | cartes du pool avec `image_url` sans ligne `wm.card_media` ; cartes du pool dont `card_media.license` est nul ; `wm.card_credits(<id d'une L avec image>)` | *(à relever après le run 39615766155)* : attendu 0, 0 et les quatre clés | … |
+| Idempotence | empreinte des ids (`md5(string_agg(card_id \|\| ':' \|\| page_id, ',' order by page_id))` de `wm.card_source`) et empreinte d'état (`public.cards`, `wm.card_media`, `wm.draw_pool`) avant et après une relance de `catalog.yml` avec `artifacts_run_id` = 39615766155 (job `load` seul) | *(à relever après le run 39615766155)* : attendu `unchanged` = lignes, `inserted: 0`, mêmes empreintes, `wm.check_invariants()` = `[]` | … |
+| χ² sur la démo (M2-11) | contenu de `supabase/tests/chi2.sql` et `select * from chi2` dans un seul `execute_sql`, sans `setseed` | *(à relever après le run 39615766155)* : attendu `chi2_rarity` < 20,515 (5 ddl) et `chi2_seq` < 43,82 (19 ddl), α = 0,001 | … |
+| Vérification visuelle (Step 7) | humain, derrière la porte : `/global-collection`, modale d'une carte avec image, `/credits` | *(à relever après le run 39615766155)* | … |
