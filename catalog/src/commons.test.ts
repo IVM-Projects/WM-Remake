@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -292,4 +293,14 @@ test('commonsCommand : pages selected seulement ; introuvable partout → ligne 
   const again = fixtureClient(served)
   expect(await commonsCommand({ dir, client: again.client })).toEqual({ done: 0, skipped: 1, finished: true })
   expect(again.urls).toEqual([])
+})
+
+// Sans réseau : --deadline-min 0 arrête avant la première requête.
+test('CLI commons : délai atteint → code 3 et message sur stderr', async () => {
+  const cli = fileURLToPath(new URL('./cli.ts', import.meta.url))
+  const dir = await work('cli')
+  const late = spawnSync(process.execPath, [cli, 'commons', '--dir', dir, '--deadline-min', '0', '--concurrency', '1'], { encoding: 'utf8' })
+  expect(late.status).toBe(3)
+  expect(late.stderr).toBe('Délai atteint : reprendre au prochain run\n')
+  expect(JSON.parse(late.stdout)).toEqual({ done: 0, skipped: 0, finished: false })
 })

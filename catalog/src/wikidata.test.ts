@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -126,4 +128,37 @@ test('wikidataCommand : délai dépassé après le premier lot → finished: fal
   const rows = await descTsv(dir)
   expect(new Set(rows.map((f) => f[0])).size).toBe(rows.length)
   expect(rows).toHaveLength(new Set(qids).size)
+})
+
+// Sans réseau : --deadline-min 0 arrête avant la première requête, et un desc.tsv complet saute tous les lots.
+test('CLI wikidata : délai atteint → code 3 ; tout déjà écrit → code 0 ; options validées', async () => {
+  const cli = fileURLToPath(new URL('./cli.ts', import.meta.url))
+  const run = (...args: string[]) => spawnSync(process.execPath, [cli, 'wikidata', ...args], { encoding: 'utf8' })
+  const dir = await work('cli')
+  const late = run('--dir', dir, '--deadline-min', '0', '--per-minute', '100', '--concurrency', '2')
+  expect(late.status).toBe(3)
+  expect(late.stderr).toBe('Délai atteint : reprendre au prochain run\n')
+  expect(JSON.parse(late.stdout)).toEqual({ done: 0, skipped: 0, finished: false })
+  expect(existsSync(join(dir, 'desc.tsv'))).toBe(false)
+
+  await writeTsv(join(dir, 'desc.tsv'), qids.map((q) => [q, null]))
+  const ok = run('--dir', dir)
+  expect(ok.stderr).toBe('')
+  expect(ok.status).toBe(0)
+  expect(JSON.parse(ok.stdout)).toEqual({ done: 0, skipped: 6, finished: true })
+
+  const cases: [string[], string][] = [
+    [[], 'Option --dir manquante'],
+    [['--dir', dir, '--per-minute', '0'], 'Option --per-minute invalide : 0'],
+    [['--dir', dir, '--per-minute', '1.5'], 'Option --per-minute invalide : 1.5'],
+    [['--dir', dir, '--concurrency', '0'], 'Option --concurrency invalide : 0'],
+    [['--dir', dir, '--concurrency', 'trois'], 'Option --concurrency invalide : trois'],
+    [['--dir', dir, '--deadline-min', '5h'], 'Option --deadline-min invalide : 5h'],
+  ]
+  for (const [args, message] of cases) {
+    const bad = run(...args)
+    expect(bad.status, message).toBe(1)
+    expect(bad.stderr.trim()).toBe(message)
+    expect(bad.stdout).toBe('')
+  }
 })

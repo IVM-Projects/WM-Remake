@@ -2,12 +2,14 @@
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { cirrusCommand, cirrusListing } from './cirrus.ts'
+import { commonsCommand } from './commons.ts'
 import { selectCommand } from './compute.ts'
 import type { Mode } from './compute.ts'
 import { fetchCommand, pickCommand, readmeCommand, sliceCirrusCommand, slicePageviewsCommand, sliceSqlCommand } from './fixtures.ts'
 import { createClient } from './http.ts'
 import { pageviewsCommand } from './pageviews.ts'
 import { dumpsCommand } from './sqldump.ts'
+import { wikidataCommand } from './wikidata.ts'
 
 type Values = Record<string, string | undefined>
 
@@ -30,6 +32,20 @@ function matching(v: Values, name: string, format: RegExp): string {
   return value
 }
 
+// Entier ≥ 1, `fallback` si l'option manque.
+function positive(v: Values, name: string, fallback: number): number {
+  const value = count(v, name) ?? fallback
+  if (value < 1) throw new Error(`Option --${name} invalide : ${v[name]}`)
+  return value
+}
+
+// Commandes reprenables : débit et parallélisme du client (P16 : le job les abaisse), délai sous le timeout du job.
+function resumable(v: Values) {
+  const dir = need(v, 'dir')
+  const client = createClient({ perMinute: positive(v, 'per-minute', 200), concurrency: positive(v, 'concurrency', 3) })
+  return { dir, client, deadlineMin: count(v, 'deadline-min') ?? 330 }
+}
+
 function mode(v: Values): Mode {
   const value = need(v, 'mode')
   if (value !== 'full' && value !== 'sample') throw new Error(`Option --mode invalide : ${value} (full, sample)`)
@@ -47,6 +63,7 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
     })()
     return cirrusCommand({ ...o, input })
   },
+  commons: (v) => commonsCommand(resumable(v)),
   dumps: (v) => dumpsCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir') }),
   pageviews: (v) => {
     // Options validées avant de lire stdin : sinon une option fausse attend la fin du flux.
@@ -60,6 +77,7 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
     if (!/^\d+(\.\d+)?$/.test(rate) || !(Number(rate) > 0)) throw new Error(`Option --rate invalide : ${rate}`)
     return selectCommand({ dir: need(v, 'dir'), mode: m, rate: Number(rate) })
   },
+  wikidata: (v) => wikidataCommand(resumable(v)),
   'fixtures pick': (v) => pickCommand({ dir: need(v, 'dir'), fixtures: need(v, 'fixtures') }),
   'fixtures slice-sql': (v) =>
     sliceSqlCommand({ page: need(v, 'page'), props: need(v, 'props'), dir: need(v, 'dir'), fixtures: need(v, 'fixtures') }),
@@ -82,6 +100,7 @@ try {
       page: { type: 'string' }, props: { type: 'string' }, dir: { type: 'string' }, 'min-lines': { type: 'string' },
       mode: { type: 'string' }, rate: { type: 'string' }, fixtures: { type: 'string' }, month: { type: 'string' },
       'cirrus-date': { type: 'string' }, 'dump-date': { type: 'string' }, part: { type: 'string' },
+      'per-minute': { type: 'string' }, concurrency: { type: 'string' }, 'deadline-min': { type: 'string' },
     },
   })
   const name = positionals.join(' ') // `fixtures pick` : commande en deux mots
@@ -89,6 +108,11 @@ try {
   const result = await commands[name](values)
   // Rien sur stdout pour une commande sans résultat : elle peut écrire son flux sur stdout.
   if (result !== undefined) console.log(JSON.stringify(result))
+  // Commande reprenable coupée par --deadline-min : code 3, le run suivant reprend depuis le cache de catalog.yml.
+  if ((result as { finished?: boolean } | undefined)?.finished === false) {
+    console.error('Délai atteint : reprendre au prochain run')
+    process.exit(3)
+  }
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err))
   // Arrêt net : les requêtes encore en file ne doivent pas continuer après l'échec.
