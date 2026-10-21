@@ -56,8 +56,8 @@ test('les mêmes tuples sur une seule ligne, et gzippés, donnent le même résu
 })
 
 test('échappements MySQL dans une chaîne', async () => {
-  const [row] = await tuples(dump('page', PAGE_CREATE, [String.raw`(5,0,'a\\b\"c\nd\0',0,0,0.5,'20260930180248',NULL,1,10,'wikitext',NULL)`]))
-  expect(row[2]).toBe('a\\b"c\nd\0')
+  const [row] = await tuples(dump('page', PAGE_CREATE, [String.raw`(5,0,'a\\b\"c\nd\0e\rf\Zg',0,0,0.5,'20260930180248',NULL,1,10,'wikitext',NULL)`]))
+  expect(row[2]).toBe('a\\b"c\nd\0e\rf\x1ag')
 })
 
 test('format inattendu : colonnes, nombre de valeurs, table absente, dump tronqué', async () => {

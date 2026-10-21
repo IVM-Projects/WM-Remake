@@ -125,7 +125,7 @@ export async function fetchRaw(client: Client, urls: string[]): Promise<Record<s
   return Object.fromEntries(urls.map((url, i) => [url, bodies[i]]))
 }
 
-export function fixturesReadme(meta: { runDate: string; sources: { name: string; url: string; date: string }[] }): string {
+export function fixturesReadme(meta: { runDate: string; month: string; sources: { name: string; url: string; date: string }[] }): string {
   return [
     '# Fixtures du catalogue',
     '',
@@ -141,6 +141,7 @@ export function fixturesReadme(meta: { runDate: string; sources: { name: string;
     '',
     "- Textes de Wikipédia (`page.sql`, `page_props.sql`, `cirrus.ndjson`, `extracts.json`) : contributeurs de Wikipédia, sous licence CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/deed.fr) ; l'historique de chaque article sur fr.wikipedia.org nomme ses auteurs.",
     '- Descriptions de Wikidata (`wikidata.json`) : CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/deed.fr).',
+    `- Vues (\`pageviews.txt\`) : fichier mensuel \`user\` de \`pageview_complete\` du mois ${meta.month} (https://dumps.wikimedia.org/other/pageview_complete/monthly/AAAA/AAAA-MM/pageviews-AAAAMM-user.bz2), sous CC0 1.0 comme tous les jeux de données Analytics de Wikimedia (https://dumps.wikimedia.org/other/pageview_complete/readme.html).`,
     '- Métadonnées des images (`commons.json`) : sous la licence de chaque fichier, donnée dans la réponse elle-même (`LicenseShortName`, `LicenseUrl`).',
     '',
     '## Contenu de `raw/`',
@@ -253,5 +254,5 @@ export async function readmeCommand(o: { fixtures: string; month: string; cirrus
     { name: 'Wikipédia en français (`imageinfo` des fichiers locaux, TextExtracts)', url: 'https://fr.wikipedia.org/w/api.php', date: runDate },
   ]
   await writeFile(join(o.fixtures, 'raw', 'meta.json'), `${JSON.stringify({ run_date: runDate, month: o.month, cirrus_date: cirrusDate }, null, 2)}\n`)
-  await writeFile(join(o.fixtures, 'README.md'), fixturesReadme({ runDate, sources }))
+  await writeFile(join(o.fixtures, 'README.md'), fixturesReadme({ runDate, month: o.month, sources }))
 }

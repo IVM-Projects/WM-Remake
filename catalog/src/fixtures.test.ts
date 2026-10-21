@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -57,9 +58,10 @@ test('sliceSql : tuples gardés relus à l’identique, en-tête CREATE TABLE in
   expect(slice.text).toContain('CREATE TABLE `page` (')
   expect(await Array.fromAsync(sqlTuples(lines(slice.text), 'page'))).toEqual(all.filter((t) => t[0] === 16 || t[0] === 40))
   // Échappements MySQL réécrits : la chaîne relue est la même.
-  const odd = String.raw`(5,0,'a\\b\"c\nd\0\'e',0,0,0.5,'20260930180248',NULL,1,10,'wikitext',NULL)`
+  const odd = String.raw`(5,0,'a\\b\"c\nd\0\'e\rf\Zg',0,0,0.5,'20260930180248',NULL,1,10,'wikitext',NULL)`
   const oddSlice = await sliceSql(lines(dump('page', PAGE_CREATE, [odd])), 'page', new Set([5]))
-  expect((await Array.fromAsync(sqlTuples(lines(oddSlice.text), 'page')))[0][2]).toBe('a\\b"c\nd\0\'e')
+  expect(oddSlice.text).toContain(String.raw`'a\\b\"c\nd\0\'e\rf\Zg'`)
+  expect((await Array.fromAsync(sqlTuples(lines(oddSlice.text), 'page')))[0][2]).toBe('a\\b"c\nd\0\'e\rf\x1ag')
 })
 
 test('sliceSql : redirections, autres espaces et homonymies en plus ; l’homonymie reste exclue par page_props', async () => {
@@ -177,9 +179,10 @@ test('fetch : Règles de lots sur toutes les pages choisies, corps rangés par U
 })
 
 test('README et meta.json : sources datées, licences, mois en YYYY-MM', async () => {
-  const text = fixturesReadme({ runDate: '2026-10-22', sources: [{ name: 'Dump `page`', url: 'https://dumps.wikimedia.org/x', date: '2026-10-01' }] })
+  const text = fixturesReadme({ runDate: '2026-10-22', month: '2026-09', sources: [{ name: 'Dump `page`', url: 'https://dumps.wikimedia.org/x', date: '2026-10-01' }] })
   expect(text).toContain('| Dump `page` | https://dumps.wikimedia.org/x | 2026-10-01 |')
   for (const s of ['2026-10-22', 'CC BY-SA 4.0', 'CC0', 'licence de chaque fichier', '`source_text`']) expect(text).toContain(s)
+  expect(text).toMatch(/^- Vues \(`pageviews.txt`\) : .* du mois 2026-09 .* CC0 1\.0 /m)
 
   const fixtures = join(dir, 'readme')
   await mkdir(join(fixtures, 'raw'), { recursive: true })
@@ -190,4 +193,14 @@ test('README et meta.json : sources datées, licences, mois en YYYY-MM', async (
   expect(readme).toContain('https://dumps.wikimedia.org/other/pageview_complete/monthly/2026/2026-09/pageviews-202609-user.bz2 | 2026-09 |')
   expect(readme).toContain('https://dumps.wikimedia.org/other/cirrus_search_index/20261018/index_name%3Dfrwiki_content/ | 2026-10-18 |')
   expect(readme).toContain('https://dumps.wikimedia.org/frwiki/latest/frwiki-latest-page.sql.gz | 2026-10-01 |')
+})
+
+test('CLI fixtures readme : --month hors YYYY-MM (mois 01 à 12) refusé', () => {
+  const cli = new URL('./cli.ts', import.meta.url).pathname
+  for (const month of ['2026-13', '2026-00', '2026-9']) {
+    const args = ['fixtures', 'readme', '--fixtures', dir, '--month', month, '--cirrus-date', '20261018', '--dump-date', '2026-10-01']
+    const run = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' })
+    expect(run.status).toBe(1)
+    expect(run.stderr.trim()).toBe(`Option --month invalide : ${month}`)
+  }
 })

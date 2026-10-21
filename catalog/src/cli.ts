@@ -54,7 +54,7 @@ const commands: Record<string, (v: Values) => Promise<unknown>> = {
   'fixtures readme': (v) =>
     readmeCommand({
       fixtures: need(v, 'fixtures'),
-      month: matching(v, 'month', /^\d{4}-\d{2}$/),
+      month: matching(v, 'month', /^\d{4}-(0[1-9]|1[0-2])$/),
       cirrusDate: matching(v, 'cirrus-date', /^\d{8}$/),
       dumpDate: matching(v, 'dump-date', /^\d{4}-\d{2}-\d{2}$/),
     }),
