@@ -69,6 +69,19 @@ do $$ declare a uuid := tests.make_user('Lock1'); b uuid := tests.make_user('Loc
   assert (select count(*) from wm.user_state where user_id in (a, b)) = 2, 'user_state non créés';
 end $$;
 
+-- lock_timeout de 2 s (C7, M3-12, P9) en tête des six fonctions qui écrivent de l'argent ou des copies, avant leur premier verrou (ligne
+-- d'enchère, lock_users, seller_auction) : rien d'autre ne le fige, les bloqueurs de 16_market_concurrency tenant au plus 1 s.
+do $$ declare bad text; begin
+  select string_agg(f, ', ') into bad from unnest(array['create_auction', 'place_bid', 'cancel_auction', 'reprice_auction', 'settle_auction',
+    'settle_due_auctions']) f, lateral (select prosrc s from pg_proc where oid = to_regproc('wm.' || f)) p,
+    lateral (select strpos(s, 'perform set_config(''lock_timeout'', ''2s'', true);') t,
+      (select min(i) from unnest(array[strpos(s, 'for update'), strpos(s, 'wm.lock_users('), strpos(s, 'wm.seller_auction(')]) i where i > 0) l) x
+  where not (t > 0 and t < l);
+  assert bad is null, 'lock_timeout absent ou posé après un verrou : ' || bad;
+  assert (select count(*) from unnest(array['create_auction', 'place_bid', 'cancel_auction', 'reprice_auction', 'settle_auction',
+    'settle_due_auctions']) f where to_regproc('wm.' || f) is not null) = 6, 'fonction absente';
+end $$;
+
 -- market_guard : vérification humaine absente ou échue, rafale de mises, de mises en vente, ou de paquets (P3) → même 403.
 do $$ declare u uuid := tests.make_user('Guard1'); v uuid := pg_temp.player('Guard2'); d jsonb;
   g text := 'select wm.market_guard(%L, %L)'; begin
@@ -745,7 +758,8 @@ do $$ declare s uuid := pg_temp.player('Lot1', 0, true); b uuid := pg_temp.playe
 end $$;
 
 -- settle_request (P8, P11) : inconnue ou retirée → 404 ; non échue → 409 ; échue → {auction} réglée, owned true pour le gagnant, false pour un
--- tiers ; même clé → même réponse ; sans clé → même réponse ; un seul crédit du vendeur.
+-- tiers ; un seul crédit du vendeur. Copie gagnée partie ensuite (défausse, revente) : la même clé rend la réponse stockée (owned true),
+-- un appel sans clé l'état d'aujourd'hui (owned false) ; le règlement étant idempotent, seul ce changement d'état éprouve la clé.
 do $$ declare s uuid := pg_temp.player('Finaliser1'); b uuid := pg_temp.player('Finaliser2', 100); o uuid := pg_temp.player('Finaliser3');
   c uuid := pg_temp.card('Finaliser marché'); x uuid := pg_temp.listing(s, c); y uuid := pg_temp.listing(s, c);
   q text := 'select wm.settle_request(%L, %L)'; d jsonb; r jsonb; a public.auctions; begin
@@ -762,9 +776,11 @@ do $$ declare s uuid := pg_temp.player('Finaliser1'); b uuid := pg_temp.player('
   r := wm.settle_request(b, x, 'finaliser-1');
   select * into a from public.auctions where id = x;
   assert r = jsonb_build_object('auction', wm.auction_json(a) || '{"owned": true}') and a.status = 'settled_sold' and a.winner_id = b, r::text;
-  assert wm.settle_request(b, x, 'finaliser-1') = r, 'rejeu différent';
   assert wm.settle_request(b, x) = r, 'rappel sans clé différent';
   assert wm.settle_request(o, x) = jsonb_build_object('auction', r -> 'auction' || '{"owned": false}'), 'tiers';
+  delete from public.user_cards where user_id = b and card_id = c;
+  assert wm.settle_request(b, x, 'finaliser-1') = r, 'rejeu différent de la réponse stockée';
+  assert wm.settle_request(b, x) = jsonb_build_object('auction', r -> 'auction' || '{"owned": false}'), 'rappel sans clé après la copie partie';
   assert (select count(*) from wm.wb_ledger where ref = 'settle:' || x) = 1, 'vendeur crédité plusieurs fois';
   perform pg_temp.inv('settle_request');
 end $$;

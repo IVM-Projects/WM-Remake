@@ -321,14 +321,18 @@ export const repriceAuction: RouteSpec = {
       },
     },
     {
-      name: 'base 10, 31 min passées sur 60 : 6 → 400 « … entre 1 et 5 wikibidous » ; 5 → 200 ; second appel → 409 « déjà baissé »',
+      name: 'base 10, 31 min passées sur 60 : 6 → 400 « … entre 1 et 5 wikibidous » ; 5 → 200, rejoué avec la même Idempotency-Key → même corps ; sans clé → 409 « déjà baissé »',
       run: async (env) => {
         const s = seller(env)
         const id = listed(env, s.uid, s.copies[0], 10, 60)
         sql(env, `update public.auctions set created_at = created_at - interval '31 minutes' where id = :'id'`, { id })
-        const reprice = (n: number) => send(env, 'POST', at(id, 'reprice'), s.uid, { new_base_amount: n })
+        const reprice = (n: number, headers?: Record<string, string>) => send(env, 'POST', at(id, 'reprice'), s.uid, { new_base_amount: n }, headers)
+        const Repriced = z.object({ ok: z.literal(true), base_amount: z.literal(5), base_repriced_at: Iso })
         await refused(await reprice(6), 400, 'Le nouveau prix doit être compris entre 1 et 5 wikibidous', 'invalid_request')
-        await ok(await reprice(5), z.object({ ok: z.literal(true), base_amount: z.literal(5), base_repriced_at: Iso }))
+        const key = idem()
+        const done = await ok(await reprice(5, key), Repriced)
+        // Sans la clé transmise à wm.reprice_auction, la relance d'une baisse à l'issue inconnue (auction-client.tsx) recevrait ce 409.
+        assert.deepEqual(await ok(await reprice(5, key), Repriced), done)
         await refused(await reprice(4), 409, 'Le prix a déjà été baissé une fois')
       },
     },
