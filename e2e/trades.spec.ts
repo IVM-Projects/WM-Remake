@@ -786,7 +786,7 @@ test('?with= d\'un non-ami → « Vous devez être amis pour échanger » et « 
   await expect(page.getByRole('button', { name: 'Envoyer la contre-offre' })).toHaveCount(0)
 })
 
-test('wikibidous : chiffres seuls, 5 au plus ; « 10 000 » collé (espace fine de formatInt) → 10000 ; 10 001 → l\'alerte « Entre 0 et 10 000 wikibidous par côté »', async ({ page, login }) => {
+test('wikibidous : chiffres seuls, 5 au plus ; « 10 000 » collé (espace fine de formatInt) → 10000, « abc » collé sur 300 → 300, « 000 » après « 10 » → 10000 ; 10 001 → l\'alerte « Entre 0 et 10 000 wikibidous par côté »', async ({ page, login }) => {
   const { other, mine } = await friends(login, 1)
   await open(page, `/trades/new?with=${other.uid}`)
   const wb = page.getByLabel('Wikibidous offerts')
@@ -795,6 +795,17 @@ test('wikibidous : chiffres seuls, 5 au plus ; « 10 000 » collé (espace fine 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.evaluate(() => navigator.clipboard.writeText('10\u202f000'))
   await wb.focus()
+  await page.keyboard.press('ControlOrMeta+V')
+  await expect(wb).toHaveValue('10000')
+  // Collage à la sélection : sans chiffre, rien ne change ; après « 10 », « 000 » complète le montant.
+  await wb.fill('300')
+  await page.evaluate(() => navigator.clipboard.writeText('abc'))
+  await wb.press('ControlOrMeta+A')
+  await page.keyboard.press('ControlOrMeta+V')
+  await expect(wb).toHaveValue('300')
+  await wb.fill('10')
+  await wb.press('End')
+  await page.evaluate(() => navigator.clipboard.writeText('000'))
   await page.keyboard.press('ControlOrMeta+V')
   await expect(wb).toHaveValue('10000')
   await wb.fill('')
@@ -810,25 +821,35 @@ test('clé gardée (M4-8) : POST passé au serveur puis 503, l\'incertitude dite
   const { me, other, mine } = await friends(login, 1)
   const keys: string[] = []
   page.on('request', (r) => { if (posts(r)) keys.push(r.headers()['idempotency-key'] ?? '') })
-  await routeOnce(page, '**/api/trades', async (r) => {
+  // Le POST atteint le serveur et s'y fait (puis rejoue sa réponse) ; sa réponse est remplacée par un 503.
+  const lose = () => routeOnce(page, '**/api/trades', async (r) => {
     await r.fetch()
     await r.fulfill({ status: 503, body: '' })
   }, (r) => r.request().method() === 'POST')
+  const alert = page.locator('main').getByRole('alert')
+  await lose()
   await open(page, `/trades/new?with=${other.uid}`)
-  await qty(offerPanel(page), mine[0]).fill('1')
+  const input = qty(offerPanel(page), mine[0])
+  await input.fill('1')
   const send = page.getByRole('button', { name: 'Proposer l\'échange' })
   await send.click()
-  await expect(page.locator('main').getByRole('alert')).toHaveText(UNSURE_SEND)
+  await expect(alert).toHaveText(UNSURE_SEND)
   await expect(send).not.toHaveAttribute('aria-disabled', 'true')
   // Une modification fait un autre corps, donc une autre clé : la promesse « pas créé deux fois » ne tient plus, l'alerte part.
+  await input.fill('0')
+  await expect(alert).toHaveCount(0)
+  // Revenu au même corps : la même intention, sa clé gardée ; la réponse rejouée est encore perdue.
+  await input.fill('1')
+  await lose()
+  await send.click()
+  await expect(alert).toHaveText(UNSURE_SEND)
   await page.getByLabel('Wikibidous offerts').fill('5')
-  await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
-  // Revenu au même corps : la même intention, sa clé gardée.
+  await expect(alert).toHaveCount(0)
   await page.getByLabel('Wikibidous offerts').fill('')
   await send.click()
   await expect(page).toHaveURL(TRADE_URL)
-  expect(keys).toHaveLength(2)
-  expect(keys[1]).toBe(keys[0])
+  expect(keys).toHaveLength(3)
+  expect(new Set(keys).size).toBe(1)
   expect(sql(`select count(*) from public.trades where initiator_id = :'me'`, { me: me.uid })).toBe('1')
 })
 

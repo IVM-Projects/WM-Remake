@@ -94,6 +94,8 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
   // Une page lue : card_id et titres retenus ; un choix au-delà de sa pile (parent prérempli, pile réduite depuis) ramené à son count.
   const reveal = (w: Which, items: Copy[]) => {
     learn(Object.fromEntries(items.map((c) => [c.id, c.card_id])), titles(items))
+    // Un choix ramené change le corps, donc la clé : l'alerte d'un envoi incertain (« pas créé deux fois ») ne vaut plus.
+    if (items.some((c) => (picks[w][c.id] ?? 0) > c.count)) setError(null)
     setPicks((p) => ({ ...p, [w]: { ...p[w], ...Object.fromEntries(items.filter((c) => (p[w][c.id] ?? 0) > c.count).map((c) => [c.id, c.count])) } }))
   }
 
@@ -354,10 +356,14 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
                   placeholder="0"
                   value={wb[w]}
                   onChange={(e) => setAmount(w, e.target.value)}
-                  // maxLength couperait « 10 000 » collé avant le retrait de l'espace : les chiffres d'abord, puis les 5 premiers.
+                  // maxLength couperait « 10 000 » collé avant le retrait de l'espace : le texte collé à la sélection, les chiffres seuls, puis les
+                  // 5 premiers ; un texte sans chiffre ne change rien.
                   onPaste={(e) => {
                     e.preventDefault()
-                    setAmount(w, e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 5))
+                    const t = e.currentTarget
+                    const clip = e.clipboardData.getData('text')
+                    if (!/\d/.test(clip)) return
+                    setAmount(w, (t.value.slice(0, t.selectionStart ?? 0) + clip + t.value.slice(t.selectionEnd ?? t.value.length)).replace(/\D/g, '').slice(0, 5))
                   }}
                   className={`${field} w-32`}
                 />
