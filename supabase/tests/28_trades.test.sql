@@ -78,7 +78,8 @@ do $$ declare bad text; begin
 end $$;
 
 -- lock_timeout de 2 s (P5, M4-2) avant le premier verrou (for update, lock_users, lock_user) ; chaque tâche ajoute ses fonctions.
-do $$ declare fs text[] := array['create_auction', 'bulk_discard']; bad text; begin
+do $$ declare fs text[] := array['create_auction', 'bulk_discard', 'friend_request', 'friend_action', 'friend_remove', 'friend_accept_all'];
+  bad text; begin
   select string_agg(f, ', ') into bad from unnest(fs) f, lateral (select prosrc s from pg_proc where oid = to_regproc('wm.' || f)) p,
     lateral (select strpos(s, 'perform set_config(''lock_timeout'', ''2s'', true);') t,
       (select min(i) from unnest(array[strpos(s, 'for update'), strpos(s, 'wm.lock_users('), strpos(s, 'wm.lock_user(')]) i where i > 0) l) x
@@ -200,4 +201,212 @@ do $$ declare a uuid := pg_temp.player('Argent1'); b uuid := pg_temp.player('Arg
     wm.check_invariants()::text;
   perform wm.wallet_apply(b, -5, 'trade', 'trade:' || t);
   perform pg_temp.inv('trade_money');
+end $$;
+
+-- Amitiés (1710, M4-11, M4-12, P4, P6).
+-- friend_request : demande en attente, friendship_json, notification pour le destinataire ; doublon dans un sens ou dans l'autre → 409
+-- REQUEST_PENDING sans acceptation implicite ; soi-même → 400 ; inconnu → 404 ; même clé → même réponse, une ligne, une notification.
+do $$ declare a uuid := pg_temp.player('AmiA1'); b uuid := pg_temp.player('AmiB1'); c uuid := pg_temp.player('AmiC1'); r jsonb; f uuid;
+  q text := 'select wm.friend_request(%L, %L)';
+  d jsonb := '{"status":409,"code":"REQUEST_PENDING","error":"Une demande d''ami est déjà en attente","message":"Une demande d''ami est déjà en attente"}';
+  begin
+  r := wm.friend_request(a, b);
+  f := (r #>> '{friendship,id}')::uuid;
+  assert r -> 'friendship' = (select to_jsonb(x) from public.friendships x where id = f) || jsonb_build_object(
+    'requester', jsonb_build_object('id', a, 'username', 'AmiA1', 'avatar_url', null),
+    'addressee', jsonb_build_object('id', b, 'username', 'AmiB1', 'avatar_url', null)), r::text;
+  assert r #>> '{friendship,status}' = 'pending' and r #>> '{friendship,requester_id}' = a::text, r::text;
+  assert (select array_agg(data) from public.notifications where user_id = b and type = 'friend_request')
+    = array[jsonb_build_object('friendship_id', f, 'user_id', a, 'username', 'AmiA1')], 'notification de demande';
+  assert not exists (select from public.notifications where user_id = a), 'demandeur notifié';
+  assert pg_temp.err(format(q, a, b)) = d, coalesce(pg_temp.err(format(q, a, b))::text, 'accepté');
+  assert pg_temp.err(format(q, b, a)) = d, 'demande croisée';
+  assert (select status from public.friendships where id = f) = 'pending', 'acceptation implicite';
+  assert pg_temp.err(format(q, a, a)) = '{"status":400,"code":"invalid_request","error":"Tu ne peux pas t''ajouter toi-même en ami","message":"Tu ne peux pas t''ajouter toi-même en ami"}',
+    'soi-même';
+  assert pg_temp.err(format(q, a, gen_random_uuid())) = '{"status":404,"error":"Joueur introuvable","message":"Joueur introuvable"}', 'inconnu';
+  r := wm.friend_request(a, c, 'k-req');
+  assert wm.friend_request(a, c, 'k-req') = r, 'rejeu';
+  assert (select count(*) from public.friendships where addressee_id = c) = 1 and (select count(*) from public.notifications where user_id = c) = 1,
+    'effet rejoué';
+end $$;
+
+-- friend_action : seul le destinataire accepte ou refuse ; acceptation → friendship_json et notification pour le demandeur ; amis → 409 ;
+-- étranger → 404 ; action inconnue → 400. Refus (M4-11) : la ligne disparaît, sans notification, le rejeu rend la réponse stockée, et une
+-- nouvelle demande passe.
+do $$ declare a uuid := pg_temp.player('AmiA2'); b uuid := pg_temp.player('AmiB2'); carol uuid := pg_temp.player('AmiCarol2');
+  c uuid := pg_temp.player('AmiC2'); d uuid := pg_temp.player('AmiD2'); f uuid; g uuid; r jsonb; q text := 'select wm.friend_action(%L, %L, %L)';
+  af jsonb := '{"status":409,"code":"ALREADY_FRIENDS","error":"Vous êtes déjà amis","message":"Vous êtes déjà amis"}';
+  nf jsonb := '{"status":404,"error":"Demande d''ami introuvable","message":"Demande d''ami introuvable"}';
+  begin
+  f := (wm.friend_request(a, b) #>> '{friendship,id}')::uuid;
+  assert pg_temp.err(format(q, a, f, 'accept')) = '{"status":403,"code":"FORBIDDEN","error":"Seul le destinataire peut accepter cette demande","message":"Seul le destinataire peut accepter cette demande"}',
+    coalesce(pg_temp.err(format(q, a, f, 'accept'))::text, 'accepté');
+  assert pg_temp.err(format(q, a, f, 'decline')) = '{"status":403,"code":"FORBIDDEN","error":"Seul le destinataire peut refuser cette demande","message":"Seul le destinataire peut refuser cette demande"}',
+    coalesce(pg_temp.err(format(q, a, f, 'decline'))::text, 'refusé');
+  assert pg_temp.err(format(q, carol, f, 'accept')) = nf and pg_temp.err(format(q, b, gen_random_uuid(), 'accept')) = nf, 'étranger ou inconnue';
+  assert pg_temp.err(format(q, b, f, 'xyz')) = '{"status":400,"code":"invalid_request","error":"Action inconnue","message":"Action inconnue"}', 'xyz';
+  r := wm.friend_action(b, f, 'accept');
+  assert r = jsonb_build_object('friendship', (select wm.friendship_json(x) from public.friendships x where id = f))
+    and r #>> '{friendship,status}' = 'accepted', r::text;
+  assert (select array_agg(data) from public.notifications where user_id = a and type = 'friend_accepted')
+    = array[jsonb_build_object('friendship_id', f, 'user_id', b, 'username', 'AmiB2')], 'notification d''acceptation';
+  assert wm.are_friends(a, b) and wm.are_friends(b, a) and not wm.are_friends(a, carol), 'are_friends';
+  assert pg_temp.err(format(q, b, f, 'accept')) = af, 'acceptée deux fois';
+  assert pg_temp.err(format('select wm.friend_request(%L, %L)', a, b)) = af, 'demande entre amis';
+  g := (wm.friend_request(c, d) #>> '{friendship,id}')::uuid;
+  assert not wm.are_friends(c, d), 'demande en attente vue comme amitié';
+  assert wm.friend_action(d, g, 'decline', 'k-dec') = '{"ok":true}', 'refus';
+  assert wm.friend_action(d, g, 'decline', 'k-dec') = '{"ok":true}', 'refus rejoué';
+  assert not exists (select from public.friendships where id = g), 'demande refusée encore là';
+  assert not exists (select from public.notifications where user_id = c), 'refus notifié';
+  assert wm.friend_request(c, d) #>> '{friendship,status}' = 'pending', 'nouvelle demande après un refus';
+end $$;
+
+-- friends_list : toutes mes lignes (amis, demandes envoyées et reçues), created_at desc puis id ; jamais celles des autres.
+do $$ declare a uuid := pg_temp.player('Liste1'); b uuid := pg_temp.player('Liste2'); c uuid := pg_temp.player('Liste3');
+  d uuid := pg_temp.player('Liste4'); begin
+  perform pg_temp.friends(a, b);
+  perform wm.friend_request(a, c);
+  perform wm.friend_request(d, a);
+  perform wm.friend_request(b, c);
+  update public.friendships set created_at = now() - interval '1 day' where requester_id = d and addressee_id = a;
+  assert wm.friends_list(a) = jsonb_build_object('friendships', (select jsonb_agg(wm.friendship_json(f) order by f.created_at desc, f.id)
+    from public.friendships f where a in (f.requester_id, f.addressee_id))), wm.friends_list(a)::text;
+  assert jsonb_path_query_array(wm.friends_list(a) -> 'friendships', '$[*].requester.username') -> -1 = '"Liste4"', 'ordre created_at desc';
+  assert jsonb_array_length(wm.friends_list(a) -> 'friendships') = 3, 'lignes d''un autre';
+end $$;
+
+-- Limite (M4-11), friend_limit à 1 : demande, acceptation (les deux joueurs) et tout accepter (le lot entier) → 409, rien ne change.
+do $$ declare a uuid := pg_temp.player('Limite1'); b uuid := pg_temp.player('Limite2'); e uuid := pg_temp.player('Limite3');
+  g uuid := pg_temp.player('Limite4'); h uuid := pg_temp.player('Limite5'); k uuid := pg_temp.player('Limite6'); f uuid; fb uuid;
+  d jsonb := '{"status":409,"code":"FRIEND_LIMIT","error":"Limite d''amis atteinte (1)","message":"Limite d''amis atteinte (1)"}';
+  begin
+  perform pg_temp.friends(a, b);
+  fb := (wm.friend_request(b, e) #>> '{friendship,id}')::uuid;
+  update wm.config set value = '1' where key = 'friend_limit';
+  assert pg_temp.err(format('select wm.friend_request(%L, %L)', a, e)) = d,
+    coalesce(pg_temp.err(format('select wm.friend_request(%L, %L)', a, e))::text, 'accepté');
+  f := (wm.friend_request(g, a) #>> '{friendship,id}')::uuid;
+  perform wm.friend_request(h, a);
+  assert pg_temp.err(format('select wm.friend_action(%L, %L, ''accept'')', a, f)) = d, 'acceptation au-delà de la limite';
+  assert pg_temp.err(format('select wm.friend_accept_all(%L)', a)) = d, 'tout accepter au-delà de la limite';
+  assert (select array_agg(status::text) from public.friendships where addressee_id = a) = '{pending,pending}', 'demandes acceptées';
+  -- Le demandeur est à sa limite.
+  assert pg_temp.err(format('select wm.friend_action(%L, %L, ''accept'')', e, fb)) = d, 'demandeur à sa limite';
+  assert pg_temp.err(format('select wm.friend_accept_all(%L)', e)) = d, 'tout accepter, demandeur à sa limite';
+  -- Le lot entier compte : 0 ami et deux demandes pour une limite de 1.
+  perform wm.friend_request(g, k);
+  perform wm.friend_request(h, k);
+  assert pg_temp.err(format('select wm.friend_accept_all(%L)', k)) = d, 'lot entier';
+  assert not exists (select from public.friendships where status = 'accepted' and (addressee_id in (a, e, k))), 'acceptation passée';
+  update wm.config set value = 'null'::jsonb where key = 'friend_limit';
+  assert wm.friend_action(a, f, 'accept') #>> '{friendship,status}' = 'accepted', 'limite désactivée';
+end $$;
+
+-- friend_accept_all : toutes mes demandes reçues en attente, une notification par demandeur ; ma demande envoyée reste en attente ;
+-- rejeu → même réponse ; sans clé et sans demande → 0.
+do $$ declare c uuid := pg_temp.player('Tout1'); d uuid := pg_temp.player('Tout2'); e uuid := pg_temp.player('Tout3');
+  f uuid := pg_temp.player('Tout4'); g uuid := pg_temp.player('Tout5'); begin
+  perform wm.friend_request(x, f) from unnest(array[c, d, e]) x;
+  perform wm.friend_request(f, g);
+  assert wm.friend_accept_all(f, 'k-all') = '{"accepted":3}', 'tout accepter';
+  assert (select array_agg(data order by user_id) from public.notifications where type = 'friend_accepted' and user_id in (c, d, e, g))
+    = (select array_agg(jsonb_build_object('friendship_id', id, 'user_id', f, 'username', 'Tout4') order by requester_id)
+       from public.friendships where addressee_id = f), 'notifications';
+  assert (select array_agg(status::text) from public.friendships where addressee_id = f) = '{accepted,accepted,accepted}', 'statuts';
+  assert (select status from public.friendships where requester_id = f) = 'pending', 'demande envoyée acceptée';
+  assert wm.friend_accept_all(f, 'k-all') = '{"accepted":3}', 'rejeu';
+  assert wm.friend_accept_all(f) = '{"accepted":0}', 'sans demande';
+end $$;
+
+-- friend_remove (Review Focus) : les échanges en attente entre les deux, dans les deux sens, passent à cancelled ; l'accepté, l'échu et
+-- celui d'un tiers restent ; cartes libérées ; amitié supprimée ; aucune notification ; rejeu → réponse stockée ; étranger → 404. Une
+-- demande en attente se retire des deux côtés.
+do $$ declare a uuid := pg_temp.player('Retrait1'); b uuid := pg_temp.player('Retrait2'); carol uuid := pg_temp.player('Retrait3');
+  c uuid := pg_temp.player('Retrait4'); d uuid := pg_temp.player('Retrait5'); x uuid := pg_temp.card('Retrait X'); y uuid := pg_temp.card('Retrait Y');
+  f uuid; g uuid; t1 uuid; t2 uuid; t3 uuid; t4 uuid; t5 uuid; s jsonb; begin
+  perform pg_temp.friends(a, b);
+  f := (select id from public.friendships where requester_id = a and addressee_id = b);
+  t1 := pg_temp.trade(a, b, array[pg_temp.copy(a, x)]);
+  t2 := pg_temp.trade(b, a, array[pg_temp.copy(b, y)]);
+  t3 := pg_temp.trade(a, b, array[pg_temp.copy(a, pg_temp.card('Retrait Z'))], 'accepted');
+  t4 := pg_temp.trade(b, a, array[pg_temp.copy(b, pg_temp.card('Retrait W'))], p_expires => interval '-1 second');
+  t5 := pg_temp.trade(a, carol, array[pg_temp.copy(a, pg_temp.card('Retrait V'))]);
+  assert pg_temp.err(format('select wm.friend_remove(%L, %L)', carol, f)) = '{"status":404,"error":"Demande d''ami introuvable","message":"Demande d''ami introuvable"}',
+    coalesce(pg_temp.err(format('select wm.friend_remove(%L, %L)', carol, f))::text, 'retiré');
+  assert wm.friend_remove(b, f, 'k-rm') = '{"ok":true}', 'retrait';
+  s := (select jsonb_object_agg(id, jsonb_build_array(status, closed_at is not null)) from public.trades where id in (t1, t2, t3, t4, t5));
+  assert s = jsonb_build_object(t1, '["cancelled",true]'::jsonb, t2, '["cancelled",true]'::jsonb, t3, '["accepted",false]'::jsonb,
+    t4, '["pending",false]'::jsonb, t5, '["pending",false]'::jsonb), s::text;
+  assert (select wm.trade_json(t) ->> 'status' from public.trades t where id = t4) = 'expired', 'échu lu pending';
+  assert not wm.card_locked(a, x) and not wm.card_locked(b, y), 'cartes encore verrouillées';
+  assert not exists (select from public.friendships where id = f), 'amitié encore là';
+  assert not exists (select from public.notifications where user_id in (a, b)), 'retrait notifié';
+  assert wm.friend_remove(b, f, 'k-rm') = '{"ok":true}', 'rejeu';
+  g := (wm.friend_request(c, d) #>> '{friendship,id}')::uuid;
+  assert wm.friend_remove(c, g) = '{"ok":true}', 'retrait par l''auteur';
+  assert not exists (select from public.friendships where id = g), 'demande retirée par son auteur';
+  g := (wm.friend_request(c, d) #>> '{friendship,id}')::uuid;
+  assert wm.friend_remove(d, g) = '{"ok":true}', 'retrait par le destinataire';
+  assert not exists (select from public.friendships where id = g), 'demande retirée par son destinataire';
+end $$;
+
+-- Maintenance : 503 avant tout verrou, même pour une amitié inconnue.
+do $$ declare a uuid := pg_temp.player('AmiMaint1');
+  d jsonb := '{"status":503,"code":"maintenance","error":"Maintenance en cours, reviens dans quelques minutes.","message":"Maintenance en cours, reviens dans quelques minutes."}';
+  begin
+  update wm.config set value = 'true' where key = 'maintenance';
+  assert pg_temp.err(format('select wm.friend_remove(%L, %L)', a, gen_random_uuid())) = d, 'friend_remove';
+  assert pg_temp.err(format('select wm.friend_accept_all(%L)', a)) = d, 'friend_accept_all';
+  update wm.config set value = 'false' where key = 'maintenance';
+end $$;
+
+-- friend_search (P12) : préfixe sans casse ni espaces autour, % et _ littéraux, ordre lower(username), 20 lignes, soi-même exclu ;
+-- moins de 2 caractères → 400 ; l'index de préfixe sert le motif.
+do $$ declare s uuid := pg_temp.player('zz_0'); j jsonb; q text := 'select wm.friend_search(%L, %L)';
+  d jsonb := '{"status":400,"code":"invalid_request","error":"La recherche demande au moins 2 caractères","message":"La recherche demande au moins 2 caractères"}';
+  begin
+  perform pg_temp.player(n) from unnest(array['ZetaAlpha', 'zetabeta', 'Zeta_1', 'Zetab2']) n;
+  perform pg_temp.player('zz_' || i) from generate_series(1, 24) i;
+  j := wm.friend_search(s, 'ZETA');
+  assert jsonb_path_query_array(j -> 'users', '$[*].username') = '["Zeta_1","ZetaAlpha","Zetab2","zetabeta"]', j::text;
+  assert j -> 'users' -> 0 = (select jsonb_build_object('id', id, 'username', 'Zeta_1', 'avatar_url', null) from public.profiles
+    where username = 'Zeta_1'), j ->> 'users';
+  assert jsonb_path_query_array(wm.friend_search(s, 'zeta_') -> 'users', '$[*].username') = '["Zeta_1"]', '_ littéral';
+  assert wm.friend_search(s, 'z%') = '{"users":[]}', '% littéral';
+  j := wm.friend_search(s, 'zz') -> 'users';
+  assert jsonb_array_length(j) = 20 and not jsonb_path_exists(j, '$[*] ? (@.id == $s)', jsonb_build_object('s', s)), j::text;
+  assert pg_temp.err(format(q, s, 'z')) = d and pg_temp.err(format(q, s, '  z ')) = d, 'moins de 2 caractères';
+  set local enable_seqscan = off;
+  execute 'explain (format json) select id from public.profiles where lower(username) like ''ze%''' into j;
+  reset enable_seqscan;
+  assert strpos(j::text, '"profiles_username_prefix_idx"') > 0, j::text;
+end $$;
+
+-- Collection des amis (S:36) : owned_by d'un ami au profil privé et wishlisted_by d'un ami passent ; une demande en attente n'ouvre rien.
+do $$ declare a uuid := pg_temp.player('AmiColl1'); b uuid := pg_temp.player('AmiColl2'); carol uuid := pg_temp.player('AmiColl3');
+  x uuid := pg_temp.card('Amis X'); r jsonb; begin
+  update public.profiles set is_public = false where id = a;
+  perform pg_temp.friends(b, a);
+  perform wm.friend_request(carol, a);
+  perform pg_temp.copy(a, x);
+  perform pg_temp.copy(b, x);
+  insert into public.wishlist_items (user_id, card_id) values (a, x);
+  r := wm.my_collection(b, p_owned_by => a);
+  assert r -> 'total' = '1' and r #>> '{collection,0,user_id}' = a::text, r::text;
+  assert pg_temp.err(format('select wm.my_collection(%L, p_owned_by => %L)', carol, a))
+    = '{"status":403,"code":"FORBIDDEN","error":"Cette collection est privée","message":"Cette collection est privée"}', 'collection privée';
+  r := wm.my_collection(b, p_wishlisted_by => a);
+  assert r -> 'total' = '1' and r #>> '{collection,0,user_id}' = b::text, r::text;
+  assert pg_temp.err(format('select wm.my_collection(%L, p_wishlisted_by => %L)', carol, a))
+    = '{"status":403,"code":"FORBIDDEN","error":"Vous devez être amis pour voir sa liste de souhaits","message":"Vous devez être amis pour voir sa liste de souhaits"}',
+    'souhaits d''un non-ami';
+end $$;
+
+-- Volatilité (M3-R5) : un create or replace sans le mot-clé repasserait en volatile.
+do $$ begin
+  assert (select jsonb_object_agg(proname, provolatile::text) from pg_proc where pronamespace = 'wm'::regnamespace
+    and proname in ('are_friends', 'friendship_json', 'friends_list', 'friend_search'))
+    = '{"are_friends":"s","friendship_json":"s","friends_list":"s","friend_search":"s"}', 'volatilité des lectures d''amitié';
 end $$;
