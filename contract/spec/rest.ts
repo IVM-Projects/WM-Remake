@@ -9,7 +9,7 @@ import { pair, proposed } from './trades.ts'
 
 const KEY = 'sb_publishable_test'
 
-function rest(env: ContractEnv, path: string, init: { method?: string; uid?: string; body?: unknown; headers?: Record<string, string> } = {}) {
+export function rest(env: ContractEnv, path: string, init: { method?: string; uid?: string; body?: unknown; headers?: Record<string, string> } = {}) {
   return fetch(`${env.backend.supabaseUrl}/rest/v1/${path}`, {
     method: init.method ?? 'GET',
     headers: {

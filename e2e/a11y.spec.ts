@@ -61,6 +61,22 @@ test('axe /pulls mobile, feuille « Plus » ouverte', async ({ page, login }) =>
   await expectNoSeriousViolations(page)
 })
 
+test('axe /pulls, panneau des notifications ouvert (3 notifications, dont une lue)', async ({ page, login }) => {
+  const { uid } = await login()
+  try {
+    sql(`insert into public.notifications (user_id, type, data, read)
+select :'uid', 'trade_received', jsonb_build_object('trade_id', gen_random_uuid(), 'user_id', gen_random_uuid(), 'username', 'Alice'), i = 3
+from generate_series(1, 3) i`, { uid })
+    await page.goto('/pulls')
+    await expect(page.locator('button[aria-label="Notifications"] + span')).toHaveText('2')
+    await page.locator('button[aria-label="Notifications"]').click()
+    await expect(page.getByRole('dialog', { name: 'Notifications' }).getByRole('listitem')).toHaveCount(3)
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
+  }
+})
+
 test('axe /pulls en révélation', async ({ page, login }) => {
   await login({ humanVerified: true })
   await page.goto('/pulls')
