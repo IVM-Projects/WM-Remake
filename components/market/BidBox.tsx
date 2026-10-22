@@ -14,7 +14,8 @@ export type BidResult = { current_bid: number; end_at: string; min_next_bid: num
 const UNSURE = 'La mise n\'a pas été confirmée : elle a peut-être été placée. L\'enchère se met à jour.'
 
 // Bloc « Miser » (M3-24) : un formulaire, donc Entrée envoie ; vérification anti-bot comme /pulls (pulls-client.tsx:103-142).
-export function BidBox({ auction, onBid }: { auction: Auction; onBid: (r: BidResult) => void }) {
+// onSync : un refus en dit plus que l'enchère affichée (patch), ou son issue est inconnue (sans patch : relecture tout de suite).
+export function BidBox({ auction, onBid, onSync }: { auction: Auction; onBid: (r: BidResult) => void; onSync: (patch?: Partial<Auction>) => void }) {
   // null : champ jamais touché, il suit min_next_bid à chaque lecture (polling, réponse de mise).
   const [typed, setTyped] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -22,7 +23,7 @@ export function BidBox({ auction, onBid }: { auction: Auction; onBid: (r: BidRes
   // Montant à relancer une fois la vérification anti-bot passée.
   const [verify, setVerify] = useState<number | null>(null)
   const inflight = useRef(false)
-  // Une Idempotency-Key par enchère, gardée tant que l'issue est inconnue ; oubliée sur un 4xx, d'où une relance à clé neuve (P27).
+  // Clé par montant : le serveur rejoue par clé sans lire le corps. Gardée si l'issue est inconnue, oubliée sur un 4xx (P27).
   const keys = useRef(new Map<string, string>())
   const value = typed ?? String(auction.min_next_bid ?? '')
 
@@ -32,9 +33,12 @@ export function BidBox({ auction, onBid }: { auction: Auction; onBid: (r: BidRes
     setBusy(true)
     setError(null)
     setVerify(null)
+    // Échec de /api/human-check : la mise n'est pas partie, elle n'a pas pu être placée.
+    let sent = false
     try {
       if (token) await api('/api/human-check', { method: 'POST', idem: true, body: JSON.stringify({ token }) })
-      const r = await apiOnce<BidResult>(keys.current, auction.id, `/api/marketplace/${auction.id}/bid`, {
+      sent = true
+      const r = await apiOnce<BidResult>(keys.current, `${auction.id}:${amount}`, `/api/marketplace/${auction.id}/bid`, {
         method: 'POST',
         body: JSON.stringify({ amount }),
       })
@@ -45,8 +49,14 @@ export function BidBox({ auction, onBid }: { auction: Auction; onBid: (r: BidRes
       const body = (e instanceof ApiError ? e.body : null) as { code?: string; min?: number } | null
       // Une seule relance après la vérification : un second refus s'affiche, sans boucle.
       if (body?.code === 'human_verification_required' && !token) setVerify(amount)
-      if (body?.code === 'bid_too_low' && body.min) setTyped(String(body.min))
-      setError(userMessage(e, unsure(e) ? UNSURE : 'La mise n\'a pas pu être placée.'))
+      // Le minimum du refus devient celui de l'enchère : le champ le prend et suit encore les lectures suivantes.
+      if (body?.code === 'bid_too_low' && body.min) {
+        setTyped(null)
+        onSync({ min_next_bid: body.min })
+      }
+      const maybe = sent && unsure(e)
+      setError(userMessage(e, maybe ? UNSURE : 'La mise n\'a pas pu être placée.'))
+      if (maybe) onSync()
     } finally {
       inflight.current = false
       setBusy(false)

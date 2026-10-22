@@ -5,7 +5,7 @@ type Doc = Pick<Document, 'visibilityState' | 'addEventListener' | 'removeEventL
 // Polling visible seulement (C15, D§9.5) : un passage à la fois, le suivant delay() ms après la fin du précédent ; rien onglet caché,
 // un passage immédiat au retour en visible. Logique pure : vitest tourne sans DOM (R18), document et minuteurs se simulent.
 export function createPoller(o: {
-  run: () => Promise<void> | void
+  run: () => unknown
   delay: () => number
   doc?: Doc
   setTimer?: typeof setTimeout
@@ -44,7 +44,7 @@ export function createPoller(o: {
 
 // createPoller dans un effet : arrêté au démontage, au masquage par Activity (preserving-ui-state.md, « Effect and media cleanup ») et quand
 // enabled devient faux. run et delay lus par useEffectEvent : toujours l'état du dernier rendu.
-export function usePoll(run: () => Promise<void> | void, delay: number | (() => number), enabled = true): void {
+export function usePoll(run: () => unknown, delay: number | (() => number), enabled = true): void {
   const onRun = useEffectEvent(run)
   const onDelay = useEffectEvent(() => (typeof delay === 'function' ? delay() : delay))
   useEffect(() => (enabled ? createPoller({ run: () => onRun(), delay: () => onDelay() }) : undefined), [enabled])

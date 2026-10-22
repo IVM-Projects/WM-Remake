@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Page } from '@playwright/test'
+import type { Page, Request } from '@playwright/test'
 import { expect, makePlayer, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a sa carte au titre unique, filtre par ce titre et nettoie à la fin (Global Constraints).
@@ -266,6 +266,34 @@ test('mise trop basse : un autre joueur a misé 10 entre-temps → « Mise trop 
   await expect(amountField(page)).toHaveValue('11')
 })
 
+test('réponse d\'une mise perdue, puis un autre montant : clé neuve, le nouveau montant est placé (aucune réponse rejouée)', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  const seller = makePlayer({ humanVerified: true })
+  const other = makePlayer({ balance: 100, humanVerified: true })
+  trash.uids.push(me.uid, seller.uid, other.uid)
+  const { id } = sellOne(seller.uid)
+  const keys: string[] = []
+  await page.route(`**/api/marketplace/${id}/bid`, async (route) => {
+    keys.push(route.request().headers()['idempotency-key'])
+    if (keys.length > 1) return route.continue()
+    // La première mise atteint le serveur et y est validée ; sa réponse est perdue.
+    await route.fetch()
+    await route.abort()
+  })
+  await page.goto(`/marketplace/${id}`)
+  await page.getByRole('button', { name: 'Miser' }).click()
+  await expect(page.locator('main').getByRole('alert'))
+    .toHaveText('La mise n\'a pas été confirmée : elle a peut-être été placée. L\'enchère se met à jour.')
+  // Surenchère d'un autre joueur (11) : le minimum suivant passe à 13.
+  sql(`select from wm.place_bid(:'o', :'id', 11) \\g /dev/null`, { o: other.uid, id })
+  await amountField(page).fill('13')
+  await page.getByRole('button', { name: 'Miser' }).click()
+  await expect(toastOf(page, 'Mise de 13 wikibidous placée.')).toBeVisible()
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).not.toBe(keys[0])
+  expect(sql(`select current_bid || ' ' || (current_bidder_id = :'me') from public.auctions where id = :'id'`, { me: me.uid, id })).toBe('13 true')
+})
+
 test('clavier : focus sur « Montant de la mise », saisie, Entrée → mise placée, sans souris', async ({ page, login }) => {
   const me = await login({ balance: 100, humanVerified: true })
   const seller = makePlayer({ humanVerified: true })
@@ -333,25 +361,28 @@ test('vendeur, moitié de la durée passée : « Baisser le prix », « Nouveau 
   await expect(page.getByRole('button', { name: 'Retirer', exact: true })).toBeFocused()
 })
 
-test('« Finaliser la vente » à l\'échéance, sans règlement paresseux : POST /settle → « Remportée »', async ({ page, login }) => {
+test('« Finaliser la vente » à l\'échéance, par l\'horloge et sans règlement paresseux : POST /settle → « Remportée »', async ({ page, login }) => {
   const me = await login({ balance: 100, humanVerified: true })
   const seller = makePlayer({ humanVerified: true })
   trash.uids.push(me.uid, seller.uid)
   const { id } = sellOne(seller.uid)
-  // end_at posé après la mise : sinon l'anti-snipe le repousserait de 60 s (M3-15).
-  sql(`select from wm.place_bid(:'me', :'id', 10) \\g /dev/null
-update public.auctions set end_at = now() + interval '4 seconds' where id = :'id'`, { me: me.uid, id })
-  // Toute lecture rejoue la première réponse : aucune ne règle par la voie paresseuse. Corps seul, sans l'en-tête Date d'origine,
-  // qui ferait reculer serverNow() à chaque relecture (lib/clock.ts, noteServerDate).
-  let first: Promise<unknown> | undefined
+  sql(`select from wm.place_bid(:'me', :'id', 10) \\g /dev/null`, { me: me.uid, id })
+  // Première lecture : la vraie, échéance posée à 4 s dans son corps et dans la base (corps seul : sa Date ferait reculer serverNow()).
+  // Les suivantes restent sans réponse : aucune ne règle l'enchère ni ne rend la page, « Finaliser » ne peut venir que de l'horloge.
+  let end: string | undefined
   await page.route(`**/api/marketplace/${id}`, async (route) => {
-    first ??= route.fetch().then((r) => r.json())
-    await route.fulfill({ json: await first })
+    if (end) return
+    end = new Date(Date.now() + 4_000).toISOString()
+    const body = await (await route.fetch()).json()
+    sql(`update public.auctions set end_at = :'end' where id = :'id'`, { end, id })
+    body.auction.end_at = end
+    await route.fulfill({ json: body })
   })
   await page.goto(`/marketplace/${id}`)
   await expect(page.locator('main').getByText('En tête', { exact: true })).toBeVisible()
   const settle = page.getByRole('button', { name: 'Finaliser la vente' })
   await expect(settle).toBeVisible({ timeout: 10_000 })
+  expect(sql(`select status from public.auctions where id = :'id'`, { id })).toBe('active')
   const settled = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/marketplace/${id}/settle`)
   await settle.click()
   expect((await settled).status()).toBe(200)
@@ -393,29 +424,44 @@ values (:'s', :'card', gen_random_uuid(), 'C', 10, 10, 12, :'w', 1, 12, 'settled
   await expect(dialog.getByText('Fonction réservée aux membres Pro', { exact: true })).toHaveCount(0)
 })
 
-test('liste affichée : aucun GET /api/marketplace/<id> avant le clic (le prefetch des tuiles ne charge que la coquille)', async ({ page, login }) => {
+test('liste affichée : le prefetch des tuiles ne lit ni ne règle aucune enchère, même échue ; après le clic, une seule lecture', async ({ page, login }) => {
   trash.uids.push((await login()).uid)
   const seller = makePlayer({ humanVerified: true })
-  trash.uids.push(seller.uid)
+  const bidder = makePlayer({ balance: 100, humanVerified: true })
+  trash.uids.push(seller.uid, bidder.uid)
   const t = title()
-  const { id } = sellOne(seller.uid, t)
-  // Lectures du détail de toute enchère (les tuiles des autres workers aussi) ; prefetchs de toute tuile : la coquille est la même pour
-  // toutes les enchères, et une fois la route apprise d'une tuile, Next ne prefetch plus forcément l'adresse des suivantes.
+  const { card, id } = sellOne(seller.uid, t)
+  // Échue avec une mise, pas encore réglée (aucun cron au banc) : un auction_detail côté serveur pendant un prefetch la réglerait.
+  const due = sql(`select from wm.grant_copy(:'s', :'card', false) \\g /dev/null
+select wm.create_auction(:'s', :'card', 10, 60) ->> 'id' as id \\gset
+select from wm.place_bid(:'b', :'id', 10) \\g /dev/null
+update public.auctions set end_at = now() - interval '1 minute' where id = :'id';
+\\echo :id`, { s: seller.uid, b: bidder.uid, card })
+  // Lectures du détail de toute enchère ; prefetchs de toute tuile (la coquille est commune, Next ne prefetch pas forcément chaque adresse).
   const reads: string[] = []
-  let prefetches = 0
+  const pending = new Set<Request>()
+  let prefetched = 0
+  let last = 0
   page.on('request', (r) => {
     const path = new URL(r.url()).pathname
     if (/^\/api\/marketplace\/[0-9a-f-]{36}$/.test(path)) reads.push(`${r.method()} ${path}`)
-    if (path.startsWith('/marketplace/') && r.headers()['next-router-prefetch']) prefetches++
+    if (!path.startsWith('/marketplace/') || !r.headers()['next-router-prefetch']) return
+    prefetched++
+    pending.add(r)
+    last = Date.now()
   })
+  const done = (r: Request) => { if (pending.delete(r)) last = Date.now() }
+  page.on('requestfinished', done)
+  page.on('requestfailed', done)
   await page.goto('/marketplace')
   await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).fill(t)
   await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).press('Enter')
-  await expect(tile(page, id)).toBeVisible()
-  // Un prefetch de tuile est parti (production seulement), et aucun n'a lu ni réglé d'enchère.
-  await expect.poll(() => prefetches).toBeGreaterThan(0)
-  await page.waitForLoadState('networkidle')
+  await page.getByRole('combobox', { name: 'Trier' }).selectOption({ label: 'Fin proche' })
+  await expect.poll(() => order(page)).toEqual([due, id])
+  // Prefetchs partis (production seulement), tous finis, et plus aucun depuis 500 ms.
+  await expect.poll(() => prefetched > 0 && pending.size === 0 && Date.now() - last > 500).toBe(true)
   expect(reads).toEqual([])
+  expect(sql(`select status from public.auctions where id = :'due'`, { due })).toBe('active')
   await tile(page, id).locator('a').click()
   // Activity garde /marketplace cachée, avec son h1 : seul le visible compte.
   await expect(page.locator('main h1').filter({ visible: true })).toHaveText(t)

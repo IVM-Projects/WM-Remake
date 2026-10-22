@@ -6,9 +6,7 @@ import { Suspense, type ComponentProps } from 'react'
 
 type Props = ComponentProps<typeof Link> & { href: string; className: string }
 
-// Seul morceau client de la barre latérale : le chemin courant ne se lit pas côté serveur. Sous une route au paramètre inconnu du build
-// (/marketplace/[auctionId]), usePathname suspend : la coquille statique rend le lien sans état actif, qui arrive avec la requête
-// (use-pathname.md, « Cache Components »). Ailleurs, le chemin est connu au prérendu et le repli n'est jamais rendu.
+// usePathname suspend sous une route au paramètre inconnu du build (/marketplace/[auctionId], use-pathname.md) : repli sans état actif.
 export function NavLink(props: Props) {
   return (
     <Suspense fallback={<Item {...props} active={false} />}>

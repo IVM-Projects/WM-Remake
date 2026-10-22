@@ -10,8 +10,7 @@ type Sale = { id: string; rarity: RarityCode; is_shiny: boolean; final_price: nu
 
 const muted = 'text-sm text-[var(--color-foreground)]/70'
 
-// Analyse du marché d'une carte (M3-19, M3-24) : moyenne des dernières ventes par rareté (pour tous, en cache), puis l'historique Pro,
-// ou le message du 403 pro_required. null : lecture en cours (rien d'affiché) ; une chaîne : le message d'échec de cette lecture.
+// Résumé pour tous, puis l'historique Pro ou le message du 403 (M3-19) ; null : lecture en cours, une chaîne : son échec.
 export function MarketPanel({ cardId }: { cardId: string }) {
   const [summary, setSummary] = useState<Summary | string | null>(null)
   const [sales, setSales] = useState<Sale[] | string | null>(null)

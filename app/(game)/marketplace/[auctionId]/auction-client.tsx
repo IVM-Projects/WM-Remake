@@ -27,8 +27,7 @@ type Bid = { amount: number; placed_at: string; bidder: { username: string } }
 type Detail = { auction: Auction; bids: Bid[] }
 
 const entry = navEntry('/marketplace')
-// Le détail est partagé en cache et peut être servi jusqu'à 2 s après une écriture (profil auction, M3-22) : une lecture partie avant
-// la fin de ce délai est jetée, elle déferait la réponse d'une mise, d'une baisse ou d'un règlement.
+// Le cache partagé du détail peut servir l'état d'avant une écriture pendant 2 s (profil auction, M3-22).
 const STALE_MS = 2_000
 // Réponse perdue ou 5xx : l'action a pu avoir lieu ; relancée, elle garde sa clé (apiOnce) et le serveur rejoue sa réponse.
 const UNSURE = 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu. L\'enchère se met à jour.'
@@ -36,6 +35,9 @@ const label = 'text-[var(--color-foreground)]/70'
 const row = 'flex items-center justify-between gap-2'
 const round = 'inline-flex size-11 items-center justify-center rounded-full border border-[var(--color-foreground)]/40 transition-colors hover:bg-[var(--color-surface-light)] aria-disabled:cursor-progress'
 const primary = 'inline-flex min-h-11 items-center justify-center self-start rounded-xl bg-[var(--color-accent)] px-5 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-progress aria-disabled:opacity-80'
+
+// Le refus d'une action tombe quand une lecture change ces champs : il ne vaut plus pour l'enchère affichée.
+const keyOf = (x?: Auction) => (x ? `${x.end_at}|${x.status}|${x.current_bid}` : '')
 
 // Instant t passé sur l'horloge du serveur, relu par l'horloge partagée : rendu seulement quand la réponse change.
 const usePassed = (t: number) => useSyncExternalStore(subscribeClock, () => serverNow() >= t, () => false)
@@ -56,33 +58,46 @@ export function AuctionClient() {
   const [newPrice, setNewPrice] = useState<string | null>(null)
   // « Retirer », « Valider » et « Finaliser la vente » : une requête à la fois, aria-disabled et garde, jamais disabled (D§7.0).
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // Refus d'une action, affiché tant que l'enchère reste dans l'état relu juste après (key).
+  const [error, setError] = useState<{ text: string; key: string } | null>(null)
+  // Relecture programmée après une écriture (STALE_MS) : un minuteur d'effet, coupé au démontage et au masquage par Activity.
+  const [reread, setReread] = useState(0)
   const inflight = useRef(false)
   const keys = useRef(new Map<string, string>())
+  // Lectures parties avant cet instant (performance.now) jetées : elles déferaient la réponse d'une écriture.
   const hold = useRef(0)
   const cancelButton = useRef<HTMLButtonElement>(null)
   const outcome = useRef<HTMLDivElement>(null)
   const a = detail?.auction
 
+  // Rend le détail appliqué, ou null (lecture jetée ou en échec).
   const read = () => {
-    const started = Date.now()
+    const started = performance.now()
     return api<Detail>(`/api/marketplace/${id}`).then(
       (d) => {
-        if (started < hold.current) return
+        if (started < hold.current) return null
         setDetail(d)
         setFailed(null)
+        return d
       },
       (e) => {
         // Inconnue ou retirée (404), adresse invalide (400) : « Auction not found ». Autre échec : l'enchère affichée reste.
         if (e instanceof ApiError && (e.status === 404 || e.status === 400)) setMissing(true)
         else setFailed(userMessage(e, 'L\'enchère n\'a pas pu être chargée.'))
+        return null
       },
     )
   }
   // Lue à chaque affichage (Activity compris), puis toutes les 2 s sous 2 min restantes, sinon 10 s (C15) ; plus rien une fois réglée.
   const onShow = useEffectEvent(read)
   useEffect(() => void onShow(), [])
-  usePoll(read, () => (a && Date.parse(a.end_at) - serverNow() < 120_000 ? 2_000 : 10_000), !missing && (!a || a.status === 'active'))
+  usePoll(read, () => (!a || Date.parse(a.end_at) - serverNow() < 120_000 ? 2_000 : 10_000), !missing && (!a || a.status === 'active'))
+  const onReread = useEffectEvent(read)
+  useEffect(() => {
+    if (!reread) return
+    const t = setTimeout(() => void onReread(), STALE_MS + 100)
+    return () => clearTimeout(t)
+  }, [reread])
 
   useEffect(() => {
     void createBrowserSupabase().auth.getSession().then(({ data }) => setUid(data.session?.user.id ?? null))
@@ -91,8 +106,12 @@ export function AuctionClient() {
   useEffect(() => {
     if (!cardId) return
     let live = true
-    // Lecture en échec : l'état reste inconnu, affiché comme absent (un ajout en double revient en 23505, traité comme réussi).
-    void readWished(cardId).then((w) => { if (live) setWished(w) })
+    // Lecture en échec : dit, et l'état reste inconnu, affiché comme absent (un ajout en double revient en 23505, traité comme réussi).
+    void readWished(cardId).then((w) => {
+      if (!live) return
+      if (w === null) toast('Ta liste de souhaits n\'a pas pu être lue.')
+      else setWished(w)
+    })
     return () => { live = false }
   }, [cardId])
 
@@ -109,11 +128,13 @@ export function AuctionClient() {
     was.current = status
   }, [status])
 
-  // Réponse d'une écriture : l'enchère affichée la prend, et les lectures encore servies par le cache d'avant sont jetées.
+  // Réponse d'une écriture (ou patch d'un refus) : affichée, lectures du cache d'avant jetées, relecture une fois ce cache périmé.
   const apply = (patch: Partial<Auction>) => {
-    hold.current = Date.now() + STALE_MS
+    hold.current = performance.now() + STALE_MS
     setDetail((d) => d && { ...d, auction: { ...d.auction, ...patch } })
+    setReread((n) => n + 1)
   }
+  const sync = (patch?: Partial<Auction>) => (patch ? apply(patch) : void read())
 
   async function act<T>(intent: string, path: string, init: RequestInit, done: (r: T) => void) {
     if (inflight.current) return
@@ -123,8 +144,10 @@ export function AuctionClient() {
     try {
       done(await apiOnce<T>(keys.current, intent, path, init))
     } catch (e) {
-      setError(userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'))
-      if (unsure(e)) void read()
+      const text = userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.')
+      // Un refus vient souvent d'un état changé (mise arrivée, enchère réglée ailleurs) : relu tout de suite.
+      const d = await read()
+      setError({ text, key: keyOf(d?.auction ?? a) })
     } finally {
       inflight.current = false
       setBusy(false)
@@ -152,11 +175,7 @@ export function AuctionClient() {
 
   const settle = () => act<{ auction: Auction }>('settle', `/api/marketplace/${id}/settle`, { method: 'POST' }, (r) => apply(r.auction))
 
-  function onBid(r: BidResult) {
-    apply({ current_bid: r.current_bid, end_at: r.end_at, min_next_bid: r.min_next_bid, current_bidder_id: uid })
-    // L'historique vient de la lecture : relue juste après le délai du cache.
-    setTimeout(() => void read(), STALE_MS + 100)
-  }
+  const onBid = (r: BidResult) => apply({ current_bid: r.current_bid, end_at: r.end_at, min_next_bid: r.min_next_bid, current_bidder_id: uid })
 
   async function toggleWish() {
     if (!a || wishing) return
@@ -246,7 +265,7 @@ export function AuctionClient() {
               <Countdown endAt={a.end_at} over={!active} />
             </p>
           </div>
-          {active && uid && !seller && <BidBox auction={a} onBid={onBid} />}
+          {active && uid && !seller && <BidBox auction={a} onBid={onBid} onSync={sync} />}
           {canCancel && (
             <div className="flex flex-wrap gap-3">
               <button ref={cancelButton} type="button" aria-disabled={busy || undefined} onClick={() => void cancel()} className={`${ghost} justify-center`}>
@@ -287,7 +306,7 @@ export function AuctionClient() {
               Finaliser la vente
             </button>
           )}
-          {error && <p role="alert" className="text-sm font-medium text-red-400">{error}</p>}
+          {error?.key === keyOf(a) && <p role="alert" className="text-sm font-medium text-red-400">{error.text}</p>}
           {detail.bids.length > 0 && (
             <section className="space-y-2">
               <h2 className="text-lg font-bold">Historique des mises</h2>
