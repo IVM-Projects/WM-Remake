@@ -343,6 +343,28 @@ test('vendeur sans mise : pas de champ de mise ni de baisse avant la moitié ; �
   await expect(page).toHaveURL(/\/marketplace$/)
 })
 
+test('vendeur, une mise arrivée entre-temps : « Retirer » → refus affiché tout de suite et bouton libéré, même si la relecture ne répond pas', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  const bidder = makePlayer({ balance: 100, humanVerified: true })
+  trash.uids.push(me.uid, bidder.uid)
+  const { id } = sellOne(me.uid)
+  // Première lecture servie ; les suivantes (relecture du refus, polling) restent sans réponse, comme un serveur saturé.
+  let served = false
+  await page.route(`**/api/marketplace/${id}`, (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    if (served) return
+    served = true
+    return route.fallback()
+  })
+  await page.goto(`/marketplace/${id}`)
+  const cancel = page.getByRole('button', { name: 'Retirer', exact: true })
+  await expect(cancel).toBeVisible()
+  sql(`select from wm.place_bid(:'b', :'id', 10) \\g /dev/null`, { b: bidder.uid, id })
+  await cancel.click()
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Une enchère en cours ne peut pas être retirée')
+  await expect(cancel).not.toHaveAttribute('aria-disabled')
+})
+
 test('vendeur, moitié de la durée passée : « Baisser le prix », « Nouveau prix » 5, « Valider » → « Prix baissé à 5 wikibidous »', async ({ page, login }) => {
   const me = await login({ balance: 100, humanVerified: true })
   trash.uids.push(me.uid)
@@ -437,18 +459,25 @@ select wm.create_auction(:'s', :'card', 10, 60) ->> 'id' as id \\gset
 select from wm.place_bid(:'b', :'id', 10) \\g /dev/null
 update public.auctions set end_at = now() - interval '1 minute' where id = :'id';
 \\echo :id`, { s: seller.uid, b: bidder.uid, card })
-  // Lectures du détail de toute enchère ; prefetchs de toute tuile (la coquille est commune, Next ne prefetch pas forcément chaque adresse).
+  // Lectures du détail de toute enchère, et adresses prefetchées.
   const reads: string[] = []
+  const prefetched: string[] = []
   const pending = new Set<Request>()
-  let prefetched = 0
   let last = 0
   page.on('request', (r) => {
     const path = new URL(r.url()).pathname
     if (/^\/api\/marketplace\/[0-9a-f-]{36}$/.test(path)) reads.push(`${r.method()} ${path}`)
     if (!path.startsWith('/marketplace/') || !r.headers()['next-router-prefetch']) return
-    prefetched++
+    prefetched.push(path)
     pending.add(r)
     last = Date.now()
+  })
+  // Next apprend la route d'une seule adresse, puis ne prefetch plus forcément les suivantes, survol compris (1 fois sur 12 mesurée) :
+  // les prefetchs des tuiles des autres workers sont coupés, pour que l'adresse de l'enchère échue soit toujours demandée.
+  await page.route('**/marketplace/*', (route) => {
+    const path = new URL(route.request().url()).pathname
+    const ours = path === `/marketplace/${due}` || path === `/marketplace/${id}`
+    return route.request().headers()['next-router-prefetch'] && !ours ? route.abort() : route.fallback()
   })
   const done = (r: Request) => { if (pending.delete(r)) last = Date.now() }
   page.on('requestfinished', done)
@@ -458,8 +487,8 @@ update public.auctions set end_at = now() - interval '1 minute' where id = :'id'
   await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).press('Enter')
   await page.getByRole('combobox', { name: 'Trier' }).selectOption({ label: 'Fin proche' })
   await expect.poll(() => order(page)).toEqual([due, id])
-  // Prefetchs partis (production seulement), tous finis, et plus aucun depuis 500 ms.
-  await expect.poll(() => prefetched > 0 && pending.size === 0 && Date.now() - last > 500).toBe(true)
+  // Prefetch de l'enchère échue parti (production seulement), tous finis, et plus aucun depuis 500 ms.
+  await expect.poll(() => prefetched.includes(`/marketplace/${due}`) && pending.size === 0 && Date.now() - last > 500).toBe(true)
   expect(reads).toEqual([])
   expect(sql(`select status from public.auctions where id = :'due'`, { due })).toBe('active')
   await tile(page, id).locator('a').click()

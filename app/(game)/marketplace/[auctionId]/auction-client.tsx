@@ -69,6 +69,9 @@ export function AuctionClient() {
   const cancelButton = useRef<HTMLButtonElement>(null)
   const outcome = useRef<HTMLDivElement>(null)
   const a = detail?.auction
+  // État affiché au dernier rendu : celui auquel un refus s'applique au moment où il arrive.
+  const shown = useRef(a)
+  useEffect(() => { shown.current = a })
 
   // Rend le détail appliqué, ou null (lecture jetée ou en échec).
   const read = () => {
@@ -134,7 +137,12 @@ export function AuctionClient() {
     setDetail((d) => d && { ...d, auction: { ...d.auction, ...patch } })
     setReread((n) => n + 1)
   }
-  const sync = (patch?: Partial<Auction>) => (patch ? apply(patch) : void read())
+  // Sans patch (issue inconnue) : relue tout de suite, peut-être du cache d'avant, puis une fois ce cache périmé ; hold ne bouge pas.
+  const sync = (patch?: Partial<Auction>) => {
+    if (patch) return apply(patch)
+    void read()
+    setReread((n) => n + 1)
+  }
 
   async function act<T>(intent: string, path: string, init: RequestInit, done: (r: T) => void) {
     if (inflight.current) return
@@ -144,10 +152,12 @@ export function AuctionClient() {
     try {
       done(await apiOnce<T>(keys.current, intent, path, init))
     } catch (e) {
-      const text = userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.')
-      // Un refus vient souvent d'un état changé (mise arrivée, enchère réglée ailleurs) : relu tout de suite.
-      const d = await read()
-      setError({ text, key: keyOf(d?.auction ?? a) })
+      // Affiché tout de suite sur l'état montré au refus, puis rattaché à l'état d'une vraie relecture.
+      const err = { text: userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'), key: keyOf(shown.current) }
+      setError(err)
+      // Un refus vient souvent d'un état changé (mise arrivée, réglée ailleurs) : relu tout de suite, hors du verrou (api() est sans délai).
+      void read().then((d) => d && setError((x) => (x === err ? { ...err, key: keyOf(d.auction) } : x)))
+      if (unsure(e)) setReread((n) => n + 1)
     } finally {
       inflight.current = false
       setBusy(false)
@@ -203,7 +213,7 @@ export function AuctionClient() {
   }
   if (!a || !detail) {
     if (!failed) return <Loading label="Chargement de l'enchère" />
-    // Le polling relance la lecture toutes les 10 s.
+    // Le polling relance la lecture toutes les 2 s tant que rien n'est chargé.
     return (
       <div className="card-frame mx-auto flex max-w-md flex-col items-center gap-3 p-6 text-center">
         <p role="alert" className="text-sm">{failed}</p>
