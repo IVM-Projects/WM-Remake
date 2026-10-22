@@ -23,8 +23,9 @@ type Player = { id: string; username: string; avatar_url: string | null }
 type Friendship = { id: string; status: 'pending' | 'accepted'; requester_id: string; addressee_id: string; requester: Player; addressee: Player; created_at: string }
 type Part = 'received' | 'sent' | 'friends'
 // Après une relecture, si le focus est tombé sur body : la ligne de ce rang dans sa section (la suivante a pris sa place), ou la première
-// de ces amitiés ; à défaut, l'état vide de la section.
-type Focus = { part: Part; row: number | string[] }
+// de ces amitiés ; dans la ligne, le contrôle de même nom (« Refuser » → « Refuser »), sinon le premier ; à défaut, l'état vide.
+type Focus = { part: Part; row: number | string[]; name?: string }
+const SHORT = 'La recherche demande au moins 2 caractères'
 
 // Sections d'après le joueur de la session du navigateur (P16).
 const split = (me: string, rows: Friendship[]): Record<Part, Friendship[]> => ({
@@ -42,52 +43,67 @@ export function FriendsClient() {
   const [hits, setHits] = useState<Player[] | null>(null)
   // Recherche trop courte ou refusée.
   const [note, setNote] = useState<string | null>(null)
-  const [confirm, setConfirm] = useState<Friendship | null>(null)
+  // Amitié de la modale de retrait et son rang dans « Amis » à l'ouverture.
+  const [confirm, setConfirm] = useState<{ f: Friendship; i: number } | null>(null)
   // Une action à la fois, jusqu'à sa relecture : aria-disabled et garde, jamais disabled.
   const [busy, setBusy] = useState(false)
   const inflight = useRef(false)
   const keys = useRef(new Map<string, string>())
-  // Génération de la recherche : une réponse tardive n'écrase pas celle d'une recherche plus récente.
+  // Générations : une réponse tardive n'écrase pas celle d'une recherche, ou d'une lecture, plus récente.
   const searchGen = useRef(0)
+  const readGen = useRef(0)
+  const applied = useRef(0)
   const refocus = useRef<Focus | null>(null)
   const root = useRef<HTMLDivElement>(null)
   const retry = useRef<HTMLButtonElement>(null)
 
   // Sans polling (Q25 : la cloche signale les demandes) : lue à chaque affichage (Activity compris), après chaque action et sur « Réessayer ».
-  const read = (focus: Focus | null = null) =>
-    Promise.all([api<{ friendships: Friendship[] }>('/api/friends'), createBrowserSupabase().auth.getSession()]).then(
+  const read = (focus: Focus | null = null) => {
+    const g = ++readGen.current
+    return Promise.all([api<{ friendships: Friendship[] }>('/api/friends'), createBrowserSupabase().auth.getSession()]).then(
       ([r, { data: auth }]) => auth.session && { me: auth.session.user.id, rows: r.friendships },
       () => null,
     ).then((next) => {
+      // Partie avant la dernière appliquée (première lecture lente, réaffichage par Activity) : elle déferait la relecture d'une action.
+      if (g < applied.current) return
+      applied.current = g
+      // État du serveur relu : une relance est une nouvelle intention, refusée par l'état de la ligne si elle a déjà eu lieu. Une clé
+      // gardée rejouerait l'ancien succès (« Ajouter » après un retrait : la réponse stockée, et aucune demande créée).
+      if (next) keys.current.clear()
       refocus.current = focus
       if (next) setData(next)
       setFailed(!next)
     })
+  }
   const onShow = useEffectEvent(() => void read())
   useEffect(() => onShow(), [])
 
-  // Relecture rendue : une ligne disparue sous le focus le passe à sa voisine ou à l'état vide (modale déjà démontée, son focus rendu au
-  // « Retirer » de la ligne), une lecture en échec au « Réessayer ». Rien si le joueur a mis le focus ailleurs pendant la requête.
+  // Relecture rendue, ou modale fermée : une ligne disparue sous le focus le passe à sa voisine ou à l'état vide (modale déjà démontée,
+  // son focus rendu au « Retirer » de la ligne s'il existe encore), une lecture en échec au « Réessayer ». Rien si le joueur a mis le
+  // focus ailleurs pendant la requête.
   useEffect(() => {
     const f = refocus.current
     refocus.current = null
     if (!f || document.activeElement !== document.body) return
     if (failed || !data) return retry.current?.focus()
-    const { part, row } = f
+    const { part, row, name } = f
     const rows = split(data.me, data.rows)[part]
     const i = Array.isArray(row) ? rows.findIndex((x) => row.includes(x.id)) : row
     const box = root.current?.querySelector(`[data-part="${part}"]`)
     const items = box?.querySelectorAll(':scope > ul > li')
-    const li = items?.[Math.min(Math.max(i, 0), items.length - 1)]
-    ;(li?.querySelector<HTMLElement>('a, button') ?? box?.querySelector<HTMLElement>('[tabindex="-1"]'))?.focus()
-  }, [data, failed])
+    const controls = [...(items?.[Math.min(Math.max(i, 0), items.length - 1)]?.querySelectorAll<HTMLElement>('a, button') ?? [])]
+    ;(controls.find((c) => c.textContent === name) ?? controls[0] ?? box?.querySelector<HTMLElement>('[tabindex="-1"]'))?.focus()
+  }, [data, failed, confirm])
 
   async function search(e: FormEvent) {
     e.preventDefault()
     const q = text.trim()
     const g = ++searchGen.current
     // Seuil du serveur (wm.friend_search) en caractères : refusé sur place, sans requête.
-    if ([...q].length < 2) return setNote('La recherche demande au moins 2 caractères')
+    if ([...q].length < 2) {
+      setHits(null)
+      return setNote(SHORT)
+    }
     setNote(null)
     try {
       const r = await api<{ users: Player[] }>(`/api/friends/search?${new URLSearchParams({ q })}`)
@@ -117,9 +133,18 @@ export function FriendsClient() {
   }
 
   const answer = (f: Friendship, i: number, action: 'accept' | 'decline', done: string) =>
-    act(`${action}:${f.id}`, `/api/friends/${f.id}`, { method: 'PATCH', body: JSON.stringify({ action }) }, () => done, { part: 'received', row: i })
+    act(`${action}:${f.id}`, `/api/friends/${f.id}`, { method: 'PATCH', body: JSON.stringify({ action }) }, () => done,
+      { part: 'received', row: i, name: action === 'accept' ? 'Accepter' : 'Refuser' })
   const remove = (f: Friendship, part: Part, i: number, done: string) =>
-    act(`remove:${f.id}`, `/api/friends/${f.id}`, { method: 'DELETE' }, () => done, { part, row: i })
+    act(`remove:${f.id}`, `/api/friends/${f.id}`, { method: 'DELETE' }, () => done, { part, row: i, name: 'Retirer' })
+
+  // Échap, voile ou « Annuler », jamais pendant le retrait. Une relecture a pu retirer la ligne d'origine sous la modale : le focus
+  // rendu tombe alors sur body, et l'effet le passe au « Retirer » de la ligne de même rang.
+  const close = () => {
+    if (inflight.current || !confirm) return
+    refocus.current = { part: 'friends', row: confirm.i, name: 'Retirer' }
+    setConfirm(null)
+  }
 
   const me = data?.me ?? ''
   const s = data && split(me, data.rows)
@@ -130,7 +155,7 @@ export function FriendsClient() {
     <div ref={root} data-ready={data || failed ? '' : undefined} className="space-y-6">
       <PageHeader title={entry.title} icon={entry.icon} />
 
-      <div className="space-y-3">
+      <div>
         <form role="search" onSubmit={search} className="flex">
           {/* Envoi sur Entrée (un seul champ : soumission implicite). */}
           <input
@@ -143,20 +168,27 @@ export function FriendsClient() {
               setText(e.target.value)
               setNote(null)
             }}
-            aria-invalid={!!note || undefined}
+            aria-invalid={note === SHORT || undefined}
             aria-describedby={note ? `${id}-note` : undefined}
             className="min-h-11 min-w-0 flex-1 rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm placeholder:text-[var(--color-foreground)]/60"
           />
         </form>
-        {note && <p id={`${id}-note`} role="alert" className="text-sm font-medium text-red-400">{note}</p>}
-        {hits && (hits.length ? (
-          <ul aria-label="Résultats de la recherche" className="card-frame divide-y divide-[var(--color-border)]">
+        {note && <p id={`${id}-note`} role="alert" className="mt-3 text-sm font-medium text-red-400">{note}</p>}
+        {/* Région présente dès le rendu, vide d'abord : la fin de chaque recherche est annoncée. */}
+        <div role="status">
+          {hits && (hits.length
+            ? <p className="sr-only">{`${formatInt(hits.length)} ${hits.length > 1 ? 'joueurs trouvés' : 'joueur trouvé'}.`}</p>
+            : <p className="mt-3 text-sm">Aucun joueur ne correspond.</p>)}
+        </div>
+        {!!hits?.length && (
+          <ul aria-label="Résultats de la recherche" className="mt-3 card-frame divide-y divide-[var(--color-border)]">
             {hits.map((p) => (
               <li key={p.id} className={row}>
-                <span className={who}>{p.username}</span>
+                <span id={`${id}-hit-${p.id}`} className={who}>{p.username}</span>
                 <button
                   type="button"
                   aria-disabled={busy || undefined}
+                  aria-describedby={`${id}-hit-${p.id}`}
                   onClick={() => void act(`add:${p.id}`, '/api/friends', { method: 'POST', body: JSON.stringify({ addressee_id: p.id }) }, () => `Demande envoyée à ${p.username}.`)}
                   className={primary}
                 >
@@ -165,9 +197,7 @@ export function FriendsClient() {
               </li>
             ))}
           </ul>
-        ) : (
-          <p className="text-sm">Aucun joueur ne correspond.</p>
-        ))}
+        )}
       </div>
 
       {failed ? (
@@ -177,7 +207,9 @@ export function FriendsClient() {
           <button
             ref={retry}
             type="button"
+            // Chargement jusqu'à la relecture : jamais l'ancienne liste et ses boutons actifs.
             onClick={() => {
+              setData(null)
               setFailed(false)
               void read({ part: 'received', row: 0 })
             }}
@@ -209,30 +241,32 @@ export function FriendsClient() {
               </button>
             )}
           >
-            {(f, i) => (
+            {(f, i, desc) => (
               <>
-                <button type="button" aria-disabled={busy || undefined} onClick={() => void answer(f, i, 'accept', `${other(f).username} fait maintenant partie de tes amis.`)} className={primary}>
+                <button type="button" aria-disabled={busy || undefined} aria-describedby={desc} onClick={() => void answer(f, i, 'accept', `${other(f).username} fait maintenant partie de tes amis.`)} className={primary}>
                   Accepter
                 </button>
-                <button type="button" aria-disabled={busy || undefined} onClick={() => void answer(f, i, 'decline', 'Demande refusée.')} className={ghost}>
+                <button type="button" aria-disabled={busy || undefined} aria-describedby={desc} onClick={() => void answer(f, i, 'decline', 'Demande refusée.')} className={ghost}>
                   Refuser
                 </button>
               </>
             )}
           </Section>
           <Section part="sent" title="Demandes envoyées" empty="Aucune demande envoyée." rows={s.sent} other={other}>
-            {(f, i) => (
-              <button type="button" aria-disabled={busy || undefined} onClick={() => void remove(f, 'sent', i, 'Demande retirée.')} className={ghost}>
+            {(f, i, desc) => (
+              <button type="button" aria-disabled={busy || undefined} aria-describedby={desc} onClick={() => void remove(f, 'sent', i, 'Demande retirée.')} className={ghost}>
                 Retirer
               </button>
             )}
           </Section>
           <Section part="friends" title="Amis" empty="Tu n'as pas encore d'amis. Cherche un joueur par son pseudo." rows={s.friends} other={other}>
-            {(f) => (
+            {(f, i, desc) => (
               <>
-                <Link href={`/trades/new?with=${other(f).id}`} className={ghost}>Échanger</Link>
+                <Link href={`/trades/new?with=${other(f).id}`} aria-describedby={desc} className={ghost}>Échanger</Link>
                 {/* Inactif pendant une action : sa fin ferme la modale (act). */}
-                <button type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) setConfirm(f) }} className={ghost}>Retirer</button>
+                <button type="button" aria-disabled={busy || undefined} aria-describedby={desc} onClick={() => { if (!busy) setConfirm({ f, i }) }} className={ghost}>
+                  Retirer
+                </button>
               </>
             )}
           </Section>
@@ -240,15 +274,15 @@ export function FriendsClient() {
       )}
 
       {confirm && s && (
-        <Modal onClose={() => setConfirm(null)} labelledBy={`${id}-confirm`} className="card-frame relative w-full max-w-md animate-fade-in-up space-y-4 p-6">
-          <h2 id={`${id}-confirm`} className="text-xl font-bold wrap-anywhere">{`Retirer ${other(confirm).username} de tes amis ?`}</h2>
+        <Modal onClose={close} labelledBy={`${id}-confirm`} className="card-frame relative w-full max-w-md animate-fade-in-up space-y-4 p-6">
+          <h2 id={`${id}-confirm`} className="text-xl font-bold wrap-anywhere">{`Retirer ${other(confirm.f).username} de tes amis ?`}</h2>
           <p className="text-sm">Les échanges en attente entre vous seront annulés.</p>
           <div className="flex flex-wrap justify-end gap-3">
-            <button type="button" onClick={() => setConfirm(null)} className={ghost}>Annuler</button>
+            <button type="button" aria-disabled={busy || undefined} onClick={close} className={ghost}>Annuler</button>
             <button
               type="button"
               aria-disabled={busy || undefined}
-              onClick={() => void remove(confirm, 'friends', s.friends.findIndex((f) => f.id === confirm.id), `${other(confirm).username} a été retiré de tes amis.`)}
+              onClick={() => void remove(confirm.f, 'friends', confirm.i, `${other(confirm.f).username} a été retiré de tes amis.`)}
               className={danger}
             >
               Retirer
@@ -261,6 +295,7 @@ export function FriendsClient() {
 }
 
 // Une section : son titre (et « Tout accepter »), ses lignes, ou son état vide focalisable (tabIndex -1) quand une ligne disparaît sous le focus.
+// Les contrôles d'une ligne sont décrits par son pseudo (desc, id de useId) : leur nom reste le texte visible.
 function Section({ part, title, empty, rows, other, head, children }: {
   part: Part
   title: string
@@ -268,8 +303,9 @@ function Section({ part, title, empty, rows, other, head, children }: {
   rows: Friendship[]
   other: (f: Friendship) => Player
   head?: ReactNode
-  children: (f: Friendship, i: number) => ReactNode
+  children: (f: Friendship, i: number, desc: string) => ReactNode
 }) {
+  const id = useId()
   return (
     <section data-part={part} className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -280,8 +316,8 @@ function Section({ part, title, empty, rows, other, head, children }: {
         <ul className="card-frame divide-y divide-[var(--color-border)]">
           {rows.map((f, i) => (
             <li key={f.id} className={row}>
-              <span className={who}>{other(f).username}</span>
-              <div className="flex flex-wrap gap-2">{children(f, i)}</div>
+              <span id={`${id}-${f.id}`} className={who}>{other(f).username}</span>
+              <div className="flex flex-wrap gap-2">{children(f, i, `${id}-${f.id}`)}</div>
             </li>
           ))}
         </ul>

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
-import { befriend, expect, giveCopies, makePlayer, routeOnce, sql, test } from './fixtures'
+import { befriend, expect, giveCopies, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a ses joueurs, supprimés à la fin (amitiés et échanges suivent en cascade).
 const trash: string[] = []
@@ -27,6 +27,16 @@ const toasts = (page: Page) => page.locator('#wm-toasts')
 const results = (page: Page) => page.getByRole('list', { name: 'Résultats de la recherche' }).getByRole('listitem')
 const field = (page: Page) => page.locator('#friend-list-search')
 const NO_FRIENDS = 'Tu n\'as pas encore d\'amis. Cherche un joueur par son pseudo.'
+const SHORT = 'La recherche demande au moins 2 caractères'
+
+// Réponse retenue jusqu'à release() ; fetched se résout dès que la requête est interceptée.
+function hold() {
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  let seen = () => {}
+  const fetched = new Promise<void>((r) => { seen = r })
+  return { release, held, fetched, seen }
+}
 
 async function search(page: Page, q: string) {
   await field(page).fill(q)
@@ -64,25 +74,36 @@ test('recherche d\'un joueur neuf, « Ajouter » : toast, la ligne sous « Deman
   await expect(sent.getByText('Aucune demande envoyée.', { exact: true })).toBeFocused()
 })
 
-test('une recherche d\'un caractère : le message, sans requête ; un préfixe inconnu : « Aucun joueur ne correspond. »', async ({ page, login }) => {
+test('une recherche d\'un caractère : le message, sans requête, les résultats d\'avant effacés ; un préfixe inconnu : « Aucun joueur ne correspond. »', async ({ page, login }) => {
   trash.push((await login()).uid)
+  const other = player()
   const asked: string[] = []
   page.on('request', (r) => {
     const u = new URL(r.url())
     if (u.pathname === '/api/friends/search') asked.push(u.searchParams.get('q') ?? '')
   })
   await open(page)
+  await search(page, other.username)
+  await expect(results(page)).toHaveCount(1)
+  // Fin de la recherche annoncée par la région role=status.
+  await expect(page.locator('main [role=status]').filter({ hasText: '1 joueur trouvé.' })).toBeAttached()
   await search(page, ' a ')
-  await expect(page.locator('main').getByRole('alert')).toHaveText('La recherche demande au moins 2 caractères')
+  await expect(page.locator('main').getByRole('alert')).toHaveText(SHORT)
   await expect(field(page)).toHaveAttribute('aria-invalid', 'true')
+  await expect(results(page)).toHaveCount(0)
   // Une vraie recherche ensuite : la requête observée prouve que l'écoute marche, et qu'elle est la seule.
   const q = `zz${randomUUID().slice(-10)}`
   const sent = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/friends/search')
   await search(page, q)
   await sent
-  await expect(page.locator('main').getByText('Aucun joueur ne correspond.', { exact: true })).toBeVisible()
+  await expect(page.locator('main [role=status]').getByText('Aucun joueur ne correspond.', { exact: true })).toBeVisible()
   await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
-  expect(asked).toEqual([q])
+  expect(asked).toEqual([other.username, q])
+  // Recherche en échec : le repli, sans aria-invalid (seul le message de longueur rend le champ invalide).
+  await routeOnce(page, (u) => u.pathname === '/api/friends/search', (r) => r.fulfill({ status: 500 }))
+  await search(page, q)
+  await expect(page.locator('main').getByRole('alert')).toHaveText('La recherche n\'a pas abouti.')
+  await expect(field(page)).not.toHaveAttribute('aria-invalid')
 })
 
 test('demande reçue → « Accepter » : toast, la ligne sous « Amis », « Échanger » vers /trades/new?with=<id>', async ({ page, login }) => {
@@ -127,7 +148,7 @@ test('retrait d\'un ami avec un échange en attente : modale, toast, focus sur l
   const me = await login()
   trash.push(me.uid)
   const other = player()
-  befriend(me, other)
+  const fid = befriend(me, other)
   const [copy] = giveCopies(me, 'C')
   const trade = sql(`select wm.create_trade(:'me', :'other', jsonb_build_array(jsonb_build_object('user_card_id', id, 'card_id', card_id,
   'offered_by', user_id))) ->> 'id' from public.user_cards where id = :'copy'`, { me: me.uid, other: other.uid, copy })
@@ -138,7 +159,20 @@ test('retrait d\'un ami avec un échange en attente : modale, toast, focus sur l
   await expect(dialog.getByRole('heading')).toHaveText(`Retirer ${other.username} de tes amis ?`)
   await expect(dialog.getByText('Les échanges en attente entre vous seront annulés.', { exact: true })).toBeVisible()
   await expect(dialog.getByRole('button')).toHaveText(['Annuler', 'Retirer'])
+  // DELETE retenu : ni Échap, ni le voile, ni « Annuler » ne ferment la modale pendant le retrait.
+  const { release, held } = hold()
+  await routeOnce(page, `**/api/friends/${fid}`, async (route) => {
+    await held
+    await route.fallback()
+  })
+  const sent = page.waitForRequest((r) => r.method() === 'DELETE')
   await dialog.getByRole('button', { name: 'Retirer' }).click()
+  await sent
+  await page.keyboard.press('Escape')
+  await page.mouse.click(4, 4)
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Annuler' })).toHaveAttribute('aria-disabled', 'true')
+  release()
   await expect(toasts(page)).toContainText(`${other.username} a été retiré de tes amis.`)
   await expect(dialog).toBeHidden()
   // Après le démontage de la modale (focus rendu au « Retirer » de la ligne, puis la ligne retirée) : l'état vide de « Amis ».
@@ -161,6 +195,9 @@ test('une ligne d\'ami : le lien « Échanger » et le bouton « Retirer », auc
   await expect(row).toHaveCount(1)
   await expect(row.getByRole('link')).toHaveText(['Échanger'])
   await expect(row.getByRole('button')).toHaveText(['Retirer'])
+  // Nom = texte visible ; le pseudo du joueur en description.
+  await expect(row.getByRole('link')).toHaveAccessibleDescription(other.username)
+  await expect(row.getByRole('button')).toHaveAccessibleDescription(other.username)
   await expect(page.locator('main').getByText(/Message/)).toHaveCount(0)
 })
 
@@ -193,17 +230,26 @@ test('clavier : Tab jusqu\'à la recherche, saisie, Entrée, Tab jusqu\'à « Aj
   await expect(add).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(toasts(page)).toContainText(`Demande envoyée à ${other.username}.`)
+  // Le toast part avant la relecture, que act() attend en gardant sa garde : la demande affichée sous « Demandes envoyées » en est le signe.
+  await expect(section(page, 'Demandes envoyées').getByRole('listitem')).toContainText(other.username)
 
-  // Plus récente d'abord : b, puis a. « Refuser » sur b : la ligne de a prend sa place, et le focus avec elle.
+  // Plus récente d'abord : b, puis a. « Refuser » sur b : la ligne de a prend sa place, et le focus va à son « Refuser » (même contrôle :
+  // Entrée de nouveau refuse, jamais n'accepte).
   const received = section(page, 'Demandes reçues')
+  const refuse = received.getByRole('button', { name: 'Refuser' })
   await expect(received.getByRole('listitem')).toHaveText([b.username, a.username].map((u) => new RegExp(`^${u}`)))
-  await received.getByRole('listitem').first().getByRole('button', { name: 'Refuser' }).focus()
+  await expect(refuse.first()).not.toHaveAttribute('aria-disabled')
+  await refuse.first().focus()
   await page.keyboard.press('Enter')
   await expect(toasts(page)).toContainText('Demande refusée.')
   await expect(received.getByRole('listitem')).toHaveCount(1)
-  await expect(received.getByRole('listitem').getByRole('button', { name: 'Accepter', exact: true })).toBeFocused()
+  await expect(refuse).toBeFocused()
+  await expect(refuse).toHaveAccessibleDescription(a.username)
+  await expect(refuse).not.toHaveAttribute('aria-disabled')
+  await page.keyboard.press('Enter')
+  await expect(received.getByText('Aucune demande reçue.', { exact: true })).toBeFocused()
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false)
-  expect(sql(`select count(*) from public.friendships where requester_id = :'b'`, { b: b.uid })).toBe('0')
+  expect(sql(`select count(*) from public.friendships where requester_id in (:'a', :'b')`, { a: a.uid, b: b.uid })).toBe('0')
 })
 
 test('360 px, un ami au pseudo de 24 caractères sans coupure : ni main ni la page ne défilent en largeur ; cibles ≥ 44 px', async ({ page, login }) => {
@@ -226,4 +272,120 @@ test('360 px, un ami au pseudo de 24 caractères sans coupure : ni main ni la pa
     const box = (await target.boundingBox())!
     expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)
   }
+  // Titre de la modale en text-xl : le pseudo sans coupure y passe à la ligne, la boîte ne déborde pas.
+  await section(page, 'Amis').getByRole('button', { name: 'Retirer' }).click()
+  const dialog = page.getByRole('dialog', { name: `Retirer ${long.username} de tes amis ?` })
+  await expect(dialog).toBeVisible()
+  expect(await dialog.evaluate((d) => d.scrollWidth <= d.clientWidth)).toBe(true)
+})
+
+test('réponse perdue sur « Ajouter » : la relecture montre la demande ; retirée puis ajoutée de nouveau, une demande neuve part', async ({ page, login }) => {
+  trash.push((await login()).uid)
+  const other = player()
+  const keys: string[] = []
+  page.on('request', (r) => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/friends') keys.push(r.headers()['idempotency-key'] ?? '') })
+  await open(page)
+  // Le serveur crée la demande, la réponse se perd : issue inconnue, apiOnce garde la clé.
+  await routeOnce(page, '**/api/friends', async (route) => {
+    await route.fetch()
+    await route.abort()
+  })
+  await search(page, other.username)
+  await results(page).getByRole('button', { name: 'Ajouter' }).click()
+  await expect(toasts(page)).toContainText('L\'action n\'a pas abouti.')
+  const sent = section(page, 'Demandes envoyées')
+  await expect(sent.getByRole('listitem')).toContainText(other.username)
+  await sent.getByRole('button', { name: 'Retirer' }).click()
+  await expect(sent.getByText('Aucune demande envoyée.', { exact: true })).toBeVisible()
+  // La relecture a vidé les clés gardées : la clé d'avant rejouerait le succès stocké, sans rien créer.
+  await results(page).getByRole('button', { name: 'Ajouter' }).click()
+  await expect(toasts(page)).toContainText(`Demande envoyée à ${other.username}.`)
+  await expect(sent.getByRole('listitem')).toContainText(other.username)
+  expect(sql(`select count(*) from public.friendships where addressee_id = :'o'`, { o: other.uid })).toBe('1')
+  expect(keys).toHaveLength(2)
+  expect(keys[0]).not.toBe(keys[1])
+})
+
+test('première lecture lente, rendue après la relecture d\'un ajout : jetée, la demande reste affichée', async ({ page, login }) => {
+  trash.push((await login()).uid)
+  const other = player()
+  // Lue tout de suite (aucune demande), rendue après l'ajout.
+  const { release, held, fetched, seen } = hold()
+  await routeOnce(page, '**/api/friends', async (route) => {
+    const res = await route.fetch()
+    seen()
+    await held
+    await route.fulfill({ response: res })
+  })
+  await page.goto('/friends')
+  // Requête partie de l'effet : la page est hydratée.
+  await fetched
+  await search(page, other.username)
+  await results(page).getByRole('button', { name: 'Ajouter' }).click()
+  const sent = section(page, 'Demandes envoyées')
+  await expect(sent.getByRole('listitem')).toContainText(other.username)
+  const stale = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/friends' && r.request().method() === 'GET')
+  release()
+  await stale
+  // Le temps que la page l'applique si elle ne la jetait pas.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  await expect(sent.getByRole('listitem')).toContainText(other.username)
+})
+
+test('relecture en échec après « Refuser », puis « Réessayer » : le chargement jusqu\'à la relecture, jamais l\'ancienne liste', async ({ page, login }) => {
+  const me = await login()
+  trash.push(me.uid)
+  ask(player(), me)
+  await open(page)
+  await routeOnce(page, '**/api/friends', (r) => r.fulfill({ status: 500 }))
+  await section(page, 'Demandes reçues').getByRole('button', { name: 'Refuser' }).click()
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
+  const { release, held } = hold()
+  await routeOnce(page, '**/api/friends', async (route) => {
+    await held
+    await route.fallback()
+  })
+  await page.getByRole('button', { name: 'Réessayer' }).click()
+  await expect(page.locator('main [role=status]').filter({ hasText: 'Chargement des amis' })).toBeVisible()
+  await expect(page.locator('main section')).toHaveCount(0)
+  release()
+  await expect(section(page, 'Demandes reçues').getByText('Aucune demande reçue.', { exact: true })).toBeFocused()
+})
+
+test('ligne retirée par une relecture sous la modale (réaffichage par Activity) : Échap passe le focus au « Retirer » suivant', async ({ page, login }) => {
+  const me = await login()
+  trash.push(me.uid)
+  const [x, y] = [player(), player()]
+  befriend(x, me)
+  // y plus récent : en tête de « Amis ».
+  const fy = befriend(y, me)
+  await open(page)
+  const friends = section(page, 'Amis')
+  await expect(friends.getByRole('listitem')).toHaveText([y.username, x.username].map((u) => new RegExp(`^${u}`)))
+  // Retour sur la page gardée par Activity : sa relecture attend que l'amitié de y soit retirée ailleurs.
+  const { release, held, fetched, seen } = hold()
+  await routeOnce(page, '**/api/friends', async (route) => {
+    seen()
+    await held
+    await route.fallback()
+  })
+  const nav = page.locator('nav a[href="/collection"]').first()
+  await hydrated(nav)
+  // Marqueur du document : un rechargement complet l'efface, et la page gardée par Activity avec lui.
+  await page.evaluate(() => void Object.assign(window, { __spa: true }))
+  await nav.click()
+  await expect(page).toHaveURL('/collection')
+  await page.locator('nav a[href="/friends"]').first().click()
+  await expect(page).toHaveURL('/friends')
+  expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
+  await fetched
+  await friends.getByRole('listitem').first().getByRole('button', { name: 'Retirer' }).click()
+  const dialog = page.getByRole('dialog', { name: `Retirer ${y.username} de tes amis ?` })
+  await expect(dialog).toBeVisible()
+  sql(`delete from public.friendships where id = :'f'`, { f: fy })
+  release()
+  await expect(friends.getByRole('listitem')).toHaveCount(1)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(friends.getByRole('button', { name: 'Retirer' })).toBeFocused()
 })
