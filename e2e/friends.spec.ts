@@ -156,6 +156,43 @@ test('demande reçue → « Accepter » : toast, la ligne sous « Amis », « É
   await expect(row.getByRole('link', { name: 'Échanger' })).toHaveAttribute('href', `/trades/new?with=${other.uid}`)
 })
 
+test('demande arrivée sur /friends : le poll de 30 s de la cloche la signale, la page la relit sans navigation ; masquée par Activity, elle ne lit rien', async ({ page, login }) => {
+  const me = await login()
+  trash.push(me.uid)
+  const [a, b] = [player(), player()]
+  const friendsReads: string[] = []
+  page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/friends') friendsReads.push(r.method()) })
+  await page.clock.install()
+  // Badge lu une première fois (aucune non lue) avant la demande : seul le poll suivant la voit.
+  const first = page.waitForResponse((r) => new URL(r.url()).pathname === '/rest/v1/notifications')
+  await open(page)
+  await first
+  const received = section(page, 'Demandes reçues')
+  await expect(received).toContainText('Aucune demande reçue.')
+  // wm.friend_request écrit la demande et sa notification friend_request (M4-12).
+  sql(`select wm.friend_request(:'a', :'me')`, { a: a.uid, me: me.uid })
+  await page.clock.runFor(30_000)
+  await expect(page.locator('button[aria-label="Notifications"] + span')).toHaveText('1')
+  await expect(received.getByRole('listitem')).toHaveText(names([a]))
+  await expect(page).toHaveURL('/friends')
+  expect(friendsReads).toEqual(['GET', 'GET'])
+
+  // Page cachée par Activity (lien hydraté, document marqué) : abonnement retiré, le badge change sans relecture de /api/friends.
+  const nav = page.locator('nav a[href="/collection"]').first()
+  await hydrated(nav)
+  await page.evaluate(() => void Object.assign(window, { __spa: true }))
+  await nav.click()
+  await expect(page).toHaveURL('/collection')
+  sql(`select wm.friend_request(:'b', :'me')`, { b: b.uid, me: me.uid })
+  await page.clock.runFor(30_000)
+  await expect(page.locator('button[aria-label="Notifications"] + span')).toHaveText('2')
+  expect(friendsReads).toEqual(['GET', 'GET'])
+  await page.locator('nav a[href="/friends"]').first().click()
+  await expect(page).toHaveURL('/friends')
+  expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
+  await expect(received.getByRole('listitem')).toHaveText(names([b, a]))
+})
+
 test('deux demandes reçues → « Tout accepter » au clavier : « 2 demandes acceptées. », focus sur le premier ami ajouté', async ({ page, login }) => {
   const me = await login()
   trash.push(me.uid)
@@ -327,7 +364,8 @@ test('réponse perdue sur « Ajouter » : la relecture montre la demande ; retir
   })
   await search(page, other.username)
   await results(page).getByRole('button', { name: 'Ajouter' }).click()
-  await expect(toasts(page)).toContainText('L\'action n\'a pas abouti.')
+  // Issue inconnue dite comme telle : la relecture montre ensuite la demande faite.
+  await expect(toasts(page)).toContainText('L\'action n\'a pas été confirmée : elle a peut-être eu lieu.')
   const sent = section(page, 'Demandes envoyées')
   await expect(sent.getByRole('listitem')).toContainText(other.username)
   await sent.getByRole('button', { name: 'Retirer' }).click()

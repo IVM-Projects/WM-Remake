@@ -7,7 +7,7 @@ import { ghost } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
-import { api, userMessage } from '@/lib/api'
+import { api, unsure, userMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { notificationView, unreadStore, type Notification } from '@/lib/notifications'
 
@@ -26,7 +26,9 @@ export function NotificationPanel({ onClose }: { onClose: () => void }) {
   // Rang de la ligne dont le « Marquer comme lu » vient de disparaître sous le focus.
   const refocus = useRef<number | null>(null)
 
-  const load = () => api<{ notifications: Notification[] }>('/api/notifications').then((r) => setList(r.notifications), () => setFailed(true))
+  // 2xx au corps illisible (api() rend null) : une lecture en échec, jamais le chargement sans fin.
+  const load = () => api<{ notifications: Notification[] } | null>('/api/notifications')
+    .then((r) => (Array.isArray(r?.notifications) ? setList(r.notifications) : setFailed(true)), () => setFailed(true))
   const onOpen = useEffectEvent(load)
   useEffect(() => void onOpen(), [])
 
@@ -53,7 +55,7 @@ export function NotificationPanel({ onClose }: { onClose: () => void }) {
       // l'ancien compte, renverrait un PATCH {} sous une clé neuve.
       await store.refresh()
     } catch (e) {
-      toast(userMessage(e, 'L\'action n\'a pas abouti.'))
+      toast(userMessage(e, unsure(e) ? 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.' : 'L\'action n\'a pas abouti.'))
     } finally {
       inflight.current = false
       setBusy(false)

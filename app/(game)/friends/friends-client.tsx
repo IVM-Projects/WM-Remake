@@ -1,15 +1,16 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useEffectEvent, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
 import { ghost } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
-import { api, apiOnce, userMessage } from '@/lib/api'
+import { api, apiOnce, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
+import { unreadStore } from '@/lib/notifications'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 
 const entry = navEntry('/friends')
@@ -59,7 +60,8 @@ export function FriendsClient() {
   const root = useRef<HTMLDivElement>(null)
   const retry = useRef<HTMLButtonElement>(null)
 
-  // Sans polling (Q25 : la cloche signale les demandes) : lue à chaque affichage (Activity compris), après chaque action et sur « Réessayer ».
+  // Sans polling propre (Q25 : la cloche signale les demandes) : lue à chaque affichage (Activity compris), quand le compte de la cloche
+  // change, après chaque action et sur « Réessayer ».
   const read = (focus: Focus | null = null) => {
     const g = ++readGen.current
     return Promise.all([api<{ friendships: Friendship[] }>('/api/friends'), createBrowserSupabase().auth.getSession()]).then(
@@ -78,8 +80,11 @@ export function FriendsClient() {
       setFailed(!next)
     })
   }
+  // Compte du poller partagé de la cloche (M4-13), aucun de plus : abonnement retiré au démontage et au masquage par Activity. Un seul
+  // effet, donc une seule lecture au montage.
+  const unread = useSyncExternalStore(unreadStore().subscribe, unreadStore().get, () => 0)
   const onShow = useEffectEvent(() => void read())
-  useEffect(() => onShow(), [])
+  useEffect(() => onShow(), [unread])
 
   // Relecture rendue, ou modale fermée : une ligne disparue sous le focus le passe à sa voisine ou à l'état vide (modale déjà démontée,
   // son focus rendu au « Retirer » de la ligne s'il existe encore), une lecture en échec au « Réessayer ». Rien si le joueur a mis le
@@ -129,7 +134,7 @@ export function FriendsClient() {
     try {
       toast(done(await apiOnce<T>(keys.current, intent, path, init)))
     } catch (e) {
-      toast(userMessage(e, 'L\'action n\'a pas abouti.'))
+      toast(userMessage(e, unsure(e) ? 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.' : 'L\'action n\'a pas abouti.'))
     }
     // Modale démontée avant la relecture : elle rend le focus au « Retirer » de la ligne, que la relecture retire ensuite.
     setConfirm(null)

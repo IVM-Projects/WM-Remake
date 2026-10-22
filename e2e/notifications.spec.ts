@@ -92,7 +92,7 @@ test('douze non lues : « 9+ » ; le lien d\'un échange reçu mène à /trades/
   expect((await links.evaluateAll((as) => as.map((a) => a.getAttribute('href')))).sort()).toEqual(trades.map((t) => `/trades/${t}`).sort())
 })
 
-test('lecture en échec : « Impossible de charger cette page. » et « Réessayer », qui rend la liste', async ({ page, login }) => {
+test('lecture en échec : « Impossible de charger cette page. » et « Réessayer », qui rend la liste ; un 200 illisible de même', async ({ page, login }) => {
   const { uid } = await login()
   trash.push(uid)
   received(uid, 1)
@@ -104,6 +104,15 @@ test('lecture en échec : « Impossible de charger cette page. » et « Réessay
   await panel(page).getByRole('button', { name: 'Réessayer' }).click()
   await expect(panel(page).getByRole('link', { name: ALICE })).toBeVisible()
   await expect(page.locator('body')).not.toBeFocused()
+
+  // 200 au corps illisible (api() rend null) : une lecture en échec, jamais « Chargement des notifications » sans fin.
+  await page.keyboard.press('Escape')
+  await expect(panel(page)).toBeHidden()
+  await routeOnce(page, '**/api/notifications', (r) => r.fulfill({ status: 200, body: 'x' }))
+  await bell(page).click()
+  await expect(panel(page).getByRole('alert')).toHaveText('Impossible de charger cette page.')
+  await panel(page).getByRole('button', { name: 'Réessayer' }).click()
+  await expect(panel(page).getByRole('link', { name: ALICE })).toBeVisible()
 })
 
 test('surenchère du M3 : « Tu as été surenchéri sur <card_title> », lien vers l\'enchère', async ({ page, login }) => {

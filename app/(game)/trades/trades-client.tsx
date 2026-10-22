@@ -46,14 +46,18 @@ export function TradesClient() {
   // Rang de l'offre focalisée quand une lecture s'applique (0 pour l'état vide, « Réessayer » ou son clic) : si l'élément disparaît sous le
   // focus, l'offre qui prend sa place, la dernière au-delà, ou l'état vide de l'onglet.
   const refocus = useRef<number | null>(null)
+  // Génération de la dernière lecture partie : un poll lent rendu après une lecture plus récente ne remet pas l'ancienne liste.
+  const gen = useRef(0)
 
   // Lue à chaque affichage (Activity compris), puis toutes les 20 s onglet visible (M4-15). Une relecture en échec garde la liste d'avant :
-  // l'erreur ne s'affiche que sans liste. Un 2xx au corps illisible (api() rend null) est une lecture en échec.
-  const read = () =>
-    Promise.all([api<{ trades: Trade[] } | null>('/api/trades'), createBrowserSupabase().auth.getSession()]).then(
-      ([r, { data: auth }]) => r && auth.session && { me: auth.session.user.id, trades: r.trades },
+  // l'erreur ne s'affiche que sans liste. Un 2xx au corps illisible (api() rend null) ou sans `trades` est une lecture en échec.
+  const read = () => {
+    const g = ++gen.current
+    return Promise.all([api<{ trades: Trade[] } | null>('/api/trades'), createBrowserSupabase().auth.getSession()]).then(
+      ([r, { data: auth }]) => (Array.isArray(r?.trades) && auth.session ? { me: auth.session.user.id, trades: r.trades } : null),
       () => null,
     ).then((next) => {
+      if (g !== gen.current) return
       // Armé sur une lecture réussie seulement : setData la rend toujours, donc l'effet le consomme. Un échec ne retire rien de focalisé (la
       // liste reste, ou la carte d'erreur revient) et, sans changement d'état, laisserait l'armement en place.
       if (next) {
@@ -65,6 +69,7 @@ export function TradesClient() {
       }
       setFailed(!next)
     })
+  }
   const onShow = useEffectEvent(() => void read())
   useEffect(() => onShow(), [])
   usePoll(read, 20_000)

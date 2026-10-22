@@ -205,13 +205,16 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
   }
 
   // Toute modification fait un autre corps, donc une autre clé : l'alerte d'un envoi incertain (« pas créé deux fois ») ne vaut plus.
+  // Rien pendant l'envoi : une issue inconnue doit valoir pour le corps envoyé, que la relance renvoie sous la même clé.
   const setQty = (w: Which, copy: string, text: string, max: number) => {
+    if (inflight.current) return
     setError(null)
     setDraft({ id: copy, text })
     setPicks((p) => ({ ...p, [w]: { ...p[w], [copy]: Math.min(Math.max(Math.trunc(Number(text)) || 0, 0), max) } }))
   }
 
   const remove = (w: Which, copy: string, i: number) => {
+    if (inflight.current) return
     // La ligne disparaît sous le focus : le « Retirer » qui prend sa place, sinon le filtre du panneau.
     refocus.current = () => {
       const panel = root.current?.querySelector(`[data-side="${w}"]`)
@@ -223,6 +226,7 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
   }
 
   const setAmount = (w: Which, text: string) => {
+    if (inflight.current) return
     setError(null)
     setWb((x) => ({ ...x, [w]: text.replace(/\D/g, '') }))
   }
@@ -297,6 +301,7 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
                     aria-label={`Quantité de ${t}`}
                     aria-describedby={`${id}-${c.id}`}
                     value={draft?.id === c.id ? draft.text : String(p[c.id] ?? 0)}
+                    readOnly={sending}
                     onChange={(e) => setQty(w, c.id, e.target.value, c.count)}
                     onBlur={() => setDraft(null)}
                     className={`${field} w-20`}
@@ -319,7 +324,7 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
             {chosen.map((c, i) => (
               <li key={c} className="flex flex-wrap items-center justify-between gap-2">
                 <span id={`${id}-pick-${c}`} className="min-w-0 text-sm wrap-anywhere">{`${known.titleOf[c]} ×${formatInt(p[c])}`}</span>
-                <button type="button" aria-describedby={`${id}-pick-${c}`} onClick={() => remove(w, c, i)} className={ghost}>Retirer</button>
+                <button type="button" aria-disabled={sending || undefined} aria-describedby={`${id}-pick-${c}`} onClick={() => remove(w, c, i)} className={ghost}>Retirer</button>
               </li>
             ))}
           </ul>
@@ -355,6 +360,7 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
                   autoComplete="off"
                   placeholder="0"
                   value={wb[w]}
+                  readOnly={sending}
                   onChange={(e) => setAmount(w, e.target.value)}
                   // maxLength couperait « 10 000 » collé avant le retrait de l'espace : le texte collé à la sélection, les chiffres seuls, puis les
                   // 5 premiers ; un texte sans chiffre ne change rien.

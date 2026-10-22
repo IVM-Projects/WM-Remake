@@ -54,8 +54,8 @@ export function TradeClient() {
     return api<{ trade: Trade } | null>(`/api/trades/${id}`).then(
       (r) => {
         if (started < hold.current) return
-        // 2xx au corps illisible (portail captif, connexion coupée après les en-têtes) : api() rend null, une lecture en échec.
-        if (!r) return setFailed(true)
+        // 2xx au corps illisible (portail captif, connexion coupée après les en-têtes : api() rend null) ou sans `trade` : une lecture en échec.
+        if (!r?.trade) return setFailed(true)
         setTrade(r.trade)
         setFailed(false)
       },

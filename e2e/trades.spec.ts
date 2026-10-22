@@ -138,7 +138,9 @@ test('Review Focus, échéance passée sans cron : « · Expiré » sous « Hist
   await expect(page.locator('main time')).toHaveText('Terminée')
   await expect(actions(page)).toHaveCount(0)
 
-  expect(sql(`select wm.expire_trades()`)).not.toBe('')
+  // Échu mais encore pending (P3) ; le compte rendu porte aussi les échus des autres workers (base partagée), d'où « au moins 1 ».
+  expect(sql(`select status from public.trades where id = :'id'`, { id })).toBe('pending')
+  expect(Number(sql(`select wm.expire_trades()`))).toBeGreaterThanOrEqual(1)
   expect(sql(`select status from public.trades where id = :'id'`, { id })).toBe('expired')
   await open(page)
   await tab(page, 'Historique').click()
@@ -427,7 +429,7 @@ test('clavier : Tab jusqu\'à l\'offre, Entrée → détail ; Tab jusqu\'à « A
   await expect(toasts(page)).toContainText('Échange accepté.')
 })
 
-test('lecture en échec : « Impossible de charger cette page. » et « Réessayer », qui rend les onglets', async ({ page, login }) => {
+test('lecture en échec : « Impossible de charger cette page. » et « Réessayer », qui rend les onglets ; un 200 illisible ou sans `trades` de même', async ({ page, login }) => {
   trash.push((await login()).uid)
   await routeOnce(page, '**/api/trades', (r) => r.fulfill({ status: 500 }))
   await open(page)
@@ -440,6 +442,13 @@ test('lecture en échec : « Impossible de charger cette page. » et « Réessay
 
   // 200 au corps illisible (portail captif, connexion coupée après les en-têtes) : api() rend null, une lecture en échec comme une autre.
   await routeOnce(page, '**/api/trades', (r) => r.fulfill({ status: 200, body: 'x' }))
+  await open(page)
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
+  await page.getByRole('button', { name: 'Réessayer' }).click()
+  await expect(page.getByRole('tab')).toHaveText(['Reçues', 'Envoyées', 'Historique'])
+
+  // 200 en JSON sans `trades` : de même, jamais une erreur au rendu.
+  await routeOnce(page, '**/api/trades', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }))
   await open(page)
   await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
   await page.getByRole('button', { name: 'Réessayer' }).click()
@@ -849,6 +858,55 @@ test('clé gardée (M4-8) : POST passé au serveur puis 503, l\'incertitude dite
   await send.click()
   await expect(page).toHaveURL(TRADE_URL)
   expect(keys).toHaveLength(3)
+  expect(new Set(keys).size).toBe(1)
+  expect(sql(`select count(*) from public.trades where initiator_id = :'me'`, { me: me.uid })).toBe('1')
+})
+
+test('envoi en vol : quantité, « Retirer » et wikibidous figés pendant le POST ; le 503 qui suit vaut pour le corps envoyé, la relance garde sa clé, un seul échange', async ({ page, login }) => {
+  const { me, other, mine } = await friends(login, 1)
+  const keys: string[] = []
+  page.on('request', (r) => { if (posts(r)) keys.push(r.headers()['idempotency-key'] ?? '') })
+  // Le POST passe au serveur et s'y fait ; sa réponse est retenue jusqu'à release(), puis remplacée par un 503.
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  let seen = () => {}
+  const arrived = new Promise<void>((r) => { seen = r })
+  await routeOnce(page, '**/api/trades', async (r) => {
+    await r.fetch()
+    seen()
+    await held
+    await r.fulfill({ status: 503, body: '' })
+  }, (r) => r.request().method() === 'POST')
+  await open(page, `/trades/new?with=${other.uid}`)
+  const input = qty(offerPanel(page), mine[0])
+  const wb = page.getByLabel('Wikibidous offerts')
+  await input.fill('1')
+  await wb.fill('5')
+  await page.getByRole('button', { name: 'Proposer l\'échange' }).click()
+  await arrived
+  await expect(input).toHaveAttribute('readonly', '')
+  await expect(wb).toHaveAttribute('readonly', '')
+  // Au clavier : fill attendrait un champ modifiable.
+  for (const [field, text] of [[input, '0'], [wb, '7']] as const) {
+    await field.focus()
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.type(text)
+  }
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.evaluate(() => navigator.clipboard.writeText('42'))
+  await wb.focus()
+  await page.keyboard.press('ControlOrMeta+V')
+  await offerPanel(page).getByRole('list', { name: 'Tes choix' }).getByRole('button', { name: 'Retirer' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(input).toHaveValue('1')
+  await expect(wb).toHaveValue('5')
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
+  release()
+  await expect(page.locator('main').getByRole('alert')).toHaveText(UNSURE_SEND)
+  await expect(input).not.toHaveAttribute('readonly')
+  await page.getByRole('button', { name: 'Proposer l\'échange' }).click()
+  await expect(page).toHaveURL(TRADE_URL)
+  expect(keys).toHaveLength(2)
   expect(new Set(keys).size).toBe(1)
   expect(sql(`select count(*) from public.trades where initiator_id = :'me'`, { me: me.uid })).toBe('1')
 })

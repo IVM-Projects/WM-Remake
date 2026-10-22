@@ -52,6 +52,7 @@ test('parcours M4a au clavier : demande d\'ami → acceptation → échange → 
     const [z] = giveCopies(a, 'C', 1)
     const [x, y] = giveCopies(b, 'PC', 2)
     const [Z, X, Y] = [z, x, y].map(titleOf)
+    const [cz, cx, cy] = [z, x, y].map((copy) => sql(`select card_id from public.user_cards where id = :'copy'`, { copy }))
     for (const u of [a, b]) {
       const ctx = await browser.newContext()
       contexts.push(ctx)
@@ -151,6 +152,11 @@ test('parcours M4a au clavier : demande d\'ami → acceptation → échange → 
     await expect(balance(bp)).toHaveText('110 wikibidous')
     expect(sql(`select sum(wikibidous_balance) from public.profiles where id = any(string_to_array(:'uids', ',')::uuid[])`,
       { uids: uids.join(',') })).toBe('200')
+    // Déplacées, jamais copiées : pour chaque carte, une seule ligne chez A et B, d'une unité, chez son nouveau propriétaire.
+    for (const [card, owner] of [[cx, a], [cy, a], [cz, b]] as const) {
+      expect(sql(`select string_agg(user_id || ':' || count, ',') from public.user_cards where card_id = :'card'
+and user_id = any(string_to_array(:'uids', ',')::uuid[])`, { card, uids: uids.join(',') })).toBe(`${owner.uid}:1`)
+    }
 
     // 8. Cloches, plus récente d'abord.
     await ap.goto('/pulls')

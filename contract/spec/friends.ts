@@ -4,14 +4,15 @@ import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
 import { api, failed, giveCards, idem, Iso, makeUser, noSession, ok, psql, refused, send } from '../users.ts'
 
+// Formes strictes (comme trades.ts et notifications.ts) : une clé en plus ferait échouer le cas au lieu de disparaître avant le deepEqual.
 // Joueur de wm.friend_search et des deux côtés de wm.friendship_json (R§3.7).
-const UserHit = z.object({ id: z.uuid(), username: z.string(), avatar_url: z.string().nullable() })
-// Objet Friendship de wm.friendship_json : la ligne de public.friendships et ses deux joueurs.
-const Friendship = z.object({
+const UserHit = z.strictObject({ id: z.uuid(), username: z.string(), avatar_url: z.string().nullable() })
+// Objet Friendship de wm.friendship_json : les 5 colonnes de public.friendships (to_jsonb, aucune autre au miroir 0005) et ses deux joueurs.
+const Friendship = z.strictObject({
   id: z.uuid(), status: z.enum(['pending', 'accepted']), requester_id: z.uuid(), addressee_id: z.uuid(),
   requester: UserHit, addressee: UserHit, created_at: Iso,
-}).loose()
-const One = z.object({ friendship: Friendship })
+})
+const One = z.strictObject({ friendship: Friendship })
 
 const db = (env: ContractEnv) => env.backend.databaseUrl
 const sql = (env: ContractEnv, query: string, vars: Record<string, string> = {}) => psql(db(env), query, vars)
@@ -49,7 +50,7 @@ export const friendsList: RouteSpec = {
         const accepted = befriend(env, friend.uid, me.uid)
         befriend(env, x.uid, y.uid)
         request(env, x.uid, from.uid)
-        const { friendships } = await ok(await api(env, '/api/friends', { uid: me.uid }), z.object({ friendships: z.array(Friendship) }))
+        const { friendships } = await ok(await api(env, '/api/friends', { uid: me.uid }), z.strictObject({ friendships: z.array(Friendship) }))
         assert.deepEqual(friendships.map(who), [
           [accepted, 'accepted', friend.uid, friend.username, me.uid, me.username],
           [sent, 'pending', me.uid, me.username, to.uid, to.username],
@@ -73,7 +74,7 @@ export const friendSearch: RouteSpec = {
         const prefix = `f${randomUUID().slice(0, 5)}`
         const target = makeUser(db(env), { username: `${prefix}a${randomUUID().slice(-6)}` })
         const me = makeUser(db(env), { username: `${prefix}b${randomUUID().slice(-6)}` })
-        const res = await ok(await api(env, `/api/friends/search?q=${target.username.slice(0, 6)}`, { uid: me.uid }), z.object({ users: z.array(UserHit) }))
+        const res = await ok(await api(env, `/api/friends/search?q=${target.username.slice(0, 6)}`, { uid: me.uid }), z.strictObject({ users: z.array(UserHit) }))
         assert.deepEqual(res.users, [{ id: target.uid, username: target.username, avatar_url: null }])
       },
     },
