@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { BrowserContext, Page } from '@playwright/test'
 import { formatInt } from '../lib/format.ts'
 import { cookieFor, expect, makePlayer, sql, test } from './fixtures'
 
@@ -21,15 +21,17 @@ test('parcours M3 : mise en vente → mise → surenchère et remboursement → 
   const seller = makePlayer({ humanVerified: true })
   const a = makePlayer({ balance: 100, humanVerified: true })
   const b = makePlayer({ balance: 100, humanVerified: true })
-  const contexts = await Promise.all([seller, a, b].map(async (u) => {
-    const ctx = await browser.newContext()
-    await ctx.addCookies([{ ...cookieFor(u), url: baseURL! }])
-    return ctx
-  }))
+  // Chaque contexte rangé dès sa création : un échec d'addCookies n'en laisse aucun ouvert.
+  const contexts: BrowserContext[] = []
   // Règlement sans clic : aucun POST …/settle d'aucun des trois joueurs.
   const settles: string[] = []
-  for (const ctx of contexts) ctx.on('request', (r) => { if (new URL(r.url()).pathname.endsWith('/settle')) settles.push(r.url()) })
   try {
+    for (const u of [seller, a, b]) {
+      const ctx = await browser.newContext()
+      contexts.push(ctx)
+      await ctx.addCookies([{ ...cookieFor(u), url: baseURL! }])
+      ctx.on('request', (r) => { if (new URL(r.url()).pathname.endsWith('/settle')) settles.push(r.url()) })
+    }
     const [sp, ap, bp] = await Promise.all(contexts.map((c) => c.newPage()))
 
     // Vendeur : un paquet, puis la première tuile de sa collection mise aux enchères (10, « 10 min »).
@@ -61,6 +63,9 @@ test('parcours M3 : mise en vente → mise → surenchère et remboursement → 
     await expect(amountField(ap)).toHaveValue('10')
     await ap.getByRole('button', { name: 'Miser' }).click()
     await expect(leading(ap)).toBeVisible()
+    // Débitée à la mise : le 100 de l'étape 5 est alors un remboursement, pas une mise jamais prélevée.
+    await ap.goto('/collection')
+    await expect(balance(ap)).toHaveText('90 wikibidous')
 
     // B : le champ suit min_next_bid, au besoin après un passage du polling (détail partagé jusqu'à 2 s, polling à 10 s).
     await bp.goto(`/marketplace/${id}`)
