@@ -11,12 +11,12 @@ const tile = (page: Page, id: string) => page.locator(`[id="marketplace-auction-
 const ACTIVE = /border-b-2 border-amber-500 text-amber-600/
 const order = (page: Page) => tiles(page).evaluateAll((els) => els.map((e) => e.id.replace('marketplace-auction-', '')))
 // Relecture de la page sans attendre son polling : un retour en visible lance tout de suite un passage (lib/poll.ts), répété tant que le
-// cache partagé (liste 2 s, détail 1 s) sert l'état d'avant.
+// cache partagé (liste servie jusqu'à 3 s, détail jusqu'à 2 s) sert l'état d'avant ; 10 s : marge sur un runner chargé.
 async function rereadUntil(page: Page, read: () => Promise<unknown>, expected: number | RegExp) {
   await expect.poll(async () => {
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     return read()
-  }).toEqual(typeof expected === 'number' ? expected : expect.stringMatching(expected))
+  }, { timeout: 10_000 }).toEqual(typeof expected === 'number' ? expected : expect.stringMatching(expected))
 }
 
 // Comptes et cartes du test : auth.users d'abord (cascade vers profils, enchères, copies), puis la carte (clés sans cascade).
