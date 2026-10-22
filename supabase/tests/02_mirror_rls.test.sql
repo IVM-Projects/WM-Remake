@@ -21,7 +21,7 @@ do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob
   insert into public.friendships (requester_id, addressee_id, status) values (a, b, 'accepted');
   insert into public.trades (initiator_id, recipient_id, expires_at) values (a, b, now() + interval '168 hours') returning id into t;
   insert into public.trade_items (trade_id, offered_by, user_card_id, card_id, snapshot_rarity)
-  select t, user_id, id, card_id, snapshot_rarity from public.user_cards;
+  select t, user_id, id, card_id, snapshot_rarity from public.user_cards where user_id in (a, b);
 end $$;
 
 do $$ begin
@@ -102,12 +102,17 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
   perform tests.reset_role();
 end $$;
 
--- Échanges et amitiés : Bob lit l'échange, ses deux éléments et l'amitié ; Carol, étrangère, rien (M4-14) ;
+-- Échanges et amitiés : Bob et Alice lisent l'échange, ses deux éléments et l'amitié ; Carol, étrangère, rien (M4-14) ;
 -- aucune écriture client ; anon ne lit pas les échanges.
 do $$ declare a uuid := (select id from public.profiles where username = 'Alice');
               b uuid := (select id from public.profiles where username = 'Bob');
               ca uuid := (select id from public.profiles where username = 'Carol');
               tr uuid := (select id from public.trades); s text; begin
+  -- Les deux côtés : une politique réduite au destinataire (ou au demandeur) ne passe pas.
+  perform tests.login(a);
+  assert (select array_agg(id) from public.trades) = array[tr], 'Alice ne voit pas son échange';
+  assert (select count(*) from public.trade_items where trade_id = tr) = 2, 'Alice ne voit pas les deux éléments';
+  assert (select count(*) from public.friendships) = 1, 'Alice ne voit pas l''amitié';
   perform tests.login(b);
   assert (select array_agg(id) from public.trades) = array[tr], 'Bob ne voit pas l''échange d''Alice';
   assert (select count(*) from public.trade_items where trade_id = tr) = 2, 'Bob ne voit pas les deux éléments';

@@ -19,7 +19,8 @@ many="$(q -c "select (wm.grant_copy('$uid', '$card', true)).id")"
 q -c "update public.user_cards set count = 25 where id = '$many'" >/dev/null
 
 # Le profil est verrouillé le temps de lancer les 50 appels : ils se disputent tous le même verrou à sa libération.
-q -c "begin; select from public.profiles where id = '$uid' for update; select pg_sleep(2); commit;" >/dev/null &
+# 1 s, la moitié du lock_timeout de bulk_discard (M4-2) : les dernières défausses de la file attendent moins de 2 s.
+q -c "begin; select from public.profiles where id = '$uid' for update; select pg_sleep(1); commit;" >/dev/null &
 blocker=$!
 until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do kill -0 "$blocker"; done
 
