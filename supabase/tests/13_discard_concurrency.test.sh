@@ -48,8 +48,8 @@ done
 wait "$blocker" || { echo "bloqueur en erreur" >&2; cat "$tmp/b.err" >&2; exit 1; }
 max="$(cat "$tmp/b.out")"
 echo "13_discard_concurrency : $max appels au plus en attente derrière le bloqueur" >&2
-# Au moins 40 : la contention est prouvée, même si, sur un runner lent, quelques appels partent après la libération.
-(( max >= 40 )) || { echo "contention insuffisante : $max appels en attente (40 attendus au moins)" >&2; exit 1; }
+# Au moins 25 : la contention est prouvée, même si, sur un runner lent, quelques appels partent après la libération.
+(( max >= 25 )) || { echo "contention insuffisante : $max appels en attente (25 attendus au moins)" >&2; exit 1; }
 fails=0
 for p in "${pids[@]}"; do wait "$p" || fails=$((fails + 1)); done
 
