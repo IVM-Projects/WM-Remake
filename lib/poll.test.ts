@@ -87,6 +87,25 @@ test('delay relu à chaque tour (2 000, puis 10 000) ; après stop(), plus aucun
   expect(run).toHaveBeenCalledTimes(2)
 })
 
+test('deux visible de suite pendant l\'attente : une seule chaîne (le minuteur en cours est annulé)', async () => {
+  const run = vi.fn()
+  const { doc, show } = fakeDoc()
+  createPoller({ run, delay: () => 15_000, doc })
+  await vi.advanceTimersByTimeAsync(1_000)
+  show('visible')
+  show('visible')
+  await vi.advanceTimersByTimeAsync(0)
+  expect(run).toHaveBeenCalledTimes(1)
+  // Le minuteur d'origine (15 s) ne part plus : prochain passage à 16 s, puis à 31 s.
+  await vi.advanceTimersByTimeAsync(14_999)
+  expect(run).toHaveBeenCalledTimes(1)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(run).toHaveBeenCalledTimes(2)
+  await vi.advanceTimersByTimeAsync(15_000)
+  expect(run).toHaveBeenCalledTimes(3)
+  expect(vi.getTimerCount()).toBe(1)
+})
+
 test('un run qui échoue n\'arrête pas le polling', async () => {
   const run = vi.fn().mockRejectedValueOnce(new Error('réseau')).mockResolvedValue(undefined)
   const { doc } = fakeDoc()

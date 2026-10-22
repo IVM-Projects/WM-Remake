@@ -20,6 +20,8 @@ export function createPoller(o: {
     timer = !stopped && doc.visibilityState === 'visible' ? setTimer(tick, delay()) : undefined
   }
   async function tick() {
+    // Un retour en visible pendant l'attente lance tick directement : le minuteur en cours est annulé, une seule chaîne survit.
+    clearTimer(timer)
     timer = undefined
     if (running || stopped || doc.visibilityState !== 'visible') return
     running = true

@@ -46,6 +46,12 @@ describe('AuctionTile (DOM du contrat, R§6.8)', () => {
     expect(h).toContain('<p class="truncate">Vendu par Alice</p>')
   })
 
+  test('enchère qui n\'est plus active (retirée, end_at encore futur) : « Terminée », jamais un compte à rebours', () => {
+    const future = new Date(Date.now() + 3_600_000).toISOString()
+    expect(html({ status: 'cancelled', end_at: future })).toMatch(/<time [^>]*>Terminée<\/time>/)
+    expect(html({ end_at: future })).toMatch(/<time [^>]*><\/time>/)
+  })
+
   test('face figée (P30) : rareté du snapshot (UR), pas celle du catalogue (C)', () => {
     const h = html()
     expect(h).toMatch(/class="[^"]*\bglow-ur\b/)

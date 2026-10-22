@@ -30,3 +30,24 @@ test('une mesure plus basse de moins d\'une seconde (troncature) ne fait pas rec
   noteServerDate(at('Tue, 20 Oct 2026 10:00:01 GMT'))
   expect(serverNow()).toBe(Date.parse('2026-10-20T10:00:01.000Z'))
 })
+
+test('subscribeClock : deux abonnés partagent un seul minuteur de 250 ms, arrêté quand le dernier se désabonne', async () => {
+  const { subscribeClock } = await import('./clock')
+  vi.useFakeTimers()
+  const [a, b] = [vi.fn(), vi.fn()]
+  const offA = subscribeClock(a)
+  const offB = subscribeClock(b)
+  expect(vi.getTimerCount()).toBe(1)
+  vi.advanceTimersByTime(250)
+  expect([a.mock.calls.length, b.mock.calls.length]).toEqual([1, 1])
+  offA()
+  expect(vi.getTimerCount()).toBe(1)
+  vi.advanceTimersByTime(250)
+  expect([a.mock.calls.length, b.mock.calls.length]).toEqual([1, 2])
+  offB()
+  expect(vi.getTimerCount()).toBe(0)
+  // Un nouvel abonné relance le minuteur.
+  const offC = subscribeClock(a)
+  expect(vi.getTimerCount()).toBe(1)
+  offC()
+})

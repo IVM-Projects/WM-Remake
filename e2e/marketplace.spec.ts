@@ -8,6 +8,7 @@ const title = () => `Zz marché e2e ${randomUUID().slice(-12)}`
 const tiles = (page: Page) => page.locator('[id^="marketplace-auction-"]').filter({ visible: true })
 const tile = (page: Page, id: string) => page.locator(`[id="marketplace-auction-${id}"]`).filter({ visible: true })
 const ACTIVE = /border-b-2 border-amber-500 text-amber-600/
+const order = (page: Page) => tiles(page).evaluateAll((els) => els.map((e) => e.id.replace('marketplace-auction-', '')))
 
 // Comptes et cartes du test : auth.users d'abord (cascade vers profils, enchères, copies), puis la carte (clés sans cascade).
 const trash = { uids: [] as string[], cards: [] as string[] }
@@ -77,6 +78,17 @@ test('en-tête, sous-titre, cinq onglets (Parcourir actif) ; une recherche d\'un
   await expect(page.getByText('Aucune vente terminée.', { exact: true })).toBeVisible()
   await page.keyboard.press('ArrowRight')
   await expect(tablist.getByRole('tab', { name: 'Parcourir' })).toBeFocused()
+
+  // 360 px : les onglets restent sur une ligne et défilent dans leur conteneur ; ni la page ni main ne défilent en largeur.
+  await page.setViewportSize({ width: 360, height: 800 })
+  expect(await tablist.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  expect(await page.locator('main').evaluate((m) => m.scrollWidth <= m.clientWidth)).toBe(true)
+  const sides = await tablist.getByRole('tab').evaluateAll((els) => els.map((e) => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height)))
+  expect(Math.min(...sides)).toBeGreaterThanOrEqual(44)
+  await page.keyboard.press('End')
+  await expect(tablist.getByRole('tab', { name: 'Historique (0)' })).toBeFocused()
+  await expect(tablist.getByRole('tab', { name: 'Historique (0)' })).toBeInViewport()
 })
 
 test('51 enchères d\'une carte : 50 tuiles du contrat, puis 51 après « Charger la suite » ; cibles ≥ 44 px', async ({ page, login }) => {
@@ -115,15 +127,21 @@ test('tri « Prix croissant » sur coalesce(current_bid, base_amount) ; pastille
   const { ids } = listAuctions(3, t, 'R')
   const bidder = makePlayer({ balance: 1000, humanVerified: true })
   trash.uids.push(bidder.uid)
+  // Mises sur les plus récentes : « Prix croissant » donne l'inverse de « Récentes », un tri ignoré ne passerait pas.
   sql(`\\o /dev/null
-select wm.place_bid(:'b', :'a0', 300);
-select wm.place_bid(:'b', :'a1', 200)`, { b: bidder.uid, a0: ids[0], a1: ids[1] })
+select wm.place_bid(:'b', :'a2', 300);
+select wm.place_bid(:'b', :'a1', 200)`, { b: bidder.uid, a1: ids[1], a2: ids[2] })
   await page.goto('/marketplace')
   await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).fill(t)
   await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).press('Enter')
-  await expect(tiles(page)).toHaveCount(3)
+  await expect.poll(() => order(page)).toEqual([ids[2], ids[1], ids[0]])
+  const sorted = page.waitForResponse((r) => {
+    const u = new URL(r.url())
+    return u.pathname === '/api/marketplace' && u.searchParams.get('sort') === 'price_asc' && u.searchParams.get('q') === t
+  })
   await page.getByRole('combobox', { name: 'Trier' }).selectOption({ label: 'Prix croissant' })
-  for (const [i, id] of [ids[2], ids[1], ids[0]].entries()) await expect(tiles(page).nth(i)).toHaveId(`marketplace-auction-${id}`)
+  expect((await sorted).ok()).toBe(true)
+  await expect.poll(() => order(page)).toEqual([ids[0], ids[1], ids[2]])
   await expect(tiles(page).nth(0)).toContainText('Mise de départ')
   await expect(tiles(page).nth(2)).toContainText('Mise actuelle')
 
@@ -179,6 +197,7 @@ returning id`, { me: me.uid, seller: seller.uid, card }).split('\n')
 
   await tablist.getByRole('tab', { name: 'Historique (2)' }).click()
   await expect(tiles(page)).toHaveCount(2)
-  await expect(tile(page, cancelled)).toBeVisible()
-  await expect(tile(page, unsold)).toBeVisible()
+  // Retirée avec un end_at encore futur : terminée quand même, jamais un compte à rebours.
+  await expect(tile(page, cancelled).locator('time')).toHaveText('Terminée')
+  await expect(tile(page, unsold).locator('time')).toHaveText('Terminée')
 })

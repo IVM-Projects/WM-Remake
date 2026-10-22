@@ -45,7 +45,7 @@ export function AuctionTile({ auction: a }: { auction: Auction }) {
           </p>
           <p className={row}>
             <span className={label}>Durée</span>
-            <Countdown endAt={a.end_at} />
+            <Countdown endAt={a.end_at} over={a.status !== 'active'} />
           </p>
           <p className="truncate">{`Vendu par ${a.seller.username}`}</p>
         </div>
