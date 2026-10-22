@@ -15,7 +15,7 @@
   - Critères du D§13 et leurs preuves :
     - contrat §3.5 complet (`coverage:recap` : 39 routes sur 90, plus aucune du §3.5 manquante) ;
     - guerre d'enchères qui conserve M : `supabase/tests/16_market_concurrency.test.sh` (60 mises croisées, invariants vides) ;
-    - règlement en moins de 15 s : historique de `wm-settle` sur la démo (voir « M3 — livraison » de `docs/verifications.md`) ;
+    - règlement en moins de 15 s : sur 1 h 19 d'historique de `wm-settle` sur la démo, 475 runs sans échec, p99 de l'écart 10,305 s + p99 de la durée 0,071 s, soit une borne de 10,38 s ; les deux ventes réelles du joueur de démo ont été réglées par le cron en 4,50 s et 2,60 s (« M3 — livraison » de `docs/verifications.md`) ;
     - retrait et invendu rendent une nouvelle ligne sans étiquettes : `supabase/tests/27_market.test.sql` ;
     - parcours mise en vente → mise → remboursement → règlement : `e2e/market-journey.spec.ts` (A débité à 90, remboursé à 100, B gagnant à 89, vendeur à 11, règlement par la seule lecture du détail).
   - Suite locale (tête c6467b7) : `npm test` 44 fichiers, 429 tests ; `test:db` 19 fichiers ; contrat 136 cas ; E2E 166 tests ; `coverage:recap` 39/90. CI verte sur postgres:17 (run 39744063469).
