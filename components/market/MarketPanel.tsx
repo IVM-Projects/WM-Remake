@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { api, userMessage } from '@/lib/api'
-import { formatDateTime, formatInt } from '@/lib/format'
+import { formatDateTime, formatInt, wikibidous } from '@/lib/format'
 import { RARITY, rarityOf, type RarityCode } from '@/lib/rarity'
 
 export type Summary = Partial<Record<RarityCode, { average: number; count: number }>>
@@ -37,7 +37,7 @@ export function MarketPanel({ cardId }: { cardId: string }) {
         <div className="space-y-1 text-sm font-medium">
           {lines.map((r) => {
             const { average, count } = summary[r.code]!
-            return <p key={r.code}>{`Marché · ${r.label} : ${formatInt(average)} wikibidous (${formatInt(count)} vente${count > 1 ? 's' : ''})`}</p>
+            return <p key={r.code}>{`Marché · ${r.label} : ${formatInt(average)} ${wikibidous(average)} (${formatInt(count)} vente${count > 1 ? 's' : ''})`}</p>
           })}
         </div>
       ) : (
@@ -51,7 +51,7 @@ export function MarketPanel({ cardId }: { cardId: string }) {
           <ul aria-label="Ventes récentes" className="space-y-1 text-sm">
             {sales.map((s) => (
               <li key={s.id} className="tabular-nums">
-                {`${rarityOf(s.rarity).label}${s.is_shiny ? ' · Brillante' : ''} · ${formatInt(s.final_price)} wikibidous · `}
+                {`${rarityOf(s.rarity).label}${s.is_shiny ? ' · Brillante' : ''} · ${formatInt(s.final_price)} ${wikibidous(s.final_price)} · `}
                 <time dateTime={s.settled_at}>{formatDateTime(s.settled_at)}</time>
               </li>
             ))}

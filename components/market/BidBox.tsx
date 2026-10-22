@@ -1,10 +1,10 @@
 'use client'
 
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Turnstile } from '@/components/auth/Turnstile'
 import { toast } from '@/components/ui/toast'
 import { api, ApiError, apiOnce, unsure, userMessage } from '@/lib/api'
-import { formatInt } from '@/lib/format'
+import { formatInt, wikibidous } from '@/lib/format'
 import type { Auction } from './types'
 
 // Réponse de POST …/bid (M3-15) : la part que l'enchère affichée reprend.
@@ -19,7 +19,12 @@ export function BidBox({ auction, onBid, onSync }: { auction: Auction; onBid: (r
   // null : champ jamais touché, il suit min_next_bid à chaque lecture (polling, réponse de mise).
   const [typed, setTyped] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // Refus tenu au minimum de l'enchère auquel il répond (celui du refus pour bid_too_low) : une mise d'un autre ou une baisse le change,
+  // et le refus, qui ne décrit plus l'enchère affichée, tombe. min undefined (issue inconnue) : gardé jusqu'à l'envoi suivant.
+  const [error, setError] = useState<{ text: string; min?: number | null } | null>(null)
+  // Enchère affichée au dernier rendu : celle à laquelle un refus s'applique quand il arrive (auction-client.tsx).
+  const shown = useRef(auction)
+  useEffect(() => { shown.current = auction })
   // Montant à relancer une fois la vérification anti-bot passée.
   const [verify, setVerify] = useState<number | null>(null)
   const inflight = useRef(false)
@@ -42,7 +47,7 @@ export function BidBox({ auction, onBid, onSync }: { auction: Auction; onBid: (r
         method: 'POST',
         body: JSON.stringify({ amount }),
       })
-      toast(`Mise de ${formatInt(r.current_bid)} wikibidous placée.`)
+      toast(`Mise de ${formatInt(r.current_bid)} ${wikibidous(r.current_bid)} placée.`)
       setTyped(null)
       onBid(r)
     } catch (e) {
@@ -55,7 +60,8 @@ export function BidBox({ auction, onBid, onSync }: { auction: Auction; onBid: (r
         onSync({ min_next_bid: body.min })
       }
       const maybe = sent && unsure(e)
-      setError(userMessage(e, maybe ? UNSURE : 'La mise n\'a pas pu être placée.'))
+      const text = userMessage(e, maybe ? UNSURE : 'La mise n\'a pas pu être placée.')
+      setError(maybe ? { text } : { text, min: body?.code === 'bid_too_low' && body.min ? body.min : shown.current.min_next_bid })
       if (maybe) onSync()
     } finally {
       inflight.current = false
@@ -91,7 +97,9 @@ export function BidBox({ auction, onBid, onSync }: { auction: Auction; onBid: (r
           Miser
         </button>
       </form>
-      {error && <p role="alert" className="text-sm font-medium text-red-400">{error}</p>}
+      {error && (error.min === undefined || error.min === auction.min_next_bid) && (
+        <p role="alert" className="text-sm font-medium text-red-400">{error.text}</p>
+      )}
       {verify !== null && <Turnstile onToken={(t) => { if (t) void send(verify, t) }} />}
     </div>
   )

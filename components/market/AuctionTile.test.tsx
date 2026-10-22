@@ -68,6 +68,21 @@ describe('AuctionTile (DOM du contrat, R§6.8)', () => {
     expect(linkOf(owned)?.[2]).not.toContain('<button')
   })
 
+  test('vente terminée (« Historique », « Gagnées ») : son issue hors de la carte, lien du contrat gardé ; rien sur une enchère active', () => {
+    expect(html({ status: 'settled_sold', current_bid: 20, final_price: 20 })).toContain('<p>Vendue pour 20 wikibidous</p>')
+    expect(html({ status: 'settled_unsold' })).toMatch(/<p class="[^"]*">Invendue<\/p>/)
+    const cancelled = html({ status: 'cancelled' })
+    expect(cancelled).toMatch(/<p class="[^"]*">Retirée<\/p>/)
+    // Le détail d'une vente retirée répond 404 (M3-16) : le lien reste celui du contrat.
+    expect(linkOf(cancelled)?.[1]).toContain(`href="/marketplace/${ID}"`)
+    expect(html()).not.toMatch(/Vendue pour|Invendue|Retirée/)
+  })
+
+  test('montant de 1 : « wikibidou » au singulier, lu par les lecteurs d\'écran comme dans l\'issue', () => {
+    expect(html({ base_amount: 1 })).toContain('<span class="sr-only"> wikibidou</span>')
+    expect(html({ status: 'settled_sold', current_bid: 1, final_price: 1 })).toContain('<p>Vendue pour 1 wikibidou</p>')
+  })
+
   test('« Mes enchères » : l\'état de la tuile (P21)', () => {
     expect(html({ my_state: 'leading' })).toContain('En tête')
     expect(html({ my_state: 'outbid' })).toContain('Surenchéri')

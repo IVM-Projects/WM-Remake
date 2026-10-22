@@ -3,6 +3,9 @@ const int = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 })
 
 export const formatInt = (n: number): string => int.format(n)
 
+// Unité après un montant, « 1 wikibidou », « 2 wikibidous » : 0 et 1 au singulier, comme le veut le français (SelectionBar.tsx).
+export const wikibidous = (n: number): string => (n > 1 ? 'wikibidous' : 'wikibidou')
+
 // m:ss arrondi à la seconde supérieure : on n'affiche jamais 0:00 tant qu'il reste du temps.
 export function formatCountdown(ms: number): string {
   const s = Math.max(0, Math.ceil(ms / 1000))

@@ -736,6 +736,37 @@ test('défausse finie pendant que /collection est cachée (Activity) : au retour
   await expect(opener(page, 6)).toBeFocused()
 })
 
+test('défausse refusée pendant que /collection est cachée (Activity) : toast, et au retour la modale gardée montre encore le refus', async ({ page, login }) => {
+  const { uid } = await login({ balance: 100 })
+  seed60(uid)
+  const refusal = 'Vous ne possédez pas cette carte'
+  let seen = 0
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await routeOnce(page, isDiscard, async (r) => {
+    seen++
+    await held
+    await r.fulfill({ status: 403, json: { status: 403, code: '42501', error: refusal, message: refusal } })
+  })
+  await page.goto('/collection')
+  await opener(page, 6).click()
+  const dialog = page.getByRole('dialog', { name: title(6) })
+  await dialog.getByRole('button', { name: /^Défausser/ }).click()
+  await expect.poll(() => seen).toBe(1)
+  // Le voile de la modale couvre la barre latérale : le clic est remis au lien lui-même (navigation du routeur, page gardée par Activity).
+  await page.locator('nav a[href="/pulls"]').first().dispatchEvent('click')
+  await expect(page).toHaveURL('/pulls')
+  await expect(page.getByRole('button', { name: 'Ouvrir', exact: true })).toBeVisible()
+  const answered = page.waitForResponse((r) => isDiscard(new URL(r.url())))
+  release()
+  await answered
+  await expect(page.locator('#wm-toasts')).toContainText(refusal)
+  await page.goBack()
+  await expect(page).toHaveURL('/collection')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('alert')).toHaveText(refusal)
+})
+
 test('étoile sur une grille périmée : inactive (aria-disabled) et focalisable, jamais écrasée par la relecture en cours', async ({ page, login }) => {
   const { uid } = await login()
   seed60(uid)
@@ -803,7 +834,7 @@ test('chargement complet : l\'en-tête n\'est inséré qu\'une fois (pas de seco
   })
   await page.goto('/collection')
   await expect(page.getByText('Ta collection est vide')).toBeVisible()
-  await expect(balance(page)).toHaveText('0 wikibidous')
+  await expect(balance(page)).toHaveText('0 wikibidou')
   expect(await page.evaluate(() => (window as unknown as { h1s: Set<Element> }).h1s.size)).toBe(1)
 })
 

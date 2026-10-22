@@ -14,7 +14,7 @@ import { Loading } from '@/components/ui/Loading'
 import { Pagination } from '@/components/ui/Pagination'
 import { WCoin } from '@/components/ui/WCoin'
 import { api } from '@/lib/api'
-import { formatInt } from '@/lib/format'
+import { formatInt, wikibidous } from '@/lib/format'
 import type { RarityCode } from '@/lib/rarity'
 import { CollectionQuery, Rarity } from '@/lib/schemas'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -81,7 +81,7 @@ export function CollectionClient() {
             ) : (
               <>
                 {formatInt(balance)}
-                <span className="sr-only"> wikibidous</span>
+                <span className="sr-only"> {wikibidous(balance)}</span>
               </>
             )}
           </p>

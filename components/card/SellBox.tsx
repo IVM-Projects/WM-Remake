@@ -6,7 +6,7 @@ import { Turnstile } from '@/components/auth/Turnstile'
 import type { Summary } from '@/components/market/MarketPanel'
 import { toast } from '@/components/ui/toast'
 import { api, ApiError, apiOnce, unsure, userMessage } from '@/lib/api'
-import { formatInt } from '@/lib/format'
+import { formatInt, wikibidous } from '@/lib/format'
 import { rarityOf } from '@/lib/rarity'
 import { faceOf, type OwnedItem } from './CardModal'
 
@@ -57,7 +57,7 @@ export function SellBox({ copy, onListed, onUnsure, onBusy }: Props) {
     api<{ summary: Summary }>(`/api/marketplace/cards/${copy.card_id}/sales?scope=summary`).then(
       (r) => {
         const s = r.summary[face.rarity]
-        if (live) setMarket(`Marché · ${label} : ${s ? `${formatInt(s.average)} wikibidous` : 'aucune vente récente'}`)
+        if (live) setMarket(`Marché · ${label} : ${s ? `${formatInt(s.average)} ${wikibidous(s.average)}` : 'aucune vente récente'}`)
       },
       (e) => { if (live) setMarket(userMessage(e, 'Le résumé du marché n\'a pas pu être lu.')) },
     )
@@ -80,7 +80,7 @@ export function SellBox({ copy, onListed, onUnsure, onBusy }: Props) {
         method: 'POST',
         body: JSON.stringify({ card_id: copy.id, base_amount: base, duration_minutes: duration }),
       })
-      toast(`${face.wikipedia_title} a bien été mise aux enchères pour ${formatInt(base)} wikibidous`)
+      toast(`${face.wikipedia_title} a bien été mise aux enchères pour ${formatInt(base)} ${wikibidous(base)}`)
       onListed()
       if (mounted.current) router.push(`/marketplace/${id}`)
     } catch (e) {

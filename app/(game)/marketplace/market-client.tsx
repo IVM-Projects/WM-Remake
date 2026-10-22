@@ -178,15 +178,24 @@ function AuctionList({ load, empty }: { load: (page: number) => Promise<Page>; e
   const [busy, setBusy] = useState(false)
   const grid = useRef<HTMLDivElement>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
+  const moreButton = useRef<HTMLButtonElement>(null)
+  const emptyState = useRef<HTMLParagraphElement>(null)
   // « Réessayer » en cours : un second clic ne relance rien.
   const retrying = useRef(false)
-  // Rang de la tuile à focaliser si le bouton pressé disparaît (dernière page, ou « Réessayer ») : jamais le focus sur body.
+  // Rang de la tuile à focaliser si l'élément focalisé disparaît (« Charger la suite » à la dernière page, « Réessayer », ou une tuile et
+  // « Charger la suite » retirés par une relecture) : jamais le focus sur body.
   const refocus = useRef<number | null>(null)
 
   const reread = () => {
     const n = data?.pages ?? 1
     return Promise.all(Array.from({ length: n }, (_, i) => load(i + 1))).then(
       (all) => {
+        // Une enchère réglée ou retirée sort de la liste, « Charger la suite » aussi s'il n'y a plus de page : leur rang (celui du bouton
+        // suit la dernière tuile) va à l'effet ci-dessous, qui ne bouge le focus que s'il est tombé sur body.
+        const links = [...(grid.current?.querySelectorAll('a') ?? [])]
+        const i = links.findIndex((l) => l === document.activeElement)
+        if (i >= 0) refocus.current = i
+        else if (moreButton.current && moreButton.current === document.activeElement) refocus.current = links.length
         setData((d) => mergeReread(d, n, all))
         setFailed(null)
       },
@@ -214,13 +223,13 @@ function AuctionList({ load, empty }: { load: (page: number) => Promise<Page>; e
     setBusy(false)
   }
 
-  // Liste arrivée : la tuile i ; « Réessayer » de nouveau en échec : le bouton revenu.
+  // Liste arrivée : la tuile i (la dernière au-delà), ou l'état vide ; « Réessayer » de nouveau en échec : le bouton revenu.
   useEffect(() => {
     const i = refocus.current
     if (i === null || (!data && !failed)) return
     refocus.current = null
     if (document.activeElement !== document.body) return
-    if (data) grid.current?.querySelectorAll('a')[Math.min(i, data.items.length - 1)]?.focus()
+    if (data) (grid.current?.querySelectorAll('a')[Math.min(i, data.items.length - 1)] ?? emptyState.current)?.focus()
     else retryButton.current?.focus()
   }, [data, failed])
 
@@ -245,7 +254,7 @@ function AuctionList({ load, empty }: { load: (page: number) => Promise<Page>; e
       <Loading label="Chargement des enchères" />
     )
   }
-  if (!data.items.length) return <p className="card-frame mx-auto max-w-md p-8 text-center font-semibold">{empty}</p>
+  if (!data.items.length) return <p ref={emptyState} tabIndex={-1} className="card-frame mx-auto max-w-md p-8 text-center font-semibold outline-none">{empty}</p>
   return (
     <div className="space-y-6">
       <div ref={grid} className="flex flex-wrap justify-center gap-3">
@@ -255,7 +264,7 @@ function AuctionList({ load, empty }: { load: (page: number) => Promise<Page>; e
         <div className="flex justify-center">
           {/* aria-disabled (curseur et texte de ghost) et la garde de more() pendant la requête, jamais disabled (le focus tomberait sur
               body, D§7.0). */}
-          <button type="button" aria-disabled={busy || undefined} onClick={() => void more()} className={`${ghost} justify-center`}>
+          <button ref={moreButton} type="button" aria-disabled={busy || undefined} onClick={() => void more()} className={`${ghost} justify-center`}>
             Charger la suite
           </button>
         </div>

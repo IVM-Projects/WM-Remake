@@ -10,6 +10,14 @@ const tiles = (page: Page) => page.locator('[id^="marketplace-auction-"]').filte
 const tile = (page: Page, id: string) => page.locator(`[id="marketplace-auction-${id}"]`).filter({ visible: true })
 const ACTIVE = /border-b-2 border-amber-500 text-amber-600/
 const order = (page: Page) => tiles(page).evaluateAll((els) => els.map((e) => e.id.replace('marketplace-auction-', '')))
+// Relecture de la page sans attendre son polling : un retour en visible lance tout de suite un passage (lib/poll.ts), répété tant que le
+// cache partagé (liste 2 s, détail 1 s) sert l'état d'avant.
+async function rereadUntil(page: Page, read: () => Promise<unknown>, expected: number | RegExp) {
+  await expect.poll(async () => {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    return read()
+  }).toEqual(typeof expected === 'number' ? expected : expect.stringMatching(expected))
+}
 
 // Comptes et cartes du test : auth.users d'abord (cascade vers profils, enchères, copies), puis la carte (clés sans cascade).
 const trash = { uids: [] as string[], cards: [] as string[] }
@@ -45,6 +53,16 @@ select string_agg(uid::text, ',') from s`, { card, n: String(n) }).split('\n')
   trash.uids.push(...sellers.split(','))
   return { card, ids: ids.split(',') }
 }
+
+// /marketplace filtrée par le titre unique du test.
+async function search(page: Page, t: string) {
+  await page.goto('/marketplace')
+  await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).fill(t)
+  await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).press('Enter')
+}
+// Échue puis réglée, comme par le cron (absent du banc).
+const settle = (id: string) => sql(`update public.auctions set end_at = now() - interval '1 second' where id = :'id';
+select from wm.settle_auction(:'id') \\g /dev/null`, { id })
 
 test('en-tête, sous-titre, cinq onglets (Parcourir actif) ; une recherche d\'un caractère est refusée sans requête', async ({ page, login }) => {
   trash.uids.push((await login()).uid)
@@ -122,6 +140,40 @@ test('51 enchères d\'une carte : 50 tuiles du contrat, puis 51 après « Charge
   await expect(tile(page, ids[0]).locator('a')).toHaveAttribute('href', `/marketplace/${ids[0]}`)
 })
 
+test('relecture de « Parcourir » : la tuile focalisée est réglée, puis « Charger la suite » disparaît ; le focus reste sur la liste, jamais sur body', async ({ page, login }) => {
+  trash.uids.push((await login()).uid)
+  const t = title()
+  // « Récentes » : ids[51] en tête ; la page 1 en a 50, la 2 les deux plus anciennes.
+  const { ids } = listAuctions(52, t)
+  await search(page, t)
+  await expect(tiles(page)).toHaveCount(50)
+
+  await tile(page, ids[51]).locator('a').focus()
+  settle(ids[51])
+  await rereadUntil(page, () => tile(page, ids[51]).count(), 0)
+  // Même rang : la suivante.
+  await expect(tile(page, ids[50]).locator('a')).toBeFocused()
+
+  const more = page.getByRole('button', { name: 'Charger la suite' })
+  await more.focus()
+  settle(ids[50])
+  await rereadUntil(page, () => more.count(), 0)
+  await expect(tiles(page)).toHaveCount(50)
+  // Rang du bouton, après la dernière tuile : la dernière.
+  await expect(tile(page, ids[0]).locator('a')).toBeFocused()
+})
+
+test('relecture de « Parcourir » : la seule tuile, focalisée, est réglée → l\'état vide prend le focus', async ({ page, login }) => {
+  trash.uids.push((await login()).uid)
+  const t = title()
+  const { ids: [id] } = listAuctions(1, t)
+  await search(page, t)
+  await tile(page, id).locator('a').focus()
+  settle(id)
+  await rereadUntil(page, () => tiles(page).count(), 0)
+  await expect(page.getByText('Aucune enchère ne correspond à ta recherche.', { exact: true })).toBeFocused()
+})
+
 test('tri « Prix croissant » sur coalesce(current_bid, base_amount) ; pastille UR : aucune tuile pour une carte R', async ({ page, login }) => {
   trash.uids.push((await login()).uid)
   const t = title()
@@ -173,7 +225,7 @@ select from wm.place_bid(:'me', :'other', 100) \\g /dev/null`, { me: me.uid, car
   await expect(tiles(page)).toHaveCount(1)
 })
 
-test('« Gagnées » : 50 tuiles puis 51 ; « Historique » : une vente retirée et une invendue', async ({ page, login }) => {
+test('« Gagnées » : 50 tuiles puis 51, « Vendue pour 20 wikibidous » ; « Historique » : « Retirée » et « Invendue »', async ({ page, login }) => {
   const me = await login()
   const seller = makePlayer()
   trash.uids.push(me.uid, seller.uid)
@@ -195,12 +247,17 @@ returning id`, { me: me.uid, seller: seller.uid, card }).split('\n')
   await page.getByRole('button', { name: 'Charger la suite' }).click()
   await expect(tiles(page)).toHaveCount(51)
   await expect(page.getByRole('button', { name: 'Charger la suite' })).toHaveCount(0)
+  await expect(tiles(page).first()).toContainText('Vendue pour 20 wikibidous')
 
   await tablist.getByRole('tab', { name: 'Historique (2)' }).click()
   await expect(tiles(page)).toHaveCount(2)
   // Retirée avec un end_at encore futur : terminée quand même, jamais un compte à rebours.
   await expect(tile(page, cancelled).locator('time')).toHaveText('Terminée')
   await expect(tile(page, unsold).locator('time')).toHaveText('Terminée')
+  // Issue de chaque vente : une retirée ne ressemble plus à une invendue.
+  await expect(tile(page, cancelled)).toContainText('Retirée')
+  await expect(tile(page, cancelled)).not.toContainText('Invendue')
+  await expect(tile(page, unsold)).toContainText('Invendue')
 })
 
 // Détail (Task 12) : une enchère d'une carte neuve, base 10, 1 h, mise en vente par `seller` (vérifié : M3-13).
@@ -243,14 +300,14 @@ test('détail : h1, mise préremplie à 10, « Miser » → toast, « Mise actue
   await expect(page.getByRole('list', { name: 'Historique des mises' }).getByRole('listitem'))
     .toHaveText([new RegExp(`^${me.username} · 10 wikibidous · `)])
 
-  const add = page.getByRole('button', { name: 'Ajouter à ma liste de souhaits' })
-  await expect(add).toHaveAttribute('aria-pressed', 'false')
-  expect(await side(add)).toBeGreaterThanOrEqual(44)
-  await add.click()
-  const remove = page.getByRole('button', { name: 'Retirer de ma liste de souhaits' })
-  await expect(remove).toHaveAttribute('aria-pressed', 'true')
+  // Bouton bascule (APG) : le libellé reste « Liste de souhaits », l'état est dans aria-pressed.
+  const wish = page.getByRole('button', { name: 'Liste de souhaits', exact: true })
+  await expect(wish).toHaveAttribute('aria-pressed', 'false')
+  expect(await side(wish)).toBeGreaterThanOrEqual(44)
+  await wish.click()
+  await expect(wish).toHaveAttribute('aria-pressed', 'true')
   await page.reload()
-  await expect(remove).toHaveAttribute('aria-pressed', 'true')
+  await expect(wish).toHaveAttribute('aria-pressed', 'true')
 })
 
 test('mise trop basse : un autre joueur a misé 10 entre-temps → « Mise trop basse (minimum 11 wikibidous) », le champ prend 11', async ({ page, login }) => {
@@ -265,6 +322,28 @@ test('mise trop basse : un autre joueur a misé 10 entre-temps → « Mise trop 
   await page.getByRole('button', { name: 'Miser' }).click()
   await expect(page.locator('main').getByRole('alert')).toHaveText('Mise trop basse (minimum 11 wikibidous)')
   await expect(amountField(page)).toHaveValue('11')
+  // Relu une fois le cache périmé : la mise de l'autre s'affiche, et le refus qu'elle explique reste (même minimum).
+  await expect(priceRow(page)).toHaveText(/^Mise actuelle\s*10\b/)
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Mise trop basse (minimum 11 wikibidous)')
+})
+
+test('« Tu es déjà en tête », puis la surenchère d\'un autre arrive par le polling : le refus tombe avec l\'état qu\'il décrivait', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  const seller = makePlayer({ humanVerified: true })
+  const other = makePlayer({ balance: 100, humanVerified: true })
+  trash.uids.push(me.uid, seller.uid, other.uid)
+  const { id } = sellOne(seller.uid)
+  sql(`select from wm.place_bid(:'me', :'id', 10) \\g /dev/null`, { me: me.uid, id })
+  await page.goto(`/marketplace/${id}`)
+  await expect(page.locator('main').getByText('En tête', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Miser' }).click()
+  const alert = page.locator('main').getByRole('alert')
+  await expect(alert).toHaveText('Tu es déjà en tête')
+  sql(`select from wm.place_bid(:'o', :'id', 11) \\g /dev/null`, { o: other.uid, id })
+  await rereadUntil(page, () => priceRow(page).textContent(), /^Mise actuelle\s*11\b/)
+  await expect(page.locator('main').getByText('En tête', { exact: true })).toHaveCount(0)
+  await expect(amountField(page)).toHaveValue('13')
+  await expect(alert).toHaveCount(0)
 })
 
 test('réponse d\'une mise perdue, puis un autre montant : clé neuve, le nouveau montant est placé (aucune réponse rejouée)', async ({ page, login }) => {
@@ -366,7 +445,24 @@ test('vendeur, une mise arrivée entre-temps : « Retirer » → refus affiché 
   await expect(cancel).not.toHaveAttribute('aria-disabled')
 })
 
-test('vendeur, moitié de la durée passée : « Baisser le prix », « Nouveau prix » 5, « Valider » → « Prix baissé à 5 wikibidous »', async ({ page, login }) => {
+test('vendeur, une mise arrivée entre-temps : « Retirer » au clavier → refus relu, le bouton disparaît, le focus passe au prix (jamais sur body)', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  const bidder = makePlayer({ balance: 100, humanVerified: true })
+  trash.uids.push(me.uid, bidder.uid)
+  const { id } = sellOne(me.uid)
+  await page.goto(`/marketplace/${id}`)
+  const cancel = page.getByRole('button', { name: 'Retirer', exact: true })
+  await cancel.focus()
+  sql(`select from wm.place_bid(:'b', :'id', 10) \\g /dev/null`, { b: bidder.uid, id })
+  // Détail partagé en cache (1 s, servi 2 s au plus) : attendu frais, pour que la relecture qui suit le refus voie la mise.
+  await expect.poll(async () => (await (await page.request.get(`/api/marketplace/${id}`)).json()).auction.current_bid).toBe(10)
+  await page.keyboard.press('Enter')
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Une enchère en cours ne peut pas être retirée')
+  await expect(cancel).toHaveCount(0)
+  await expect(priceRow(page).locator('..')).toBeFocused()
+})
+
+test('vendeur, moitié de la durée passée : « Baisser le prix », « Nouveau prix » 5 proposé, 1 saisi, « Valider » → « Prix baissé à 1 wikibidou »', async ({ page, login }) => {
   const me = await login({ balance: 100, humanVerified: true })
   trash.uids.push(me.uid)
   const { id } = sellOne(me.uid)
@@ -376,9 +472,10 @@ test('vendeur, moitié de la durée passée : « Baisser le prix », « Nouveau 
   await page.getByRole('button', { name: 'Baisser le prix' }).click()
   const price = page.getByRole('spinbutton', { name: 'Nouveau prix' })
   await expect(price).toHaveValue('5')
+  await price.fill('1')
   await page.getByRole('button', { name: 'Valider' }).click()
-  await expect(toastOf(page, 'Prix baissé à 5 wikibidous')).toBeVisible()
-  await expect(priceRow(page)).toHaveText(/^Mise de départ\s*5\b/)
+  await expect(toastText(page, 'Prix baissé à 1 wikibidou')).toBeVisible()
+  await expect(priceRow(page)).toHaveText(/^Mise de départ\s*1 wikibidou\b/)
   await expect(page.getByRole('button', { name: 'Baisser le prix' })).toHaveCount(0)
   // Le bouton pressé disparaît : le focus passe à « Retirer », jamais sur body.
   await expect(page.getByRole('button', { name: 'Retirer', exact: true })).toBeFocused()
@@ -412,6 +509,20 @@ test('« Finaliser la vente » à l\'échéance, par l\'horloge et sans règleme
   await expect(page.locator('main').getByText('Remportée', { exact: true })).toBeVisible()
   await expect(page.getByText('Vendue pour 10 wikibidous', { exact: true })).toBeVisible()
   await expect(settle).toHaveCount(0)
+})
+
+test('détail à 360 px : un titre d\'un seul long mot passe à la ligne, ni la page ni main ne défilent en largeur', async ({ page, login }) => {
+  trash.uids.push((await login()).uid)
+  const seller = makePlayer({ humanVerified: true })
+  trash.uids.push(seller.uid)
+  // Un mot de 31 caractères en Rubik gras de 24 px, bien plus large que les ≈ 184 px laissés au titre à côté des deux boutons ronds.
+  const t = `Zzélectromagnétisme${randomUUID().slice(-12)}`
+  const { id } = sellOne(seller.uid, t)
+  await page.setViewportSize({ width: 360, height: 800 })
+  await page.goto(`/marketplace/${id}`)
+  await expect(page.locator('main h1')).toHaveText(t)
+  expect(await page.locator('main').evaluate((m) => m.scrollWidth <= m.clientWidth)).toBe(true)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
 
 test('enchère inconnue → « Auction not found » et « Retour au marché »', async ({ page, login }) => {

@@ -34,7 +34,7 @@ test('parcours M1 : inscription → code → paquet → collection → étiquett
   const tiles = page.locator('div.flex.flex-wrap.justify-center.gap-3 > div.relative.isolate.group')
   await expect(tiles).toHaveCount(5)
   const balance = page.locator('main h1 + p')
-  await expect(balance).toHaveText('0 wikibidous')
+  await expect(balance).toHaveText('0 wikibidou')
 
   await tiles.first().locator('h3 button').click()
   const dialog = page.getByRole('dialog')
@@ -52,7 +52,7 @@ test('parcours M1 : inscription → code → paquet → collection → étiquett
   await tiles.first().locator('h3 button').click()
   await dialog.getByRole('button', { name: /^Défausser/ }).click()
   await expect(dialog).toBeHidden()
-  await expect(balance).toHaveText('1 wikibidous')
+  await expect(balance).toHaveText('1 wikibidou')
   await expect(tiles).toHaveCount(0)
   await tagFilter.selectOption({ label: 'Toutes les étiquettes' })
   await expect(tiles).toHaveCount(4)

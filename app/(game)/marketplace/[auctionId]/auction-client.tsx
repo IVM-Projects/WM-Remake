@@ -18,7 +18,7 @@ import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
 import { api, ApiError, apiOnce, unsure, userMessage } from '@/lib/api'
 import { serverNow, subscribeClock } from '@/lib/clock'
-import { formatDateTime, formatInt } from '@/lib/format'
+import { formatDateTime, formatInt, wikibidous } from '@/lib/format'
 import { usePoll } from '@/lib/poll'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 import { readWished, saveWished } from '@/lib/wishlist'
@@ -68,6 +68,7 @@ export function AuctionClient() {
   const hold = useRef(0)
   const cancelButton = useRef<HTMLButtonElement>(null)
   const outcome = useRef<HTMLDivElement>(null)
+  const price = useRef<HTMLDivElement>(null)
   const a = detail?.auction
   // État affiché au dernier rendu : celui auquel un refus s'applique au moment où il arrive.
   const shown = useRef(a)
@@ -122,14 +123,25 @@ export function AuctionClient() {
   // Baisse permise après la moitié de la durée (D§6.4), comptée sur end_at − created_at.
   const half = usePassed(a ? (Date.parse(a.created_at) + Date.parse(a.end_at)) / 2 : NaN)
 
-  // Réglée sous les yeux du joueur (« Finaliser la vente », ou une relecture) : le bouton ou le champ pressé a disparu, le focus va au
-  // résultat plutôt que sur body.
-  const status = a?.status
-  const was = useRef(status)
+  const me = (who: string | null | undefined) => !!uid && who === uid
+  const active = a?.status === 'active'
+  const seller = me(a?.seller_id)
+  const maxPrice = a ? Math.floor(a.listing_base_amount / 2) : 0
+  const canCancel = seller && active && a?.current_bid === null
+  // P25 : sans baisse possible (maxPrice < 1), pas de bouton.
+  const canReprice = canCancel && a?.base_repriced_at === null && half && maxPrice >= 1
+  const canSettle = active && ended
+
+  // Un contrôle disparaît sous le focus (réglée sous les yeux du joueur ; refus relu, ou polling, qui montre une mise arrivée ou une fin
+  // repoussée) : « Miser », « Retirer », « Baisser le prix », « Nouveau prix », « Valider » ou « Finaliser la vente ». Le focus va au
+  // résultat s'il y en a un, sinon au prix, jamais sur body.
+  const before = useRef([active, canCancel, canReprice, canSettle])
   useEffect(() => {
-    if (was.current === 'active' && status !== 'active' && document.activeElement === document.body) outcome.current?.focus()
-    was.current = status
-  }, [status])
+    const now = [active, canCancel, canReprice, canSettle]
+    const lost = before.current.some((on, i) => on && !now[i])
+    before.current = now
+    if (lost && document.activeElement === document.body) (outcome.current?.textContent ? outcome : price).current?.focus()
+  }, [active, canCancel, canReprice, canSettle])
 
   // Réponse d'une écriture (ou patch d'un refus) : affichée, lectures du cache d'avant jetées, relecture une fois ce cache périmé.
   const apply = (patch: Partial<Auction>) => {
@@ -175,7 +187,7 @@ export function AuctionClient() {
       method: 'POST',
       body: JSON.stringify({ new_base_amount: Number(newPrice) }),
     }, (r) => {
-      toast(`Prix baissé à ${formatInt(r.base_amount)} wikibidous`)
+      toast(`Prix baissé à ${formatInt(r.base_amount)} ${wikibidous(r.base_amount)}`)
       setNewPrice(null)
       apply({ base_amount: r.base_amount, base_repriced_at: r.base_repriced_at })
       // « Baisser le prix » et « Valider » disparaissent : le focus passe à « Retirer », jamais sur body.
@@ -222,13 +234,7 @@ export function AuctionClient() {
     )
   }
 
-  const me = (who: string | null) => !!uid && who === uid
-  const active = a.status === 'active'
-  const seller = me(a.seller_id)
-  const maxPrice = Math.floor(a.listing_base_amount / 2)
-  const canCancel = seller && active && a.current_bid === null
-  // P25 : sans baisse possible (maxPrice < 1), pas de bouton.
-  const canReprice = canCancel && a.base_repriced_at === null && half && maxPrice >= 1
+  const amount = a.current_bid ?? a.base_amount
   return (
     <>
       {back}
@@ -239,9 +245,10 @@ export function AuctionClient() {
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <PageHeader title={a.card.wikipedia_title} icon={entry.icon}>
             <div className="flex shrink-0 gap-2">
+              {/* Bouton bascule (APG) : libellé fixe, l'état est dans aria-pressed. */}
               <button
                 type="button"
-                aria-label={wished ? 'Retirer de ma liste de souhaits' : 'Ajouter à ma liste de souhaits'}
+                aria-label="Liste de souhaits"
                 aria-pressed={!!wished}
                 aria-disabled={wishing || undefined}
                 onClick={() => void toggleWish()}
@@ -258,15 +265,15 @@ export function AuctionClient() {
           <div ref={outcome} tabIndex={-1} className="flex flex-wrap gap-x-3 text-sm font-semibold outline-none empty:hidden">
             {active && me(a.current_bidder_id) && <p className="text-[var(--color-accent-light)]">En tête</p>}
             {a.status === 'settled_sold' && me(a.winner_id) && <p className="text-[var(--color-accent-light)]">Remportée</p>}
-            {a.status === 'settled_sold' && <p>{`Vendue pour ${formatInt(a.final_price ?? 0)} wikibidous`}</p>}
+            {a.status === 'settled_sold' && <p>{`Vendue pour ${formatInt(a.final_price ?? 0)} ${wikibidous(a.final_price ?? 0)}`}</p>}
             {a.status === 'settled_unsold' && <p className={label}>Invendue</p>}
           </div>
-          <div className="card-frame max-w-sm space-y-2 p-4 text-sm">
+          <div ref={price} tabIndex={-1} className="card-frame max-w-sm space-y-2 p-4 text-sm outline-none">
             <p className={row}>
               <span className={label}>{a.current_bid === null ? 'Mise de départ' : 'Mise actuelle'}</span>
               <span className="inline-flex items-center gap-1 font-semibold tabular-nums">
-                {formatInt(a.current_bid ?? a.base_amount)}
-                <span className="sr-only"> wikibidous</span>
+                {formatInt(amount)}
+                <span className="sr-only"> {wikibidous(amount)}</span>
                 <WCoin />
               </span>
             </p>
@@ -311,7 +318,7 @@ export function AuctionClient() {
               <button type="submit" aria-disabled={busy || undefined} className={primary}>Valider</button>
             </form>
           )}
-          {active && ended && (
+          {canSettle && (
             <button type="button" aria-disabled={busy || undefined} onClick={() => void settle()} className={primary}>
               Finaliser la vente
             </button>
@@ -323,7 +330,7 @@ export function AuctionClient() {
               <ol aria-label="Historique des mises" className="card-frame divide-y divide-[var(--color-border)] text-sm">
                 {detail.bids.map((b) => (
                   <li key={`${b.placed_at}-${b.amount}`} className="px-4 py-2 tabular-nums">
-                    {`${b.bidder.username} · ${formatInt(b.amount)} wikibidous · `}
+                    {`${b.bidder.username} · ${formatInt(b.amount)} ${wikibidous(b.amount)} · `}
                     <time dateTime={b.placed_at}>{formatDateTime(b.placed_at)}</time>
                   </li>
                 ))}

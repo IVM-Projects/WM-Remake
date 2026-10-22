@@ -90,7 +90,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onU
   const starring = useRef(false)
   // Une Idempotency-Key par copie défaussée, gardée tant que l'issue est inconnue (apiOnce).
   const keys = useRef(new Map<string, string>())
-  // Défausse finie après la fermeture : ni onClose (il fermerait la modale ouverte depuis), ni setError (personne ne le verrait).
+  // Défausse finie après la fermeture (ou sous Activity) : pas d'onClose (il fermerait la modale ouverte depuis), et l'issue passe aussi en toast.
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -168,8 +168,9 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onU
     } catch (e) {
       const message = userMessage(e, unsure(e) ? DISCARD_UNSURE : 'La carte n\'a pas pu être défaussée.')
       if (unsure(e)) onDiscarded?.(null, !mounted.current)
-      if (mounted.current) setError(message)
-      else toast(message)
+      // Toujours dans la modale : cachée par Activity (effets nettoyés), elle revient avec son alerte ; démontée, setError est sans effet.
+      setError(message)
+      if (!mounted.current) toast(message)
     }
     // Aussi démontée : une page cachée par Activity garde son état, et la modale réaffichée ne doit pas rester bloquée.
     setBusy(false)
