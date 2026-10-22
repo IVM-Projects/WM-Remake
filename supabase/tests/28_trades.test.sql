@@ -582,7 +582,9 @@ do $$ declare a uuid := pg_temp.player('Accepte1', 1000); b uuid := pg_temp.play
   r := wm.trade_action(b, t, 'accept');
   assert r = jsonb_build_object('status', 'accepted', 'trade', (select wm.trade_json(tr) from public.trades tr where id = t)), r::text;
   assert r #>> '{trade,status}' = 'accepted' and r #>> '{trade,accepted_at}' is not null
-    and r #> '{trade,accepted_at}' = r #> '{trade,completed_at}' and r #> '{trade,completed_at}' = r #> '{trade,closed_at}', r ->> 'trade';
+    and r #> '{trade,accepted_at}' = r #> '{trade,completed_at}' and r #> '{trade,completed_at}' = r #> '{trade,closed_at}'
+    and r #> '{trade,updated_at}' = r #> '{trade,closed_at}'
+    and (r #>> '{trade,updated_at}')::timestamptz > (r #>> '{trade,created_at}')::timestamptz, r ->> 'trade';
   assert (select row(user_id, count, starred) = row(b, 1, false) from public.user_cards where id = a1)
     and not exists (select from public.user_card_tags where user_card_id = a1), 'a1';
   assert (select avatar_user_card_id from public.profiles where id = a) is null, 'avatar de A';
@@ -653,8 +655,9 @@ do $$ declare a uuid := pg_temp.player('Net1', 1000); b uuid := pg_temp.player('
   perform pg_temp.inv('solde net');
 end $$;
 
--- Review Focus, copie promise deux fois (M4-2, P25) : a1 dans T1 et T2 vers B, T1 accepté → T2 en 409, pending, inchangé. Même chose avec T3
--- vers C, sans verrouiller a1, désormais chez B : un for update pose l'xid du verrouilleur dans xmax, même annulé ensuite.
+-- Review Focus, copie promise deux fois (M4-2, P25) : a1 dans T1 et T2 vers B, T1 accepté → T2 en 409, pending, inchangé, a1 (chez B,
+-- participant) verrouillée. Même chose avec T3 vers C, sans verrouiller a1, désormais chez B : un for update pose l'xid du verrouilleur dans
+-- xmax, même annulé ensuite.
 do $$ declare a uuid := pg_temp.player('Deux1'); b uuid := pg_temp.player('Deux2'); c uuid := pg_temp.player('Deux3');
   a1 uuid := pg_temp.copy(a, pg_temp.card('Deux A1')); t1 uuid; t2 uuid; t3 uuid; s jsonb; x0 text; q text := 'select wm.trade_action(%L, %L, ''accept'')';
   d jsonb := '{"status":409,"error":"Une carte de cet échange n''est plus disponible","message":"Une carte de cet échange n''est plus disponible"}';
@@ -666,7 +669,9 @@ do $$ declare a uuid := pg_temp.player('Deux1'); b uuid := pg_temp.player('Deux2
   t3 := wm.create_trade(a, c, pg_temp.items(a, array[a1])) ->> 'id';
   assert wm.trade_action(b, t1, 'accept') ->> 'status' = 'accepted', 'T1';
   s := tests.trade_snapshot(t2);
+  x0 := (select xmax::text from public.user_cards where id = a1);
   assert pg_temp.err(format(q, b, t2)) = d, coalesce(pg_temp.err(format(q, b, t2))::text, 'accepté');
+  assert (select xmax::text from public.user_cards where id = a1) <> x0, 'copie d''un participant non verrouillée';
   assert tests.trade_snapshot(t2) = s and s #>> '{trade,status}' = 'pending', tests.trade_snapshot(t2)::text;
   s := tests.trade_snapshot(t3);
   x0 := (select xmax::text from public.user_cards where id = a1);
@@ -704,13 +709,14 @@ do $$ declare a uuid := pg_temp.player('Role1'); b uuid := pg_temp.player('Role2
   assert pg_temp.err(format(q, b, t, 'counter')) = u and pg_temp.err(format(q, carol, gen_random_uuid(), 'counter')) = u, 'counter';
   r := wm.trade_action(b, t, 'decline');
   assert r = jsonb_build_object('status', 'declined', 'trade', (select wm.trade_json(tr) from public.trades tr where id = t))
-    and r #>> '{trade,closed_at}' is not null, r::text;
+    and r #>> '{trade,closed_at}' is not null and (r #>> '{trade,updated_at}')::timestamptz > (r #>> '{trade,created_at}')::timestamptz, r::text;
   assert (select array_agg(jsonb_build_array(user_id, type, data)) from public.notifications where type <> 'trade_received' and user_id in (a, b))
     = array[jsonb_build_array(a, 'trade_declined', jsonb_build_object('trade_id', t, 'user_id', b, 'username', 'Role2'))], 'notification de refus';
   assert not wm.card_locked(a, x), 'carte encore verrouillée';
   t := wm.create_trade(a, b, pg_temp.items(a, array[pg_temp.copy(a, x)])) ->> 'id';
   r := wm.trade_action(a, t, 'cancel');
-  assert r ->> 'status' = 'cancelled' and r #>> '{trade,status}' = 'cancelled' and r #>> '{trade,closed_at}' is not null, r::text;
+  assert r ->> 'status' = 'cancelled' and r #>> '{trade,status}' = 'cancelled' and r #>> '{trade,closed_at}' is not null
+    and (r #>> '{trade,updated_at}')::timestamptz > (r #>> '{trade,created_at}')::timestamptz, r::text;
   assert (select array_agg(jsonb_build_array(user_id, data)) from public.notifications where type = 'trade_cancelled' and user_id in (a, b))
     = array[jsonb_build_array(b, jsonb_build_object('trade_id', t, 'user_id', a, 'username', 'Role1'))], 'notification d''annulation';
 end $$;
@@ -753,7 +759,7 @@ do $$ declare a uuid := pg_temp.player('Echeance1'); b uuid := pg_temp.player('E
   assert wm.expire_trades() = 0, 'rien à expirer';
   update wm.config set value = 'false' where key = 'maintenance';
   assert (select jsonb_object_agg(id, status) from public.trades) = s0 || (select jsonb_object_agg(x, 'expired') from unnest(ts) x), 'statuts';
-  assert not exists (select from public.trades where id = any (ts) and closed_at is null), 'closed_at';
+  assert not exists (select from public.trades where id = any (ts) and (closed_at is null or updated_at <= created_at)), 'closed_at ou updated_at';
   assert (select count(*) from wm.wb_ledger) = nl and (select count(*) from public.notifications) = nn, 'argent ou notification';
 end $$;
 
@@ -765,7 +771,7 @@ end $$;
 
 -- 100 ↔ 100 fonctionnel (M4-6) : par côté 70 copies seules, 2 unités de 10 piles de 3 et 1 unité de 10 piles de 2, WB 500 et 300. Σ count
 -- de chaque joueur inchangé ; chez chacun, 10 lignes neuves de 2 et 10 de 1.
-do $$ declare a uuid := pg_temp.player('Cent1', 1000); b uuid := pg_temp.player('Cent2', 1000); u uuid; c uuid; p3 uuid[]; ids uuid[];
+do $$ declare a uuid := pg_temp.player('Cent1', 1000); b uuid := pg_temp.player('Cent2', 1000); u uuid; c uuid; p3 uuid[]; ids uuid[]; sa uuid[]; sb uuid[];
   items jsonb := '[]'; sums jsonb; t uuid; begin
   perform pg_temp.friends(a, b);
   foreach u in array array[a, b] loop
@@ -775,6 +781,9 @@ do $$ declare a uuid := pg_temp.player('Cent1', 1000); b uuid := pg_temp.player(
       || array(select k from unnest(p3) k, generate_series(1, 2)) || array(select pg_temp.copy(u, c, 2) from generate_series(1, 10)));
   end loop;
   ids := array(select id from public.user_cards where user_id in (a, b));
+  -- Les 70 copies seules de chaque côté (k = n) : les seules lignes de count 1 avant l'échange.
+  sa := array(select id from public.user_cards where user_id = a and count = 1);
+  sb := array(select id from public.user_cards where user_id = b and count = 1);
   sums := (select jsonb_object_agg(user_id, n) from (select user_id, sum(count) n from public.user_cards where user_id in (a, b) group by 1) z);
   t := wm.create_trade(a, b, items, 500, 300) ->> 'id';
   assert jsonb_array_length(items) = 200, 'éléments';
@@ -785,6 +794,9 @@ do $$ declare a uuid := pg_temp.player('Cent1', 1000); b uuid := pg_temp.player(
     assert (select jsonb_object_agg(count, n) from (select count, count(*) n from public.user_cards where user_id = u and id <> all (ids)
       group by 1) z) = '{"1": 10, "2": 10}', 'lignes neuves';
   end loop;
+  assert cardinality(sa) = 70 and cardinality(sb) = 70
+    and (select count(*) from public.user_cards where id = any (sa) and user_id = b and count = 1) = 70
+    and (select count(*) from public.user_cards where id = any (sb) and user_id = a and count = 1) = 70, 'copies seules non déplacées';
   perform pg_temp.inv('100 ↔ 100');
 end $$;
 

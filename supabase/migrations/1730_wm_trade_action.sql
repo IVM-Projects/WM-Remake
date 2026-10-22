@@ -26,6 +26,8 @@ begin
     uc.snapshot_title, uc.snapshot_rarity, uc.snapshot_category, uc.snapshot_atk, uc.snapshot_def, uc.obtained_at
   from unnest(v_part, v_k) x (id, k) join public.user_cards uc on uc.id = x.id;
   update public.user_cards set count = count - x.k from unnest(v_part, v_k) x (id, k) where user_cards.id = x.id;
+  -- shortcut: un lien posé par l'ancien propriétaire pendant l'acceptation (insert concurrent qui attend la clé étrangère) survit sur la copie
+  -- déplacée, invisible par RLS ; pour l'exclure, trigger after insert sur user_card_tags qui relit la copie for key share.
   delete from public.user_card_tags where user_card_id = any (v_full);
   update public.profiles set avatar_user_card_id = null
   where avatar_user_card_id = any (v_full) and id in (p_trade.initiator_id, p_trade.recipient_id);
@@ -89,7 +91,8 @@ begin
     closed_at = v_now, updated_at = v_now
   where id = t.id returning * into t;
   -- trade_accepted et trade_declined à l'initiateur, trade_cancelled au destinataire (M4-12).
-  perform wm.notify_trade(array[case p_action when 'cancel' then t.recipient_id else t.initiator_id end], 'trade_' || t.status, t.id, p_uid);
+  perform wm.notify_trade(array[case p_action when 'cancel' then t.recipient_id else t.initiator_id end],
+    case p_action when 'accept' then 'trade_accepted' when 'decline' then 'trade_declined' else 'trade_cancelled' end, t.id, p_uid);
   return wm.idem_store(p_uid, p_idem, jsonb_build_object('status', t.status, 'trade', wm.trade_json(t)));
 end $$;
 
