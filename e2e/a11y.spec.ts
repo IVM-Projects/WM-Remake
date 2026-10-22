@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { expect, makePlayer, sql, test } from './fixtures'
+import { befriend, expect, makePlayer, sql, test } from './fixtures'
 
 type Known = { rule: string; selector: string }
 
@@ -33,6 +33,8 @@ const READY: Record<string, string> = {
   '/collection': 'main a[href="/pulls"]', '/global-collection': 'main nav[aria-label="Pagination"]',
   // Les deux lectures de /settings finies : pseudo et préférences.
   '/settings': 'main:has(#settings-username) input[name="sounds"]',
+  // Première lecture de /api/friends finie (sections ou erreur).
+  '/friends': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -41,9 +43,9 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
-  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/settings']) {
+  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings']) {
   test(`axe ${path}`, async ({ page, login }) => {
-    if (['/pulls', '/collection', '/global-collection', '/settings'].includes(path)) await login()
+    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings'].includes(path)) await login()
     // Adresse posée par /login (compte non confirmé) dans sessionStorage, jamais dans l'URL.
     if (path === '/verify-email') await page.addInitScript(() => sessionStorage.setItem('wm.verifyEmail', 'a11y@test.local'))
     await page.goto(path)
@@ -191,6 +193,24 @@ select from wm.place_bid(:'b', :'id', 10) \\g /dev/null
   } finally {
     sql(`delete from auth.users where id in (:'uid', :'s', :'b');
 delete from public.cards where id = :'card'`, { uid, s: seller.uid, b: bidder.uid, card })
+  }
+})
+
+test('axe /friends : une demande reçue et un ami, puis la modale de retrait', async ({ page, login }) => {
+  const me = await login()
+  const [asker, friend] = [makePlayer(), makePlayer()]
+  try {
+    sql(`insert into public.friendships (requester_id, addressee_id) values (:'a', :'me')`, { a: asker.uid, me: me.uid })
+    befriend(friend, me)
+    await page.goto('/friends')
+    await page.locator(READY['/friends']).waitFor()
+    await expect(page.locator('main section li')).toHaveCount(2)
+    await expectNoSeriousViolations(page)
+    await page.locator('main section li').filter({ hasText: friend.username }).getByRole('button', { name: 'Retirer' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'a', :'f')`, { me: me.uid, a: asker.uid, f: friend.uid })
   }
 })
 
