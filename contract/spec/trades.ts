@@ -19,9 +19,10 @@ const Trade = z.object({
   }).loose()),
   counter_trade_id: z.uuid().nullable(),
 }).loose()
-const List = z.object({ trades: z.array(Trade) })
-const One = z.object({ trade: Trade })
-const Acted = z.object({ status: Trade.shape.status, trade: Trade })
+// Enveloppes strictes : une clé en plus au premier niveau ferait échouer le cas au lieu de disparaître avant le deepEqual.
+const List = z.strictObject({ trades: z.array(Trade) })
+const One = z.strictObject({ trade: Trade })
+const Acted = z.strictObject({ status: Trade.shape.status, trade: Trade })
 const INTERNAL = 'Erreur interne, réessaie dans un instant.'
 const DONE = 'Cet échange n\'est plus en attente (déjà traité)'
 const TZ = { 'x-wiki-calendar-tz': 'Europe/Paris' }
@@ -150,14 +151,17 @@ where user_id = :'uid'`, { uid: b.uid })), [{ type: 'trade_received', data: { tr
       },
     },
     {
-      name: 'items: [] → 400 ; 101 éléments d\'un côté → 400 « Au plus 100 cartes par côté » (SQL) ; 10 001 WB → 400 ; soi-même → 400 ; solde trop bas → 409 ; {} → 400',
+      name: 'items: [] → 400 ; 101 éléments d\'un côté → 400 « Au plus 100 cartes par côté » (SQL) ; 10 001 WB ou −1 WB → 400 ; soi-même → 400 ; solde trop bas → 409 ; {} → 400',
       run: async (env) => {
         const [a, b] = pair(env)
         const post = (body: object) => create(env, a.uid, { recipient_id: b.uid, ...body })
         const unit = items(env, [a.c])
         await refused(await post({ items: [] }), 400, 'Un échange contient au moins une carte', 'invalid_request')
+        // La même copie 101 fois, exprès : le plafond par côté est vérifié avant la possession.
         await refused(await post({ items: Array(101).fill(unit[0]) }), 400, 'Au plus 100 cartes par côté', 'invalid_request')
         await refused(await post({ items: unit, recipient_wikibidous: 10001 }), 400, 'Entre 0 et 10 000 wikibidous par côté', 'invalid_request')
+        // z.int32() laisse passer −1 : le 400 vient du SQL.
+        await refused(await post({ items: unit, initiator_wikibidous: -1 }), 400, 'Entre 0 et 10 000 wikibidous par côté', 'invalid_request')
         await refused(await post({ items: unit, recipient_id: a.uid }), 400, 'Tu ne peux pas échanger avec toi-même', 'invalid_request')
         await refused(await post({ items: unit, initiator_wikibidous: 1001 }), 409, 'Solde insuffisant', 'insufficient_balance')
         await failed(await create(env, a.uid, {}), 400, 'invalid_request')
@@ -196,6 +200,10 @@ export const tradeAction: RouteSpec = {
   cases: [
     noSession('PATCH', at(randomUUID())),
     {
+      name: 'tradeId=abc → 400 invalid_request',
+      run: async (env) => void (await failed(await act(env, makeUser(db(env)).uid, 'abc', 'accept'), 400, 'invalid_request')),
+    },
+    {
       name: 'accept → { status: accepted, trade } ; copie reçue sous son id, WB nets ; même clé → corps identique ; sans clé → 409 (M4-8)',
       run: async (env) => {
         const [a, b] = pair(env)
@@ -232,11 +240,12 @@ export const tradeAction: RouteSpec = {
       },
     },
     {
-      name: 'inconnu → 404 ; { action: counter } → 400 « Action inconnue » (P11) ; expires_at passé → 409 « déjà traité »',
+      name: 'inconnu, ou existant mais d\'un autre → 404 « Échange introuvable » ; { action: counter } → 400 « Action inconnue » (P11) ; expires_at passé → 409',
       run: async (env) => {
         const [a, b] = pair(env)
         const id = proposed(env, a, b)
         await refused(await act(env, b.uid, randomUUID(), 'accept'), 404, 'Échange introuvable')
+        await refused(await act(env, makeUser(db(env)).uid, id, 'accept'), 404, 'Échange introuvable')
         await refused(await act(env, b.uid, id, 'counter'), 400, 'Action inconnue', 'invalid_request')
         sql(env, `update public.trades set expires_at = now() - interval '1 minute' where id = :'id'`, { id })
         await refused(await act(env, b.uid, id, 'accept'), 409, DONE)
@@ -258,6 +267,7 @@ update public.profiles set avatar_user_card_id = :'pc' where id = :'b'`, { a: a.
           sql(env, `create trigger :"t" after insert on public.notifications for each row when (new.data ->> 'trade_id' = :'id')
 execute function tests.boom()`, { t, id })
           await refused(await act(env, b.uid, id, 'accept', key), 500, INTERNAL)
+          // check_invariants y est global : égalité sûre parce que le contrat tourne en séquence (un seul fichier, contract/run.test.ts).
           assert.deepEqual(snap(env, id), s0)
         } finally {
           sql(env, `drop trigger if exists :"t" on public.notifications`, { t })
