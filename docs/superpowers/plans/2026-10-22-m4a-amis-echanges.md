@@ -8,7 +8,7 @@
 
 **Tech Stack:** celle du M3 (next 16.4.2, react 19.3.1, @supabase/supabase-js 2.118.0, zod 4.6.7, vitest 5.0.5, @playwright/test 1.64.1, @axe-core/playwright 4.14.0, PostgREST v12.2.3, GoTrue v2.197.0) ; pg_cron 1.6.4 sur la démo (PostgreSQL 17.11) ; `pgbench` 16 du banc local (`/usr/lib/postgresql/16/bin`). Aucune dépendance npm ajoutée (`web-push` arrive au M4b).
 
-**Spec:** `docs/superpowers/specs/2026-10-18-wikimasters-rebuild-design.md` (cité D§x ou D:ligne), surtout D§7.0, §7.6, §7.9 (amis, notifications, cloche), §8 (D:651-753), §9.4 à §9.6 ; `docs/rea-recap.md` (R§x), surtout R§3.6, §3.7 (amis, notifications), §4.1, §4.2, §5.6, §5.8, §6.8. Jalon : D§13 ligne M4 (D:1083). Décisions du contrôleur et faits relevés : `.superpowers/sdd/2026-10-22-m4-echanges-social/` (`decisions.md`, `research-*.md`, `open-questions.md`). Ces fichiers ne sont pas versionnés : ce plan recopie chaque valeur dont une tâche a besoin.
+**Spec:** `docs/superpowers/specs/2026-10-18-wikimasters-rebuild-design.md` (cité D§x ou D:ligne), surtout D§7.0, §7.6, §7.9 (amis, notifications, cloche), §8 (D:651-753), §9.4 à §9.6 ; `docs/rea-recap.md` (R§x), surtout R§3.6, §3.7 (amis, notifications), §4.1, §4.2, §5.6, §5.8, §6.8. Jalon : D§13 ligne M4 (D:1083). Décisions du contrôleur et faits relevés : `.superpowers/sdd/2026-10-22-m4a-amis-echanges/` (`decisions.md`, `research-*.md`, `open-questions.md`). Ces fichiers ne sont pas versionnés : ce plan recopie chaque valeur dont une tâche a besoin.
 
 ## Global Constraints
 
@@ -956,7 +956,7 @@ Règles de conduite inchangées : aucune question à l'utilisateur sauf confirma
 
 **Files:**
 - Modify: `docs/superpowers/HANDOFF.md`, `docs/suivi.md`, `docs/verifications.md`, `docs/decisions-graphify.md`, `docs/DESIGN.md` (section « Amis et échanges » : onglets, carte d'offre, puces, détail, composer, cloche)
-- Create (non versionné) : `.superpowers/sdd/2026-10-22-m4-echanges-social/deploy-m4a.sql`
+- Create (non versionné) : `.superpowers/sdd/2026-10-22-m4a-amis-echanges/deploy-m4a.sql`
 
 > Ordre (R32, M4-18) : migrations, puis fusion. `develop` est la branche de production de Vercel, et la nouvelle cloche lit `rest/v1/notifications`, tandis que `/api/trades` appelle `wm.trades_list`.
 
