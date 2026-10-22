@@ -426,7 +426,10 @@ test('multi-sélection : tout sélectionner, défausser 50 cartes', async ({ pag
 test('défausse en masse découpée en lots de 50, solde illisible relu après', async ({ page, login }) => {
   const { uid } = await login({ balance: 0 })
   seed60(uid)
-  await page.route('**/api/wikibidous', (r) => r.abort(), { times: 1 })
+  // Route gardée tout le test, pas { times: 1 } : son expiration coupe l'interception (Fetch.disable) pendant que /api/my-collection
+  // part, et Chromium perd alors parfois cette requête (jamais envoyée, jamais rendue).
+  let reads = 0
+  await page.route('**/api/wikibidous', (r) => (reads++ ? r.continue() : r.abort()))
   await page.goto('/collection')
   await expect(tiles(page)).toHaveCount(50)
   // Lecture du solde échouée : « — » et un nom lisible, jamais rien.
