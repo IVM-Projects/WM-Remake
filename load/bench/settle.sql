@@ -1,19 +1,26 @@
 -- Règlement de 5 000 enchères (M3-4, P9), en deux appels de run.sh : -v regle=off prépare le lot, -v regle=on le règle, chronométré,
 -- et le contrôle. read.sql tourne entre les deux : ses lectures recouvrent le règlement, pas la préparation.
+\if :{?regle}
+\else
+\warn 'settle.sql : -v regle=off (préparation) ou -v regle=on (règlement et contrôles), comme load/bench/run.sh'
+\quit
+\endif
 \if :regle
 \timing on
 select wm.settle_due_auctions(5000);
 \timing off
--- 5 000 vendues, 10 000 notifications auction_won + auction_sold, 5 000 copies neuves chez les gagnants (count 1, pas favorites).
+-- 5 000 vendues, 5 000 notifications auction_won et 5 000 auction_sold, 5 000 copies neuves chez les gagnants (count 1, pas favorites).
 do $$
 declare
   v_sold int := (select count(*) from public.auctions where status = 'settled_sold');
-  v_notes int := (select count(*) from public.notifications where type in ('auction_won', 'auction_sold'));
+  v_won int := (select count(*) filter (where type = 'auction_won') from public.notifications);
+  v_sold_notes int := (select count(*) filter (where type = 'auction_sold') from public.notifications);
   v_copies int := (select count(*) from public.auctions a join public.user_cards k on k.user_id = a.winner_id and k.card_id = a.card_id
     and k.obtained_at = a.settled_at and k.count = 1 and not k.starred where a.status = 'settled_sold');
 begin
-  if (v_sold, v_notes, v_copies) <> (5000, 10000, 5000) then
-    raise exception 'règlement : % vendues, % notifications, % copies (5000, 10000 et 5000 attendues)', v_sold, v_notes, v_copies;
+  if (v_sold, v_won, v_sold_notes, v_copies) <> (5000, 5000, 5000, 5000) then
+    raise exception 'règlement : % vendues, % auction_won, % auction_sold, % copies (5000 de chaque attendues)', v_sold, v_won, v_sold_notes,
+      v_copies;
   end if;
 end $$;
 \else

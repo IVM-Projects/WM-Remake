@@ -1,4 +1,11 @@
 -- Données des benchs du marché (load/bench/run.sh, P14), sur la base du banc seulement : le schéma bench n'est créé par aucune migration.
+-- Lancé à la main ailleurs (la démo), il s'arrête avant toute écriture : les mises à jour de wm.config y seraient validées.
+\set ON_ERROR_STOP on
+do $$ begin
+  if current_database() <> 'wm_test' then
+    raise exception 'setup.sql : base wm_test du banc seulement, pas %', current_database();
+  end if;
+end $$;
 create schema bench;
 
 -- Marché ouvert : ni rafale ni limite d'enchères. Minimum suivant = mise + 1 : au ratio 1,1, l'enchère disputée dépasserait le solde de 10⁹
@@ -30,7 +37,7 @@ begin
 end $$;
 
 -- Verrou de l'enchère d'abord : le minimum lu est celui que place_bid verra. Seuls les refus métier (P0001, « Tu es déjà en tête »…)
--- rendent false : pgbench abandonne un client à sa première erreur, donc un 55P03 ou un 40P01 fait échouer run.sh.
+-- rendent false. Toute autre erreur fait échouer run.sh : pgbench arrête le client sur un 55P03, et compte un 40P01 en transaction échouée.
 create or replace function bench.bid(p_n int, p_k int) returns boolean language plpgsql as $$
 declare a public.auctions;
 begin
