@@ -77,7 +77,9 @@ end $$;
 -- Une acceptation : le premier tour non fait de (client, taille), tenu jusqu'au commit, ses avatars, puis l'acceptation du destinataire.
 -- Aucun refus avalé : un P0001 fait échouer la transaction, et pgbench arrête le client.
 create function bench.accept_next(p_client int, p_size int) returns boolean language plpgsql as $$
-declare r bench.trades;
+declare
+  r bench.trades;
+  v int;
 begin
   select * into r from bench.trades where client = p_client and size = p_size and not done order by round limit 1 for update;
   if not found then
@@ -85,23 +87,34 @@ begin
   end if;
   update bench.trades set done = true where client = r.client and size = r.size and round = r.round;
   -- Avatar de chaque joueur sur une de ses copies seules de l'échange : l'instruction (5) de wm.trade_move l'efface à chaque tour.
+  -- Profils verrouillés avant l'échange (trade_action), l'inverse de C4 : sûr parce que chaque client a sa paire, pas entre clients.
   update public.profiles p set avatar_user_card_id = a.k
   from (select distinct on (i.offered_by) i.offered_by u, i.user_card_id k
     from public.trade_items i join public.user_cards uc on uc.id = i.user_card_id and uc.count = 1
     where i.trade_id = r.id order by i.offered_by, i.user_card_id) a
   where p.id = a.u;
+  get diagnostics v = row_count;
+  if v <> 2 then
+    raise exception 'bench.accept_next : % avatar(s) posé(s) sur 2', v;
+  end if;
   perform wm.trade_action(r.recipient, r.id, 'accept');
   return true;
 end $$;
 
--- Contrôle de la préparation : 200 échanges en attente, côtés de 100 (et 10) éléments, n favorites étiquetées par côté ; 5 000 de fond.
+-- Contrôle de la préparation : 200 échanges en attente, deux côtés chacun ; par côté, copies à leur offrant, (taille, éléments, copies
+-- étiquetées, favorites, piles de 3, piles de 2) = (100, 100, 10, 20, 10, 10) ou (10, 10, 1, 2, 1, 1) ; 5 000 échanges de fond.
 do $$
-declare v jsonb := (select jsonb_agg(distinct jsonb_build_array(b.size, x.items, x.tagged)) from bench.trades b
-  join public.trades t on t.id = b.id and t.status = 'pending'
-  cross join lateral (select count(*) items, count(distinct ut.user_card_id) tagged from public.trade_items i
-    left join public.user_card_tags ut on ut.user_card_id = i.user_card_id where i.trade_id = b.id and i.offered_by = b.recipient) x);
+declare v jsonb := (select jsonb_build_object('sides', count(*),
+    'shapes', jsonb_agg(distinct jsonb_build_array(b.size, x.items, x.tagged, x.starred, x.p3, x.p2)))
+  from bench.trades b join public.trades t on t.id = b.id and t.status = 'pending'
+  cross join lateral (select count(*) items, count(distinct ut.user_card_id) tagged, count(distinct uc.id) filter (where uc.starred) starred,
+      count(distinct uc.id) filter (where uc.count = 3) p3, count(distinct uc.id) filter (where uc.count = 2) p2
+    from public.trade_items i join public.user_cards uc on uc.id = i.user_card_id and uc.user_id = i.offered_by
+    left join public.user_card_tags ut on ut.user_card_id = i.user_card_id
+    where i.trade_id = b.id and i.offered_by in (t.initiator_id, t.recipient_id) group by i.offered_by) x);
 begin
-  if v <> '[[10, 10, 1], [100, 100, 10]]' or (select count(*) from bench.trades) <> 200
+  if v is distinct from '{"sides": 400, "shapes": [[10, 10, 1, 2, 1, 1], [100, 100, 10, 20, 10, 10]]}'
+     or (select count(*) from bench.trades) <> 200
      or (select count(*) from public.trades where status = 'pending' and id not in (select id from bench.trades)) <> 5000 then
     raise exception 'trade_setup.sql : préparation inattendue %', v;
   end if;
