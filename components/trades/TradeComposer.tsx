@@ -46,13 +46,15 @@ const readPage = (owner: string | null, q: string, page: number) =>
 const sideOf = (q: string, r: Collection): Side => ({ q, page: 0, items: r.collection, total: r.total, pending: r.pendingTradeCardIds })
 const titles = (items: Copy[]) => Object.fromEntries(items.map((c) => [c.id, c.card.wikipedia_title]))
 
-// /trades/new?with=<ami>[&parent=<échange>] (M4-15, P18). Remonté par ami et par parent : la page gardée par Activity repart de zéro pour
-// un autre échange.
+// /trades/new?with=<ami>[&parent=<échange>] (M4-15, P18). Remonté pour un autre ami ou un autre parent. Cachée par Activity, la page se rend
+// avec l'adresse de la page visible, sans `with` : elle garde alors les siens, et son brouillon avec.
 export function TradeComposer() {
   const params = useSearchParams()
-  const withId = params.get('with') ?? ''
-  const parentId = params.get('parent') ?? ''
-  return <Composer key={`${withId}/${parentId}`} withId={withId} parentId={parentId || undefined} />
+  const w = params.get('with') ?? ''
+  const p = params.get('parent') ?? ''
+  const [shown, setShown] = useState({ w, p })
+  if (w && (w !== shown.w || p !== shown.p)) setShown({ w, p })
+  return <Composer key={`${shown.w}/${shown.p}`} withId={shown.w} parentId={shown.p || undefined} />
 }
 
 function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
@@ -68,6 +70,8 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
   const [wb, setWb] = useState<Record<Which, string>>({ offer: '', ask: '' })
   // user_card_id → card_id et titre, des pages lues et des éléments du parent ; jamais d'entrée retirée (P18).
   const [known, setKnown] = useState<{ cardOf: Record<string, string>; titleOf: Record<string, string> }>({ cardOf: {}, titleOf: {} })
+  // Copies du parent : la contre-offre le clôt, son verrou ne compte pas pour elles.
+  const [parentCopies, setParentCopies] = useState<string[]>([])
   // Lecture d'un panneau en cours (filtre, « Charger la suite ») ; envoi en cours. aria-disabled et garde, jamais disabled.
   const [loading, setLoading] = useState<Record<Which, boolean>>({ offer: false, ask: false })
   const [sending, setSending] = useState(false)
@@ -87,28 +91,34 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
 
   const learn = (cardOf: Record<string, string>, titleOf: Record<string, string>) =>
     setKnown((k) => ({ cardOf: { ...k.cardOf, ...cardOf }, titleOf: { ...k.titleOf, ...titleOf } }))
-  const learnPage = (items: Copy[]) => learn(Object.fromEntries(items.map((c) => [c.id, c.card_id])), titles(items))
+  // Une page lue : card_id et titres retenus ; un choix au-delà de sa pile (parent prérempli, pile réduite depuis) ramené à son count.
+  const reveal = (w: Which, items: Copy[]) => {
+    learn(Object.fromEntries(items.map((c) => [c.id, c.card_id])), titles(items))
+    setPicks((p) => ({ ...p, [w]: { ...p[w], ...Object.fromEntries(items.filter((c) => (p[w][c.id] ?? 0) > c.count).map((c) => [c.id, c.count])) } }))
+  }
 
   // Lue à chaque affichage (Activity compris) et sur « Réessayer » : l'ami (session du navigateur, P16), le parent, la page 0 de chaque
   // panneau sous son filtre. Les choix restent ; la contre-offre n'est préremplie qu'une fois.
   const load = () => {
     const g = ++gens.current.head
-    gens.current.offer++
-    gens.current.ask++
+    // Un panneau relu ou filtré après ce départ garde sa lecture, plus récente : celle-ci ne l'écrase pas.
+    const go = ++gens.current.offer
+    const ga = ++gens.current.ask
     const qs = { offer: sides?.offer.q ?? '', ask: sides?.ask.q ?? '' }
     void Promise.all([
       api<{ friendships: Friendship[] } | null>('/api/friends').then((r) => (Array.isArray(r?.friendships) ? r.friendships : null), () => null),
       createBrowserSupabase().auth.getSession().then(({ data }) => data.session?.user.id ?? null, () => null),
       parentId
-        ? api<{ trade: Trade } | null>(`/api/trades/${parentId}`).then((r) => r?.trade ?? null,
+        ? api<{ trade: Trade } | null>(`/api/trades/${encodeURIComponent(parentId)}`).then((r) => r?.trade ?? null,
           (e) => (e instanceof ApiError && (e.status === 404 || e.status === 400) ? 'missing' as const : null))
         : undefined,
       readPage(null, qs.offer, 0),
       readPage(withId, qs.ask, 0),
     ]).then(([rows, me, parent, offer, ask]) => {
       if (g !== gens.current.head) return
-      busy.current = { offer: false, ask: false }
-      setLoading({ offer: false, ask: false })
+      const fresh = { offer: go === gens.current.offer, ask: ga === gens.current.ask }
+      for (const w of ['offer', 'ask'] as const) if (fresh[w]) busy.current[w] = false
+      setLoading((l) => ({ offer: !fresh.offer && l.offer, ask: !fresh.ask && l.ask }))
       const f = rows?.find((x) => x.status === 'accepted' && withId !== me && [x.requester_id, x.addressee_id].includes(withId))
       const friend = f && (f.requester_id === withId ? f.requester : f.addressee)
       const stop = (b: Blocked) => {
@@ -125,8 +135,11 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
       setBlocked(null)
       setFailed(false)
       setHead({ me, friend })
-      setSides({ offer: sideOf(qs.offer, offer), ask: sideOf(qs.ask, ask) })
-      learnPage([...offer.collection, ...ask.collection])
+      setSides((s) => ({
+        offer: s && !fresh.offer ? s.offer : sideOf(qs.offer, offer),
+        ask: s && !fresh.ask ? s.ask : sideOf(qs.ask, ask),
+      }))
+      setParentCopies(parent ? parent.items.map((i) => i.user_card_id) : [])
       if (parent && !prefilled.current) {
         prefilled.current = true
         const inv = invertTrade(parent, me)
@@ -135,6 +148,9 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
         setPicks({ offer: inv.offer, ask: inv.ask })
         setWb({ offer: inv.wbOffer ? String(inv.wbOffer) : '', ask: inv.wbAsk ? String(inv.wbAsk) : '' })
       }
+      // Après le préremplissage : ses quantités sont bornées aux piles lues.
+      if (fresh.offer) reveal('offer', offer.collection)
+      if (fresh.ask) reveal('ask', ask.collection)
     })
   }
   const onShow = useEffectEvent(load)
@@ -157,14 +173,14 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
     busy.current[w] = false
     setLoading((l) => ({ ...l, [w]: false }))
     if (!r) return toast(LOAD_FAILED)
-    learnPage(r.collection)
-    if (page) {
-      // Dernière page : « Charger la suite » disparaît sous le focus, qui va à la première copie arrivée.
-      const first = sides?.[w].items.length ?? 0
-      refocus.current = () => {
-        const inputs = root.current?.querySelectorAll<HTMLElement>(`[data-side="${w}"] input[type="number"]`)
-        return inputs?.[first] ?? inputs?.[inputs.length - 1]
-      }
+    reveal(w, r.collection)
+    // Dernière page : « Charger la suite » disparaît sous le focus, qui va à la première copie arrivée. Filtre : une quantité de l'ancienne
+    // liste focalisée pendant la lecture disparaît avec elle, le focus revient au filtre.
+    const first = page ? (sides?.[w].items.length ?? 0) : -1
+    refocus.current = () => {
+      const panel = root.current?.querySelector(`[data-side="${w}"]`)
+      const inputs = panel?.querySelectorAll<HTMLElement>('input[type="number"]')
+      return first < 0 ? panel?.querySelector<HTMLElement>('input[type="search"]') : (inputs?.[first] ?? inputs?.[inputs.length - 1])
     }
     setSides((s) => s && {
       ...s,
@@ -186,7 +202,9 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
     void readSide(w, sides[w].q, sides[w].page + 1)
   }
 
+  // Toute modification fait un autre corps, donc une autre clé : l'alerte d'un envoi incertain (« pas créé deux fois ») ne vaut plus.
   const setQty = (w: Which, copy: string, text: string, max: number) => {
+    setError(null)
     setDraft({ id: copy, text })
     setPicks((p) => ({ ...p, [w]: { ...p[w], [copy]: Math.min(Math.max(Math.trunc(Number(text)) || 0, 0), max) } }))
   }
@@ -198,7 +216,13 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
       const buttons = panel?.querySelectorAll<HTMLElement>('[data-picks] button')
       return buttons?.[Math.min(i, buttons.length - 1)] ?? panel?.querySelector<HTMLElement>('input[type="search"]')
     }
+    setError(null)
     setPicks((p) => ({ ...p, [w]: { ...p[w], [copy]: 0 } }))
+  }
+
+  const setAmount = (w: Which, text: string) => {
+    setError(null)
+    setWb((x) => ({ ...x, [w]: text.replace(/\D/g, '') }))
   }
 
   const empty = !sideCount(picks.offer) && !sideCount(picks.ask)
@@ -259,7 +283,9 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
                     <span id={`${id}-${c.id}`} className="text-[var(--color-foreground)]/70">
                       {`${c.snapshot_rarity} · ×${formatInt(c.count)}`}
                       {/* M4-2 : marquée, toujours offrable (la seconde acceptation échouera si la première passe). */}
-                      {(s.pending.includes(c.id) || s.pending.includes(c.card_id)) && <span className="text-amber-600"> · Déjà dans un échange</span>}
+                      {(s.pending.includes(c.id) || s.pending.includes(c.card_id)) && !parentCopies.includes(c.id) && (
+                        <span className="text-amber-600"> · Déjà dans un échange</span>
+                      )}
                     </span>
                   </span>
                   <input
@@ -327,9 +353,11 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
                   autoComplete="off"
                   placeholder="0"
                   value={wb[w]}
-                  onChange={(e) => {
-                    const v = e.target.value.replace(/\D/g, '')
-                    setWb((x) => ({ ...x, [w]: v }))
+                  onChange={(e) => setAmount(w, e.target.value)}
+                  // maxLength couperait « 10 000 » collé avant le retrait de l'espace : les chiffres d'abord, puis les 5 premiers.
+                  onPaste={(e) => {
+                    e.preventDefault()
+                    setAmount(w, e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 5))
                   }}
                   className={`${field} w-32`}
                 />

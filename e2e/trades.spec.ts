@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Locator, Page, Request } from '@playwright/test'
+import type { Locator, Page, Request, Route } from '@playwright/test'
 import { befriend, expect, giveCopies, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a ses joueurs, supprimés à la fin (échanges, éléments, amitiés et notifications
@@ -500,6 +500,23 @@ const qty = (panel: Locator, copy: string) => panel.getByLabel(`Quantité de ${t
 const posts = (r: Request) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/trades'
 const TRADE_URL = /\/trades\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const UNSURE_SEND = 'L\'envoi n\'a pas été confirmé : l\'échange a peut-être été proposé. Réessaie, il ne sera pas créé deux fois.'
+// La ligne d'une copie dans son panneau (le `has` est relatif à la ligne).
+const copyRow = (panel: Locator, copy: string) =>
+  panel.getByRole('listitem').filter({ has: panel.page().getByLabel(`Quantité de ${titleOf(copy)}`, { exact: true }) })
+const LOCKED = 'Déjà dans un échange'
+// Première requête de `url` qui vérifie `when`, retenue jusqu'à release() ; `arrived` se résout à son arrivée.
+async function holdOnce(page: Page, url: Parameters<Page['route']>[0], when: (r: Route) => boolean = () => true) {
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  let seen = () => {}
+  const arrived = new Promise<void>((r) => { seen = r })
+  await routeOnce(page, url, async (route) => {
+    seen()
+    await held
+    await route.fallback()
+  }, when)
+  return { release, arrived }
+}
 async function tabTo(page: Page, target: Locator) {
   for (let i = 0; i < 80 && !(await target.evaluate((e) => e === document.activeElement)); i++) await page.keyboard.press('Tab')
   await expect(target).toBeFocused()
@@ -573,18 +590,18 @@ test('verrou (M4-2) : ma copie déjà dans un échange en attente porte « Déj�
   const { me, other, mine, theirs } = await friends(login, 2)
   propose(me, other, [mine[0], theirs[0]])
   await open(page, `/trades/new?with=${other.uid}`)
-  const row = (copy: string) => offerPanel(page).getByRole('listitem').filter({ has: page.getByLabel(`Quantité de ${titleOf(copy)}`, { exact: true }) })
-  await expect(row(mine[0])).toContainText('Déjà dans un échange')
-  await expect(row(mine[1])).not.toContainText('Déjà dans un échange')
+  await expect(copyRow(offerPanel(page), mine[0])).toContainText(LOCKED)
+  await expect(copyRow(offerPanel(page), mine[1])).not.toContainText(LOCKED)
   await qty(offerPanel(page), mine[0]).fill('1')
   await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
   await page.getByRole('button', { name: 'Proposer l\'échange' }).click()
   await expect(page).toHaveURL(TRADE_URL)
 })
 
-test('contre-offre : quantités et WB inversés, préremplis ; « Envoyer la contre-offre » → l\'enfant, toast ; le parent « Contre-offre » ; rouvert → « déjà traité »', async ({ page, login }) => {
+test('contre-offre : quantités et WB inversés, préremplis ; copie du parent sans « Déjà dans un échange », celle d\'un autre échange marquée ; « Envoyer la contre-offre » → l\'enfant, toast ; le parent « Contre-offre » ; rouvert → « déjà traité »', async ({ page, login }) => {
   const { me, other, mine, theirs } = await friends(login)
   const parent = propose(other, me, [theirs[0], mine[0]], { iwb: 300 })
+  propose(me, other, [mine[1], theirs[2]])
   const path = `/trades/new?with=${other.uid}&parent=${parent}`
   await open(page, path)
   await expect(page.locator('main h1')).toHaveText('Contre-offre')
@@ -592,6 +609,9 @@ test('contre-offre : quantités et WB inversés, préremplis ; « Envoyer la con
   await expect(qty(offerPanel(page), mine[0])).toHaveValue('1')
   await expect(qty(offerPanel(page), mine[1])).toHaveValue('0')
   await expect(qty(askPanel(page), theirs[0])).toHaveValue('1')
+  // La contre-offre clôt son parent : sa copie n'est pas engagée ailleurs ; celle d'un autre échange en attente, si.
+  await expect(copyRow(offerPanel(page), mine[0])).not.toContainText(LOCKED)
+  await expect(copyRow(offerPanel(page), mine[1])).toContainText(LOCKED)
   await expect(page.getByLabel('Wikibidous offerts')).toHaveValue('')
   await expect(page.getByLabel('Wikibidous demandés')).toHaveValue('300')
   await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
@@ -635,7 +655,26 @@ test('contre-offre hors de la première page : la copie demandée sort en 51e, l
   await expect(page).toHaveURL(TRADE_URL)
 })
 
-test('pages et filtre : « Charger la suite » → 51 copies, le focus sur la 51e ; un filtre revient en page 0 et garde les choix ; « Retirer »', async ({ page, login }) => {
+test('contre-offre : le parent demandait 2 unités d\'une pile qui n\'en a plus qu\'une → ramené à 1 dès que la copie s\'affiche, et le POST en porte une', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login, 1)
+  sql(`update public.user_cards set count = 2 where id = :'c'`, { c: mine[0] })
+  const unit = `jsonb_build_object('user_card_id', id, 'card_id', card_id, 'offered_by', user_id)`
+  const parent = sql(`select wm.create_trade(:'a', :'b', jsonb_build_array(x, x, y)) ->> 'id'
+from (select ${unit} x from public.user_cards where id = :'m') a, (select ${unit} y from public.user_cards where id = :'t') b`,
+  { a: other.uid, b: me.uid, m: mine[0], t: theirs[0] })
+  sql(`update public.user_cards set count = 1 where id = :'c'`, { c: mine[0] })
+  await open(page, `/trades/new?with=${other.uid}&parent=${parent}`)
+  await expect(qty(offerPanel(page), mine[0])).toHaveAttribute('max', '1')
+  await expect(qty(offerPanel(page), mine[0])).toHaveValue('1')
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
+  const posted = page.waitForRequest(posts)
+  await page.getByRole('button', { name: 'Envoyer la contre-offre' }).click()
+  const { items } = (await posted).postDataJSON() as { items: { user_card_id: string }[] }
+  expect(items.filter((i) => i.user_card_id === mine[0])).toHaveLength(1)
+  await expect(page).toHaveURL(TRADE_URL)
+})
+
+test('pages et filtre : « Charger la suite » → 51 copies, le focus sur la 51e ; un filtre revient en page 0 et garde le choix qu\'il cache ; quantité de l\'ancienne liste cliquée pendant sa lecture → le focus au filtre ; « Retirer »', async ({ page, login }) => {
   const me = await login({ balance: 1000 })
   trash.push(me.uid)
   const other = player()
@@ -652,20 +691,62 @@ test('pages et filtre : « Charger la suite » → 51 copies, le focus sur la 51
   await expect(offer.getByRole('spinbutton')).toHaveCount(51)
   await expect(more).toHaveCount(0)
   await expect(offer.getByRole('spinbutton').nth(50)).toBeFocused()
-  // Un titre du seed se termine par un numéro unique (contract/spec/collection.ts).
-  const t = titleOf(mine[0])
+  // Le filtre garde une autre copie que celle choisie ; un titre du seed se termine par un numéro unique (contract/spec/collection.ts).
+  const picked = (await offer.getByRole('spinbutton').first().getAttribute('aria-label'))!.replace('Quantité de ', '')
+  const kept = titleOf(mine[0]) === picked ? mine[1] : mine[0]
   const filter = offer.getByRole('searchbox', { name: 'Filtrer mes cartes' })
-  await filter.fill(t.slice(-4))
+  const { release, arrived } = await holdOnce(page, (url) => url.pathname === '/api/my-collection' && url.searchParams.has('q'))
+  await filter.fill(titleOf(kept).slice(-4))
   await filter.press('Enter')
+  await arrived
+  // Pendant la lecture, une quantité de l'ancienne liste prend le focus ; elle disparaît avec elle.
+  await offer.getByRole('spinbutton').first().click()
+  release()
   await expect(offer.getByRole('spinbutton')).toHaveCount(1)
-  await expect(qty(offer, mine[0])).toBeVisible()
+  await expect(filter).toBeFocused()
+  await expect(qty(offer, kept)).toBeVisible()
   await expect(offer.getByRole('heading')).toHaveText('Tu offres (1/100)')
   const choices = offer.getByRole('list', { name: 'Tes choix' })
   await expect(choices.getByRole('listitem')).toHaveCount(1)
+  await expect(choices).toContainText(`${picked} ×1`)
   await choices.getByRole('button', { name: 'Retirer' }).click()
   await expect(offer.getByRole('heading')).toHaveText('Tu offres (0/100)')
   await expect(choices).toHaveCount(0)
   expect(await onBody(page)).toBe(false)
+})
+
+test('réaffichage par Activity : le choix d\'avant reste ; un filtre posé pendant la relecture du retour n\'est pas défait par elle', async ({ page, login }) => {
+  const { other, mine } = await friends(login, 3)
+  const path = `/trades/new?with=${other.uid}`
+  await open(page, path)
+  await qty(offerPanel(page), mine[1]).fill('1')
+  const nav = page.locator('nav a[href="/pulls"]').first()
+  await hydrated(nav)
+  // Marqueur du document : un rechargement complet l'efface, et la page gardée par Activity avec lui.
+  await page.evaluate(() => void Object.assign(window, { __spa: true }))
+  await nav.click()
+  await expect(page).toHaveURL('/pulls')
+  // Relecture du retour : la page 0 de mes cartes, sans filtre, retenue jusqu'à release().
+  const unfiltered = (url: URL) => url.pathname === '/api/my-collection' && url.search === '?page=0'
+  const { release, arrived } = await holdOnce(page, unfiltered)
+  await page.goBack()
+  await expect(page).toHaveURL(path)
+  expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
+  await arrived
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
+  const filter = offerPanel(page).getByRole('searchbox', { name: 'Filtrer mes cartes' })
+  await filter.fill(titleOf(mine[0]).slice(-4))
+  await filter.press('Enter')
+  await expect(offerPanel(page).getByRole('spinbutton')).toHaveCount(1)
+  const done = page.waitForResponse((r) => unfiltered(new URL(r.url())))
+  release()
+  await done
+  // Le temps que la page applique la relecture si elle l'écrivait encore.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  await expect(offerPanel(page).getByRole('spinbutton')).toHaveCount(1)
+  await expect(qty(offerPanel(page), mine[0])).toBeVisible()
+  await expect(filter).toHaveValue(titleOf(mine[0]).slice(-4))
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
 })
 
 test('lecture en échec : « Impossible de charger cette page. » et « Réessayer », qui rend le composer ; un 200 illisible de même', async ({ page, login }) => {
@@ -705,12 +786,18 @@ test('?with= d\'un non-ami → « Vous devez être amis pour échanger » et « 
   await expect(page.getByRole('button', { name: 'Envoyer la contre-offre' })).toHaveCount(0)
 })
 
-test('wikibidous : chiffres seuls, 5 au plus ; 10 001 → l\'alerte « Entre 0 et 10 000 wikibidous par côté »', async ({ page, login }) => {
+test('wikibidous : chiffres seuls, 5 au plus ; « 10 000 » collé (espace fine de formatInt) → 10000 ; 10 001 → l\'alerte « Entre 0 et 10 000 wikibidous par côté »', async ({ page, login }) => {
   const { other, mine } = await friends(login, 1)
   await open(page, `/trades/new?with=${other.uid}`)
   const wb = page.getByLabel('Wikibidous offerts')
   await expect(wb).toHaveAttribute('maxlength', '5')
   await expect(wb).toHaveAttribute('inputmode', 'numeric')
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.evaluate(() => navigator.clipboard.writeText('10\u202f000'))
+  await wb.focus()
+  await page.keyboard.press('ControlOrMeta+V')
+  await expect(wb).toHaveValue('10000')
+  await wb.fill('')
   await wb.pressSequentially('1a00012')
   await expect(wb).toHaveValue('10001')
   await qty(offerPanel(page), mine[0]).fill('1')
@@ -719,7 +806,7 @@ test('wikibidous : chiffres seuls, 5 au plus ; 10 001 → l\'alerte « Entre 0 e
   await expect(page).toHaveURL(/\/trades\/new\?/)
 })
 
-test('clé gardée (M4-8) : POST passé au serveur puis 503, l\'incertitude dite ; la relance garde sa clé et rejoue, un seul échange', async ({ page, login }) => {
+test('clé gardée (M4-8) : POST passé au serveur puis 503, l\'incertitude dite, effacée par une modification ; la relance du même corps garde sa clé et rejoue, un seul échange', async ({ page, login }) => {
   const { me, other, mine } = await friends(login, 1)
   const keys: string[] = []
   page.on('request', (r) => { if (posts(r)) keys.push(r.headers()['idempotency-key'] ?? '') })
@@ -733,6 +820,11 @@ test('clé gardée (M4-8) : POST passé au serveur puis 503, l\'incertitude dite
   await send.click()
   await expect(page.locator('main').getByRole('alert')).toHaveText(UNSURE_SEND)
   await expect(send).not.toHaveAttribute('aria-disabled', 'true')
+  // Une modification fait un autre corps, donc une autre clé : la promesse « pas créé deux fois » ne tient plus, l'alerte part.
+  await page.getByLabel('Wikibidous offerts').fill('5')
+  await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
+  // Revenu au même corps : la même intention, sa clé gardée.
+  await page.getByLabel('Wikibidous offerts').fill('')
   await send.click()
   await expect(page).toHaveURL(TRADE_URL)
   expect(keys).toHaveLength(2)
