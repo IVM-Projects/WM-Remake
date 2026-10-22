@@ -57,34 +57,53 @@ export function FriendsClient() {
   const readGen = useRef(0)
   const applied = useRef(0)
   const refocus = useRef<Focus | null>(null)
+  // Cible d'une action ou de « Réessayer », et la génération de sa lecture : prise par cette lecture ou une plus récente, jamais effacée
+  // par une relecture de fond.
+  const pending = useRef<{ g: number; focus: Focus } | null>(null)
   const root = useRef<HTMLDivElement>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
 
-  // Sans polling propre (Q25 : la cloche signale les demandes) : lue à chaque affichage (Activity compris), quand le compte de la cloche
-  // change, après chaque action et sur « Réessayer ».
-  const read = (focus: Focus | null = null) => {
+  // Relecture de fond, sans cible : celle de l'élément focalisé (sa section, son rang, son nom), une ligne pouvant changer de section
+  // sous lui ; « Réessayer » → la première section ; hors des sections, aucune.
+  const focused = (): Focus | null => {
+    const el = document.activeElement
+    if (el && el === retryButton.current) return { part: 'received', row: 0 }
+    const box = el?.closest<HTMLElement>('[data-part]')
+    if (!el || !box || !root.current?.contains(box)) return null
+    const row = [...box.querySelectorAll(':scope > ul > li')].findIndex((li) => li.contains(el))
+    return { part: box.dataset.part as Part, row: Math.max(row, 0), name: el.textContent ?? undefined }
+  }
+
+  // Sans polling propre (Q25 : la cloche signale les demandes) : lue à chaque affichage (Activity compris), à chaque lecture de la cloche,
+  // après chaque action et sur « Réessayer ». keep : relecture de fond, dont l'échec laisse la page telle quelle (comme /trades).
+  const read = (focus: Focus | null = null, keep = false) => {
     const g = ++readGen.current
+    if (focus) pending.current = { g, focus }
     return Promise.all([api<{ friendships: Friendship[] }>('/api/friends'), createBrowserSupabase().auth.getSession()]).then(
       // Corps illisible (api() rend null pour un 2xx qui n'est pas du JSON) : lecture en échec, jamais une exception qui bloquerait act().
       ([r, { data: auth }]) => (auth.session && Array.isArray(r?.friendships) ? { me: auth.session.user.id, rows: r.friendships } : null),
       () => null,
     ).then((next) => {
       // Partie avant la dernière appliquée (première lecture lente, réaffichage par Activity) : elle déferait la relecture d'une action.
-      if (g < applied.current) return
+      if (g < applied.current || (!next && keep)) return
       applied.current = g
       // État du serveur relu : une relance est une nouvelle intention, refusée par l'état de la ligne si elle a déjà eu lieu. Une clé
       // gardée rejouerait l'ancien succès (« Ajouter » après un retrait : la réponse stockée, et aucune demande créée).
       if (next) keys.current.clear()
-      refocus.current = focus
+      const p = pending.current && g >= pending.current.g ? pending.current.focus : null
+      if (p) pending.current = null
+      // Une cible non consommée (fermeture de la modale) reste si rien de focalisé n'est à suivre.
+      refocus.current = p ?? focused() ?? refocus.current
       if (next) setData(next)
       setFailed(!next)
     })
   }
-  // Compte du poller partagé de la cloche (M4-13), aucun de plus : abonnement retiré au démontage et au masquage par Activity. Un seul
-  // effet, donc une seule lecture au montage.
-  const unread = useSyncExternalStore(unreadStore().subscribe, unreadStore().get, () => 0)
-  const onShow = useEffectEvent(() => void read())
-  useEffect(() => onShow(), [unread])
+  // Version du poller partagé de la cloche (M4-13), aucun de plus : une relecture par passage (30 s, onglet visible), même à « 9+ » ;
+  // abonnement retiré au démontage et au masquage par Activity. À froid, la première lecture de la cloche en fait une seconde (admise).
+  const version = useSyncExternalStore(unreadStore().subscribe, unreadStore().getVersion, () => 0)
+  // Liste affichée : relecture de fond ; sans liste (première lecture), son échec montre la carte d'erreur.
+  const onShow = useEffectEvent(() => void read(null, data !== null))
+  useEffect(() => onShow(), [version])
 
   // Relecture rendue, ou modale fermée : une ligne disparue sous le focus le passe à sa voisine ou à l'état vide (modale déjà démontée,
   // son focus rendu au « Retirer » de la ligne s'il existe encore), une lecture en échec au « Réessayer ». Rien si le joueur a mis le

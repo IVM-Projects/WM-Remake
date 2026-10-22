@@ -16,10 +16,14 @@ const player = (opts?: Parameters<typeof makePlayer>[0]): User => {
 const ask = (from: User, to: User) =>
   sql(`insert into public.friendships (requester_id, addressee_id) values (:'r', :'a') returning id`, { r: from.uid, a: to.uid })
 
-// Page lue et hydratée : data-ready est posé par le client après la première lecture.
+// Page lue et hydratée : data-ready est posé par le client après la première lecture. À froid, une seconde lecture suit la première
+// lecture de la cloche (version du store, double lecture admise) : attendue aussi, pour qu'aucune route posée ensuite ne la prenne.
 async function open(page: Page) {
+  let n = 0
+  const both = page.waitForResponse((r) => r.request().method() === 'GET' && new URL(r.url()).pathname === '/api/friends' && ++n === 2)
   await page.goto('/friends')
   await page.locator('main [data-ready]').waitFor()
+  await both
 }
 const section = (page: Page, title: string) =>
   page.locator('main section').filter({ has: page.getByRole('heading', { level: 2, name: title, exact: true }) })
@@ -27,6 +31,8 @@ const toasts = (page: Page) => page.locator('#wm-toasts')
 const results = (page: Page) => page.getByRole('list', { name: 'Résultats de la recherche' }).getByRole('listitem')
 const field = (page: Page) => page.locator('#friend-list-search')
 const NO_FRIENDS = 'Tu n\'as pas encore d\'amis. Cherche un joueur par son pseudo.'
+const badge = (page: Page) => page.locator('button[aria-label="Notifications"] + span')
+const onBody = (page: Page) => page.evaluate(() => document.activeElement === document.body)
 const SHORT = 'La recherche demande au moins 2 caractères'
 
 // Réponse retenue jusqu'à release() ; fetched se résout dès que la requête est interceptée.
@@ -163,19 +169,18 @@ test('demande arrivée sur /friends : le poll de 30 s de la cloche la signale, l
   const friendsReads: string[] = []
   page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/friends') friendsReads.push(r.method()) })
   await page.clock.install()
-  // Badge lu une première fois (aucune non lue) avant la demande : seul le poll suivant la voit.
-  const first = page.waitForResponse((r) => new URL(r.url()).pathname === '/rest/v1/notifications')
+  // Badge lu une première fois (aucune non lue) avant la demande, la page relue derrière lui (open) : seul le poll suivant la voit.
   await open(page)
-  await first
   const received = section(page, 'Demandes reçues')
   await expect(received).toContainText('Aucune demande reçue.')
   // wm.friend_request écrit la demande et sa notification friend_request (M4-12).
   sql(`select wm.friend_request(:'a', :'me')`, { a: a.uid, me: me.uid })
   await page.clock.runFor(30_000)
-  await expect(page.locator('button[aria-label="Notifications"] + span')).toHaveText('1')
+  await expect(badge(page)).toHaveText('1')
   await expect(received.getByRole('listitem')).toHaveText(names([a]))
   await expect(page).toHaveURL('/friends')
-  expect(friendsReads).toEqual(['GET', 'GET'])
+  // Montage, première lecture de la cloche, poll de 30 s.
+  expect(friendsReads).toEqual(['GET', 'GET', 'GET'])
 
   // Page cachée par Activity (lien hydraté, document marqué) : abonnement retiré, le badge change sans relecture de /api/friends.
   const nav = page.locator('nav a[href="/collection"]').first()
@@ -185,11 +190,65 @@ test('demande arrivée sur /friends : le poll de 30 s de la cloche la signale, l
   await expect(page).toHaveURL('/collection')
   sql(`select wm.friend_request(:'b', :'me')`, { b: b.uid, me: me.uid })
   await page.clock.runFor(30_000)
-  await expect(page.locator('button[aria-label="Notifications"] + span')).toHaveText('2')
-  expect(friendsReads).toEqual(['GET', 'GET'])
+  await expect(badge(page)).toHaveText('2')
+  expect(friendsReads).toEqual(['GET', 'GET', 'GET'])
   await page.locator('nav a[href="/friends"]').first().click()
   await expect(page).toHaveURL('/friends')
   expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
+  await expect(received.getByRole('listitem')).toHaveText(names([b, a]))
+})
+
+test('« 9+ » (douze non lues) : une demande arrivée sur /friends est relue au poll suivant, compte inchangé', async ({ page, login }) => {
+  const me = await login()
+  trash.push(me.uid)
+  const a = player()
+  sql(`insert into public.notifications (user_id, type, data) select :'uid', 'trade_received', jsonb_build_object('trade_id',
+gen_random_uuid(), 'user_id', gen_random_uuid(), 'username', 'Alice') from generate_series(1, 12)`, { uid: me.uid })
+  await page.clock.install()
+  await open(page)
+  await expect(badge(page)).toHaveText('9+')
+  sql(`select wm.friend_request(:'a', :'me')`, { a: a.uid, me: me.uid })
+  await page.clock.runFor(30_000)
+  await expect(section(page, 'Demandes reçues').getByRole('listitem')).toHaveText(names([a]))
+  await expect(badge(page)).toHaveText('9+')
+})
+
+test('relecture de fond : « Retirer » focalisé sur une demande envoyée que l\'autre accepte → la ligne passe sous « Amis », le focus à l\'état vide des envoyées', async ({ page, login }) => {
+  const me = await login()
+  trash.push(me.uid)
+  const b = player()
+  const id = ask(me, b)
+  await page.clock.install()
+  await open(page)
+  const sent = section(page, 'Demandes envoyées')
+  await sent.getByRole('button', { name: 'Retirer' }).focus()
+  // B accepte ailleurs ; la cloche le voit au poll suivant (friend_accepted).
+  sql(`select wm.friend_action(:'b', :'id', 'accept')`, { b: b.uid, id })
+  await page.clock.runFor(30_000)
+  await expect(section(page, 'Amis').getByRole('listitem')).toHaveText(names([b]))
+  await expect(sent.getByText('Aucune demande envoyée.', { exact: true })).toBeFocused()
+  expect(await onBody(page)).toBe(false)
+})
+
+test('relecture de fond en échec : la liste reste, sans alerte ; la suivante la met à jour', async ({ page, login }) => {
+  const me = await login()
+  trash.push(me.uid)
+  const [a, b] = [player(), player()]
+  ask(a, me)
+  await page.clock.install()
+  await open(page)
+  const received = section(page, 'Demandes reçues')
+  await expect(received.getByRole('listitem')).toHaveText(names([a]))
+  sql(`select wm.friend_request(:'b', :'me')`, { b: b.uid, me: me.uid })
+  await routeOnce(page, '**/api/friends', (r) => r.fulfill({ status: 500 }))
+  const failed = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/friends' && r.status() === 500)
+  await page.clock.runFor(30_000)
+  await failed
+  // Le temps que la page applique l'échec si elle ne le gardait pas pour elle.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  await expect(received.getByRole('listitem')).toHaveText(names([a]))
+  await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
+  await page.clock.runFor(30_000)
   await expect(received.getByRole('listitem')).toHaveText(names([b, a]))
 })
 
@@ -274,7 +333,8 @@ test('une ligne d\'ami : le lien « Échanger » et le bouton « Retirer », auc
 for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }]] as const) {
   test(`lecture en échec (${label}) : « Impossible de charger cette page. » et « Réessayer », qui rend les sections`, async ({ page, login }) => {
     trash.push((await login()).uid)
-    await routeOnce(page, '**/api/friends', (r) => r.fulfill(reply))
+    // Les deux lectures de l'arrivée à froid (montage, première lecture de la cloche) : sinon la seconde rendrait la page seule.
+    for (let i = 0; i < 2; i++) await routeOnce(page, '**/api/friends', (r) => r.fulfill(reply))
     await open(page)
     await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
     await expect(section(page, 'Demandes reçues')).toHaveCount(0)

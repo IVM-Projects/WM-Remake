@@ -93,6 +93,8 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
   // Une page lue : card_id et titres retenus ; un choix au-delà de sa pile (parent prérempli, pile réduite depuis) ramené à son count.
   const reveal = (w: Which, items: Copy[]) => {
     learn(Object.fromEntries(items.map((c) => [c.id, c.card_id])), titles(items))
+    // Pendant l'envoi, les choix restent ceux envoyés ; la lecture suivante bornera.
+    if (inflight.current) return
     // Un choix ramené change le corps, donc la clé : l'alerte d'un envoi incertain (« pas créé deux fois ») ne vaut plus.
     if (items.some((c) => (picks[w][c.id] ?? 0) > c.count)) setError(null)
     setPicks((p) => ({ ...p, [w]: { ...p[w], ...Object.fromEntries(items.filter((c) => (p[w][c.id] ?? 0) > c.count).map((c) => [c.id, c.count])) } }))
@@ -193,13 +195,15 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
     })
   }
 
+  // Ni filtre ni suite pendant l'envoi : leur lecture bornerait un choix, donc changerait le corps envoyé.
   function filter(e: FormEvent<HTMLFormElement>, w: Which) {
     e.preventDefault()
+    if (inflight.current) return
     void readSide(w, String(new FormData(e.currentTarget).get('q') ?? '').trim(), 0)
   }
 
   function more(w: Which) {
-    if (busy.current[w] || !sides) return
+    if (busy.current[w] || inflight.current || !sides) return
     void readSide(w, sides[w].q, sides[w].page + 1)
   }
 
@@ -313,7 +317,7 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
           <p className="text-sm text-[var(--color-foreground)]/70">Aucune carte.</p>
         )}
         {(s.page + 1) * PAGE < s.total && (
-          <button type="button" aria-disabled={loading[w] || undefined} onClick={() => more(w)} className={`${ghost} justify-center`}>
+          <button type="button" aria-disabled={loading[w] || sending || undefined} onClick={() => more(w)} className={`${ghost} justify-center`}>
             Charger la suite
           </button>
         )}

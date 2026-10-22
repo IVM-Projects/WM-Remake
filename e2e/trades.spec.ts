@@ -862,7 +862,7 @@ test('clé gardée (M4-8) : POST passé au serveur puis 503, l\'incertitude dite
   expect(sql(`select count(*) from public.trades where initiator_id = :'me'`, { me: me.uid })).toBe('1')
 })
 
-test('envoi en vol : quantité, « Retirer » et wikibidous figés pendant le POST ; le 503 qui suit vaut pour le corps envoyé, la relance garde sa clé, un seul échange', async ({ page, login }) => {
+test('envoi en vol : quantité, « Retirer », wikibidous et filtre figés pendant le POST ; le 503 qui suit vaut pour le corps envoyé, la relance garde sa clé, un seul échange', async ({ page, login }) => {
   const { me, other, mine } = await friends(login, 1)
   const keys: string[] = []
   page.on('request', (r) => { if (posts(r)) keys.push(r.headers()['idempotency-key'] ?? '') })
@@ -901,6 +901,11 @@ test('envoi en vol : quantité, « Retirer » et wikibidous figés pendant le PO
   await expect(input).toHaveValue('1')
   await expect(wb).toHaveValue('5')
   await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
+  // Filtre envoyé pendant l'envoi : aucune lecture, qui bornerait un choix (une absence se prouve avec une borne).
+  const filtered = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/my-collection', { timeout: 1000 }).catch(() => null)
+  await offerPanel(page).getByRole('searchbox', { name: 'Filtrer mes cartes' }).fill('zz')
+  await page.keyboard.press('Enter')
+  expect(await filtered).toBeNull()
   release()
   await expect(page.locator('main').getByRole('alert')).toHaveText(UNSURE_SEND)
   await expect(input).not.toHaveAttribute('readonly')

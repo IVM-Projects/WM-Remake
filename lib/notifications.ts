@@ -14,20 +14,24 @@ export function createUnreadStore(o: {
   doc?: Doc
   setTimer?: typeof setTimeout
   clearTimer?: typeof clearTimeout
-}): { subscribe(cb: () => void): () => void; get(): number; refresh(): Promise<void> } {
+}): { subscribe(cb: () => void): () => void; get(): number; getVersion(): number; refresh(): Promise<void> } {
   const { fetchUnread, delay = 30_000, doc, setTimer, clearTimer } = o
   const subs = new Set<() => void>()
   let count = 0
+  // +1 à chaque lecture appliquée, compte changé ou non : au-delà de « 9+ », le compte plafonné ne bouge plus, la version si.
+  let version = 0
   let last = 0
   let stop: (() => void) | undefined
-  // Lecture en échec : le compte précédent reste. Seule la dernière lecture partie compte : un passage du poller fini après la relecture
-  // d'un marquage ne remet pas l'ancien compte.
+  // Lecture en échec : le compte et la version restent. Seule la dernière lecture partie compte : un passage du poller fini après la
+  // relecture d'un marquage ne remet pas l'ancien compte. Les abonnés sont appelés à chaque version ; useSyncExternalStore ne rend de
+  // nouveau que si leur instantané (get ou getVersion) a changé.
   async function refresh() {
     const mine = ++last
     try {
       const n = await fetchUnread()
-      if (mine !== last || n === count) return
+      if (mine !== last) return
       count = n
+      version++
       subs.forEach((cb) => cb())
     } catch {}
   }
@@ -46,7 +50,7 @@ export function createUnreadStore(o: {
       stop = undefined
     }
   }
-  return { subscribe, get: () => count, refresh }
+  return { subscribe, get: () => count, getVersion: () => version, refresh }
 }
 
 let store: ReturnType<typeof createUnreadStore> | undefined

@@ -61,6 +61,26 @@ test('refresh() : un appel immédiat, les abonnés reçoivent le nouveau compte'
   expect(store.get()).toBe(2)
 })
 
+test('version : +1 à chaque lecture réussie (poller et refresh), même à compte égal, abonnés appelés ; rien sur un échec ; compte inchangé', async () => {
+  // 12 non lues : 10 lignes lues (« 9+ »), un compte qui ne bouge plus.
+  const fetchUnread = vi.fn().mockResolvedValueOnce(10).mockResolvedValueOnce(10).mockRejectedValueOnce(new Error('réseau')).mockResolvedValueOnce(10)
+  const store = createUnreadStore({ fetchUnread, doc: doc() })
+  // Fonctions détachées, comme les reçoit useSyncExternalStore (P14).
+  const { get, getVersion } = store
+  const cb = vi.fn()
+  store.subscribe(cb)
+  expect(getVersion()).toBe(0)
+  const seen = () => [get(), getVersion(), cb.mock.calls.length]
+  await vi.advanceTimersByTimeAsync(0)
+  expect(seen()).toEqual([10, 1, 1])
+  await vi.advanceTimersByTimeAsync(30_000)
+  expect(seen()).toEqual([10, 2, 2])
+  await store.refresh()
+  expect(seen()).toEqual([10, 2, 2])
+  await store.refresh()
+  expect(seen()).toEqual([10, 3, 3])
+})
+
 test('un fetchUnread rejeté garde le compte précédent ; une lecture dépassée par une plus récente est jetée', async () => {
   let slow: (n: number) => void = () => {}
   const fetchUnread = vi.fn()
@@ -79,6 +99,8 @@ test('un fetchUnread rejeté garde le compte précédent ; une lecture dépassé
   slow(4)
   await stale
   expect(store.get()).toBe(1)
+  // Le premier passage et la relecture gagnante seulement : ni l'échec ni la lecture jetée ne font de version.
+  expect(store.getVersion()).toBe(2)
 })
 
 const n = (type: string, data: Record<string, unknown>): Notification => ({ id: 'n-1', type, data, read: false, created_at: '2026-10-22T10:00:00Z' })
