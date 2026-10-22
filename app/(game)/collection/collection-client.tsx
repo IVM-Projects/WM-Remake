@@ -432,6 +432,8 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
             setOpen((o) => (o === open ? null : o))
           }}
           onChanged={(change) => onChanged(open.id, change)}
+          // Partie au séquestre : la grille gardée par Activity ne doit plus la montrer au retour (P20).
+          onListed={() => { setOpen(null); refresh() }}
         />
       )}
     </>

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import type { Page, Request } from '@playwright/test'
+import type { Locator, Page, Request } from '@playwright/test'
+import { formatInt } from '../lib/format.ts'
 import { expect, makePlayer, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a sa carte au titre unique, filtre par ce titre et nettoie à la fin (Global Constraints).
@@ -497,4 +498,188 @@ update public.auctions set end_at = now() - interval '1 minute' where id = :'id'
   expect(reads).toEqual([`GET /api/marketplace/${id}`])
   // /marketplace gardée par Activity reste dans le document, cachée : aucune tuile visible dans main (M3-2).
   await expect(page.locator('main [id^="marketplace-auction-"]').filter({ visible: true })).toHaveCount(0)
+})
+
+// Modale de carte (Task 13) : une copie d'une carte neuve chez `uid` ; la modale s'ouvre depuis /collection.
+function copyOf(uid: string, rarity = 'C'): { t: string; card: string } {
+  const t = title()
+  const card = cardOf(t, rarity)
+  sql(`select from wm.grant_copy(:'u', :'card', false) \\g /dev/null`, { u: uid, card })
+  return { t, card }
+}
+async function openCopy(page: Page, t: string) {
+  await page.goto('/collection')
+  await page.getByRole('button', { name: t, exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: t })
+  await expect(dialog).toBeVisible()
+  return dialog
+}
+// Ventes réglées posées à la main avant toute lecture du résumé de la carte (caché 60 s) : ni séquestre ni argent (M3-26).
+function sold(card: string, rarity: string, prices: number[], seller: string, winner: string) {
+  sql(`insert into public.auctions (seller_id, card_id, user_card_id, snapshot_rarity, base_amount, listing_base_amount, current_bid,
+  current_bidder_id, bids_count, final_price, status, end_at, created_at, settled_at, winner_id)
+select :'s', :'card', gen_random_uuid(), :'r', 10, 10, p, :'w', 1, p, 'settled_sold', now() - interval '1 hour', now() - interval '2 hours',
+  now() - interval '1 hour', :'w'
+from unnest(string_to_array(:'p', ',')::int[]) p`, { s: seller, w: winner, card, r: rarity, p: prices.join(',') })
+}
+const toastText = (page: Page, text: string) => page.getByRole('status').getByText(text, { exact: true })
+const AUCTION_URL = /\/marketplace\/[0-9a-f-]{36}$/
+// Mise de départ et durée en minutes de l'enchère affichée, lues en base.
+const listed = (page: Page, seller: string) => sql(`select base_amount || ' ' || round(extract(epoch from end_at - created_at) / 60)
+from public.auctions where id = :'id' and seller_id = :'s'`, { id: new URL(page.url()).pathname.split('/').pop()!, s: seller })
+async function tabTo(page: Page, target: Locator) {
+  for (let i = 0; i < 30 && !(await target.evaluate((e) => e === document.activeElement)); i++) await page.keyboard.press('Tab')
+  await expect(target).toBeFocused()
+}
+
+test('« Mettre aux enchères » : 1 234 et « 30 min » → toast exact, /marketplace/<id> ; de retour, la copie n\'est plus dans /collection ; cibles', async ({ page, login }) => {
+  const me = await login({ humanVerified: true })
+  trash.uids.push(me.uid)
+  const { t } = copyOf(me.uid)
+  const dialog = await openCopy(page, t)
+  const sell = dialog.getByRole('button', { name: 'Mettre aux enchères' })
+  await expect(sell).toHaveAttribute('aria-expanded', 'false')
+  await sell.click()
+  await expect(sell).toHaveAttribute('aria-expanded', 'true')
+  await expect(dialog.getByText('Marché · Commune : aucune vente récente', { exact: true })).toBeVisible()
+  const amount = dialog.getByRole('spinbutton', { name: 'Mise de départ' })
+  await expect(amount).toHaveValue('10')
+  const durations = dialog.getByRole('button', { name: /^\d+ (min|h)$/ })
+  await expect(durations).toHaveText(['10 min', '30 min', '1 h', '3 h', '6 h', '12 h'])
+  await expect(dialog.getByRole('button', { name: '1 h' })).toHaveAttribute('aria-pressed', 'true')
+  const launch = dialog.getByRole('button', { name: 'Lancer l\'enchère' })
+  const sides = await durations.or(launch).evaluateAll((els) => els.map((e) => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height)))
+  expect(sides).toHaveLength(7)
+  expect(Math.min(...sides)).toBeGreaterThanOrEqual(44)
+
+  await amount.fill('1234')
+  await dialog.getByRole('button', { name: '30 min' }).click()
+  await expect(dialog.getByRole('button', { name: '30 min' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(dialog.getByRole('button', { name: '1 h' })).toHaveAttribute('aria-pressed', 'false')
+  await launch.click()
+  await expect(toastText(page, `${t} a bien été mise aux enchères pour ${formatInt(1234)} wikibidous`)).toBeVisible()
+  await expect(page).toHaveURL(AUCTION_URL)
+  expect(listed(page, me.uid)).toBe('1234 30')
+  // /collection gardée par Activity : fermée et relue avant la navigation (P20), elle ne montre plus la copie partie au séquestre.
+  await page.goBack()
+  await expect(page.getByText('Ta collection est vide', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: t, exact: true }).filter({ visible: true })).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
+test('joueur non vérifié : « Lancer l\'enchère » → 403 → /api/human-check → une seule relance, clé neuve (P27) → toast', async ({ page, login }) => {
+  const me = await login()
+  trash.uids.push(me.uid)
+  const { t } = copyOf(me.uid)
+  const dialog = await openCopy(page, t)
+  const seen: string[] = []
+  const keys: string[] = []
+  page.on('response', (r) => {
+    const path = new URL(r.url()).pathname
+    if (r.request().method() !== 'POST' || (path !== '/api/marketplace' && path !== '/api/human-check')) return
+    seen.push(`${path} ${r.status()}`)
+    if (path === '/api/marketplace') keys.push(r.request().headers()['idempotency-key'])
+  })
+  await dialog.getByRole('button', { name: 'Mettre aux enchères' }).click()
+  await dialog.getByRole('button', { name: 'Lancer l\'enchère' }).click()
+  await expect(toastText(page, `${t} a bien été mise aux enchères pour 10 wikibidous`)).toBeVisible()
+  await expect(page).toHaveURL(AUCTION_URL)
+  expect(seen).toEqual(['/api/marketplace 403', '/api/human-check 200', '/api/marketplace 201'])
+  expect(keys[0]).toBeTruthy()
+  expect(keys[1]).not.toBe(keys[0])
+  expect(listed(page, me.uid)).toBe('10 60')
+})
+
+test('vente à la réponse perdue : un autre montant part avec une clé neuve (refusé, copie au séquestre) ; relancée telle quelle, elle est rejouée', async ({ page, login }) => {
+  const me = await login({ humanVerified: true })
+  trash.uids.push(me.uid)
+  const { t, card } = copyOf(me.uid)
+  const keys: string[] = []
+  await page.route('**/api/marketplace', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    keys.push(route.request().headers()['idempotency-key'])
+    if (keys.length > 1) return route.fallback()
+    // La première vente atteint le serveur et y est validée ; sa réponse est perdue.
+    await route.fetch()
+    await route.abort()
+  })
+  const dialog = await openCopy(page, t)
+  await dialog.getByRole('button', { name: 'Mettre aux enchères' }).click()
+  const launch = dialog.getByRole('button', { name: 'Lancer l\'enchère' })
+  await launch.click()
+  await expect(dialog.getByRole('alert'))
+    .toHaveText('La mise aux enchères n\'a pas été confirmée : la carte est peut-être déjà en vente. Relance-la telle quelle pour le savoir.')
+  const amount = dialog.getByRole('spinbutton', { name: 'Mise de départ' })
+  await amount.fill('20')
+  await launch.click()
+  await expect(dialog.getByRole('alert')).toHaveText('Vous ne possédez pas cette carte')
+  await amount.fill('10')
+  await launch.click()
+  await expect(toastText(page, `${t} a bien été mise aux enchères pour 10 wikibidous`)).toBeVisible()
+  await expect(page).toHaveURL(AUCTION_URL)
+  expect(keys).toHaveLength(3)
+  expect(keys[1]).not.toBe(keys[0])
+  expect(keys[2]).toBe(keys[0])
+  expect(sql(`select count(*) from public.auctions where card_id = :'card'`, { card })).toBe('1')
+  expect(listed(page, me.uid)).toBe('10 60')
+})
+
+test('boîte de vente : « Marché · Rare : 12 wikibidous », moyenne arrondie des ventes de la carte en R (11 et 12)', async ({ page, login }) => {
+  const me = await login({ humanVerified: true })
+  const seller = makePlayer()
+  trash.uids.push(me.uid, seller.uid)
+  const { t, card } = copyOf(me.uid, 'R')
+  sold(card, 'R', [11, 12], seller.uid, me.uid)
+  const dialog = await openCopy(page, t)
+  await dialog.getByRole('button', { name: 'Mettre aux enchères' }).click()
+  await expect(dialog.getByText('Marché · Rare : 12 wikibidous', { exact: true })).toBeVisible()
+})
+
+test('clavier : Tab jusqu\'à « Mettre aux enchères », Entrée, mise, Tab vers « 3 h », Entrée, Tab vers « Lancer l\'enchère », Entrée → l\'enchère', async ({ page, login }) => {
+  const me = await login({ humanVerified: true })
+  trash.uids.push(me.uid)
+  const { t } = copyOf(me.uid)
+  await page.goto('/collection')
+  await page.getByRole('button', { name: t, exact: true }).focus()
+  await page.keyboard.press('Enter')
+  const dialog = page.getByRole('dialog', { name: t })
+  await tabTo(page, dialog.getByRole('button', { name: 'Mettre aux enchères' }))
+  await page.keyboard.press('Enter')
+  // La boîte s'ouvre sur sa mise de départ.
+  await expect(dialog.getByRole('spinbutton', { name: 'Mise de départ' })).toBeFocused()
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.type('77')
+  await tabTo(page, dialog.getByRole('button', { name: '3 h' }))
+  await page.keyboard.press('Enter')
+  await expect(dialog.getByRole('button', { name: '3 h' })).toHaveAttribute('aria-pressed', 'true')
+  await tabTo(page, dialog.getByRole('button', { name: 'Lancer l\'enchère' }))
+  await page.keyboard.press('Enter')
+  await expect(toastText(page, `${t} a bien été mise aux enchères pour 77 wikibidous`)).toBeVisible()
+  await expect(page).toHaveURL(AUCTION_URL)
+  expect(listed(page, me.uid)).toBe('77 180')
+})
+
+test('onglet « Marché » de la modale : résumé pour tous ; joueur gratuit → « Fonction réservée aux membres Pro » ; un Pro voit les ventes', async ({ page, login }) => {
+  const free = await login()
+  const seller = makePlayer()
+  trash.uids.push(free.uid, seller.uid)
+  const { t, card } = copyOf(free.uid)
+  sold(card, 'C', [12], seller.uid, free.uid)
+  const market = async () => {
+    const dialog = await openCopy(page, t)
+    await dialog.getByRole('tab', { name: /^Marché/ }).click()
+    return dialog
+  }
+  let dialog = await market()
+  await expect(dialog.getByText('Marché · Commune : 12 wikibidous (1 vente)', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Fonction réservée aux membres Pro', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Arrive bientôt')).toHaveCount(0)
+
+  const pro = await login({ pro: true })
+  trash.uids.push(pro.uid)
+  sql(`select from wm.grant_copy(:'u', :'card', false) \\g /dev/null`, { u: pro.uid, card })
+  dialog = await market()
+  await expect(dialog.getByText('Marché · Commune : 12 wikibidous (1 vente)', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('list', { name: 'Ventes récentes' }).getByRole('listitem')).toHaveText([/^Commune · 12 wikibidous · /])
+  await expect(dialog.getByText('Fonction réservée aux membres Pro', { exact: true })).toHaveCount(0)
 })

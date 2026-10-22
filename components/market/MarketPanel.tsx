@@ -5,7 +5,7 @@ import { api, userMessage } from '@/lib/api'
 import { formatDateTime, formatInt } from '@/lib/format'
 import { RARITY, rarityOf, type RarityCode } from '@/lib/rarity'
 
-type Summary = Partial<Record<RarityCode, { average: number; count: number }>>
+export type Summary = Partial<Record<RarityCode, { average: number; count: number }>>
 type Sale = { id: string; rarity: RarityCode; is_shiny: boolean; final_price: number; settled_at: string }
 
 const muted = 'text-sm text-[var(--color-foreground)]/70'

@@ -1,7 +1,8 @@
 'use client'
 
-import { Bookmark, BookmarkCheck, Sparkles, X } from 'lucide-react'
+import { Bookmark, BookmarkCheck, Gavel, Sparkles, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { MarketPanel } from '@/components/market/MarketPanel'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
@@ -13,6 +14,7 @@ import { createBrowserSupabase } from '@/lib/supabase/browser'
 import { readWished, saveWished } from '@/lib/wishlist'
 import { Card, showsImage, type CardFace } from './Card'
 import { ImageCredit, type Credit } from './ImageCredit'
+import { SellBox } from './SellBox'
 import { TagPicker, type Tag } from './TagPicker'
 
 // Carte du catalogue (wm.cards_page, rest/v1/cards) ; q_score et pageviews manquent dans une copie de collection.
@@ -61,12 +63,14 @@ type Props = {
   // balance null : issue inconnue, solde à relire. closed : la modale était déjà fermée, la grille se relit tout de suite.
   onDiscarded?: (balance: number | null, closed: boolean) => void
   onChanged?: (change: CardChange) => void
+  // Copie mise aux enchères, juste avant la navigation vers son enchère (P20).
+  onListed?: () => void
 }
 
 type Meta = Pick<CatalogCard, 'summary' | 'q_score' | 'pageviews'>
 
-// Modale de carte (R§6.5). Copie possédée : étiquettes, favori et défausse ; catalogue : liste de souhaits.
-export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
+// Modale de carte (R§6.5). Copie possédée : étiquettes, favori, mise aux enchères et défausse ; catalogue : liste de souhaits.
+export function CardModal({ item, onClose, onDiscarded, onChanged, onListed }: Props) {
   const owned = 'card' in item ? item : null
   const card = owned ? owned.card : (item as CatalogCard)
   const face = owned ? faceOf(owned) : card
@@ -77,6 +81,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
   const [tags, setTags] = useState(owned?.tags ?? [])
   const [meta, setMeta] = useState<Meta>({ summary: card.summary, q_score: card.q_score, pageviews: card.pageviews })
   const [wished, setWished] = useState<boolean | null>(null)
+  const [selling, setSelling] = useState(false)
   // Jamais disabled sur un bouton qu'on vient de presser : le navigateur poserait le focus sur body (aria-disabled et garde à la place).
   const [busy, setBusy] = useState(false)
   const starring = useRef(false)
@@ -236,7 +241,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
           </div>
           <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${tab}`} className="flex flex-col gap-4">
             {tab === 'market' ? (
-              <p className="text-sm text-[var(--color-foreground)]/70">Arrive bientôt</p>
+              <MarketPanel cardId={card.id} />
             ) : (
               <>
                 {face.category && <p className="text-sm text-[var(--color-foreground)]/70">{face.category}</p>}
@@ -291,8 +296,18 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
             )}
           </div>
           {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+          {owned && selling && <SellBox copy={owned} onListed={() => onListed?.()} />}
           {owned && (
             <div className="mt-auto flex flex-wrap gap-3 border-t border-[var(--color-border)] pt-4">
+              <button
+                type="button"
+                aria-expanded={selling}
+                onClick={() => setSelling(!selling)}
+                className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-medium transition-colors bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/15"
+              >
+                <Gavel className="size-4" />
+                Mettre aux enchères
+              </button>
               <button
                 type="button"
                 aria-disabled={busy}
