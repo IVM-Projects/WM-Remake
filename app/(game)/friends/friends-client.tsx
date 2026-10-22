@@ -41,6 +41,8 @@ export function FriendsClient() {
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState('')
   const [hits, setHits] = useState<Player[] | null>(null)
+  // Recherches finies : clé du texte de la région status, remonté (donc annoncé) même quand le compte ne change pas.
+  const [searches, setSearches] = useState(0)
   // Recherche trop courte ou refusée.
   const [note, setNote] = useState<string | null>(null)
   // Amitié de la modale de retrait et son rang dans « Amis » à l'ouverture.
@@ -61,7 +63,8 @@ export function FriendsClient() {
   const read = (focus: Focus | null = null) => {
     const g = ++readGen.current
     return Promise.all([api<{ friendships: Friendship[] }>('/api/friends'), createBrowserSupabase().auth.getSession()]).then(
-      ([r, { data: auth }]) => auth.session && { me: auth.session.user.id, rows: r.friendships },
+      // Corps illisible (api() rend null pour un 2xx qui n'est pas du JSON) : lecture en échec, jamais une exception qui bloquerait act().
+      ([r, { data: auth }]) => (auth.session && Array.isArray(r?.friendships) ? { me: auth.session.user.id, rows: r.friendships } : null),
       () => null,
     ).then((next) => {
       // Partie avant la dernière appliquée (première lecture lente, réaffichage par Activity) : elle déferait la relecture d'une action.
@@ -107,7 +110,9 @@ export function FriendsClient() {
     setNote(null)
     try {
       const r = await api<{ users: Player[] }>(`/api/friends/search?${new URLSearchParams({ q })}`)
-      if (g === searchGen.current) setHits(r.users)
+      if (g !== searchGen.current) return
+      setHits(r.users)
+      setSearches((n) => n + 1)
     } catch (err) {
       if (g !== searchGen.current) return
       setHits(null)
@@ -115,7 +120,8 @@ export function FriendsClient() {
     }
   }
 
-  // Relue même après un refus : la demande a pu changer ailleurs. Une issue inconnue garde sa clé (apiOnce) : la relance rejoue.
+  // Relue même après un refus : la demande a pu changer ailleurs. Une issue inconnue garde sa clé (apiOnce) : la relance rejoue, jusqu'à la
+  // prochaine relecture réussie.
   async function act<T>(intent: string, path: string, init: RequestInit, done: (r: T) => string, focus: Focus | null = null) {
     if (inflight.current) return
     inflight.current = true
@@ -174,11 +180,11 @@ export function FriendsClient() {
           />
         </form>
         {note && <p id={`${id}-note`} role="alert" className="mt-3 text-sm font-medium text-red-400">{note}</p>}
-        {/* Région présente dès le rendu, vide d'abord : la fin de chaque recherche est annoncée. */}
+        {/* Région présente dès le rendu, vide d'abord : le résultat de chaque recherche aboutie y est annoncé (un refus, par l'alerte). */}
         <div role="status">
           {hits && (hits.length
-            ? <p className="sr-only">{`${formatInt(hits.length)} ${hits.length > 1 ? 'joueurs trouvés' : 'joueur trouvé'}.`}</p>
-            : <p className="mt-3 text-sm">Aucun joueur ne correspond.</p>)}
+            ? <p key={searches} className="sr-only">{`${formatInt(hits.length)} ${hits.length > 1 ? 'joueurs trouvés' : 'joueur trouvé'}.`}</p>
+            : <p key={searches} className="mt-3 text-sm">Aucun joueur ne correspond.</p>)}
         </div>
         {!!hits?.length && (
           <ul aria-label="Résultats de la recherche" className="mt-3 card-frame divide-y divide-[var(--color-border)]">
@@ -282,7 +288,11 @@ export function FriendsClient() {
             <button
               type="button"
               aria-disabled={busy || undefined}
-              onClick={() => void remove(confirm.f, 'friends', confirm.i, `${other(confirm.f).username} a été retiré de tes amis.`)}
+              // Rang relu à la confirmation : une relecture a pu décaler les lignes depuis l'ouverture.
+              onClick={() => {
+                const i = s.friends.findIndex((f) => f.id === confirm.f.id)
+                void remove(confirm.f, 'friends', i < 0 ? confirm.i : i, `${other(confirm.f).username} a été retiré de tes amis.`)
+              }}
               className={danger}
             >
               Retirer

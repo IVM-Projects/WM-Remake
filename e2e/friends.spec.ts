@@ -38,6 +38,30 @@ function hold() {
   return { release, held, fetched, seen }
 }
 
+// Lignes dans l'ordre, chacune commençant par le pseudo.
+const names = (users: User[]) => users.map((u) => new RegExp(`^${u.username}`))
+
+// Retour sur /friends gardée par Activity (lien hydraté, document marqué) ; la relecture du réaffichage attend release().
+async function reshowHeld(page: Page): Promise<() => void> {
+  const { release, held, fetched, seen } = hold()
+  await routeOnce(page, '**/api/friends', async (route) => {
+    seen()
+    await held
+    await route.fallback()
+  })
+  const nav = page.locator('nav a[href="/collection"]').first()
+  await hydrated(nav)
+  // Marqueur du document : un rechargement complet l'efface, et la page gardée par Activity avec lui.
+  await page.evaluate(() => void Object.assign(window, { __spa: true }))
+  await nav.click()
+  await expect(page).toHaveURL('/collection')
+  await page.locator('nav a[href="/friends"]').first().click()
+  await expect(page).toHaveURL('/friends')
+  expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
+  await fetched
+  return release
+}
+
 async function search(page: Page, q: string) {
   await field(page).fill(q)
   await field(page).press('Enter')
@@ -86,7 +110,15 @@ test('une recherche d\'un caractère : le message, sans requête, les résultats
   await search(page, other.username)
   await expect(results(page)).toHaveCount(1)
   // Fin de la recherche annoncée par la région role=status.
-  await expect(page.locator('main [role=status]').filter({ hasText: '1 joueur trouvé.' })).toBeAttached()
+  const count = page.locator('main [role=status] p')
+  await expect(count).toHaveText('1 joueur trouvé.')
+  // Même recherche, même compte : le texte est remonté (clé), donc annoncé de nouveau.
+  await count.evaluate((p) => { p.dataset.seen = '' })
+  const again = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/friends/search')
+  await search(page, other.username)
+  await again
+  await expect(count).not.toHaveAttribute('data-seen')
+  await expect(count).toHaveText('1 joueur trouvé.')
   await search(page, ' a ')
   await expect(page.locator('main').getByRole('alert')).toHaveText(SHORT)
   await expect(field(page)).toHaveAttribute('aria-invalid', 'true')
@@ -98,7 +130,7 @@ test('une recherche d\'un caractère : le message, sans requête, les résultats
   await sent
   await expect(page.locator('main [role=status]').getByText('Aucun joueur ne correspond.', { exact: true })).toBeVisible()
   await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
-  expect(asked).toEqual([other.username, q])
+  expect(asked).toEqual([other.username, other.username, q])
   // Recherche en échec : le repli, sans aria-invalid (seul le message de longueur rend le champ invalide).
   await routeOnce(page, (u) => u.pathname === '/api/friends/search', (r) => r.fulfill({ status: 500 }))
   await search(page, q)
@@ -201,17 +233,20 @@ test('une ligne d\'ami : le lien « Échanger » et le bouton « Retirer », auc
   await expect(page.locator('main').getByText(/Message/)).toHaveCount(0)
 })
 
-test('lecture en échec : « Impossible de charger cette page. » et « Réessayer », qui rend les sections', async ({ page, login }) => {
-  trash.push((await login()).uid)
-  await routeOnce(page, '**/api/friends', (r) => r.fulfill({ status: 500 }))
-  await open(page)
-  await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
-  await expect(section(page, 'Demandes reçues')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Réessayer' }).click()
-  for (const title of ['Demandes reçues', 'Demandes envoyées', 'Amis']) await expect(section(page, title)).toBeVisible()
-  // « Réessayer » disparu sous le focus : la première section le prend.
-  await expect(section(page, 'Demandes reçues').getByText('Aucune demande reçue.', { exact: true })).toBeFocused()
-})
+// 500, ou 200 au corps illisible (api() rend null) : la page atteint son état d'échec, jamais un chargement sans fin.
+for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }]] as const) {
+  test(`lecture en échec (${label}) : « Impossible de charger cette page. » et « Réessayer », qui rend les sections`, async ({ page, login }) => {
+    trash.push((await login()).uid)
+    await routeOnce(page, '**/api/friends', (r) => r.fulfill(reply))
+    await open(page)
+    await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
+    await expect(section(page, 'Demandes reçues')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Réessayer' }).click()
+    for (const title of ['Demandes reçues', 'Demandes envoyées', 'Amis']) await expect(section(page, title)).toBeVisible()
+    // « Réessayer » disparu sous le focus : la première section le prend.
+    await expect(section(page, 'Demandes reçues').getByText('Aucune demande reçue.', { exact: true })).toBeFocused()
+  })
+}
 
 test('clavier : Tab jusqu\'à la recherche, saisie, Entrée, Tab jusqu\'à « Ajouter », Entrée → toast ; « Refuser » : focus à la ligne suivante', async ({ page, login }) => {
   const me = await login()
@@ -361,24 +396,9 @@ test('ligne retirée par une relecture sous la modale (réaffichage par Activity
   const fy = befriend(y, me)
   await open(page)
   const friends = section(page, 'Amis')
-  await expect(friends.getByRole('listitem')).toHaveText([y.username, x.username].map((u) => new RegExp(`^${u}`)))
-  // Retour sur la page gardée par Activity : sa relecture attend que l'amitié de y soit retirée ailleurs.
-  const { release, held, fetched, seen } = hold()
-  await routeOnce(page, '**/api/friends', async (route) => {
-    seen()
-    await held
-    await route.fallback()
-  })
-  const nav = page.locator('nav a[href="/collection"]').first()
-  await hydrated(nav)
-  // Marqueur du document : un rechargement complet l'efface, et la page gardée par Activity avec lui.
-  await page.evaluate(() => void Object.assign(window, { __spa: true }))
-  await nav.click()
-  await expect(page).toHaveURL('/collection')
-  await page.locator('nav a[href="/friends"]').first().click()
-  await expect(page).toHaveURL('/friends')
-  expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
-  await fetched
+  await expect(friends.getByRole('listitem')).toHaveText(names([y, x]))
+  // La relecture du retour attend que l'amitié de y soit retirée ailleurs.
+  const release = await reshowHeld(page)
   await friends.getByRole('listitem').first().getByRole('button', { name: 'Retirer' }).click()
   const dialog = page.getByRole('dialog', { name: `Retirer ${y.username} de tes amis ?` })
   await expect(dialog).toBeVisible()
@@ -388,4 +408,27 @@ test('ligne retirée par une relecture sous la modale (réaffichage par Activity
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(friends.getByRole('button', { name: 'Retirer' })).toBeFocused()
+})
+
+test('lignes décalées par une relecture sous la modale : après le retrait confirmé, le focus va au « Retirer » de la ligne qui prend sa place', async ({ page, login }) => {
+  const me = await login()
+  trash.push(me.uid)
+  const [x, y, z] = [player(), player(), player()]
+  befriend(x, me)
+  befriend(y, me)
+  await open(page)
+  const friends = section(page, 'Amis')
+  await expect(friends.getByRole('listitem')).toHaveText(names([y, x]))
+  const release = await reshowHeld(page)
+  // Modale ouverte sur y, au rang 0 ; la relecture ajoute z, plus récent, en tête : y passe au rang 1.
+  await friends.getByRole('listitem').first().getByRole('button', { name: 'Retirer' }).click()
+  const dialog = page.getByRole('dialog', { name: `Retirer ${y.username} de tes amis ?` })
+  await expect(dialog).toBeVisible()
+  befriend(z, me)
+  release()
+  await expect(friends.getByRole('listitem')).toHaveText(names([z, y, x]))
+  await dialog.getByRole('button', { name: 'Retirer' }).click()
+  await expect(toasts(page)).toContainText(`${y.username} a été retiré de tes amis.`)
+  await expect(friends.getByRole('listitem')).toHaveText(names([z, x]))
+  await expect(friends.getByRole('listitem').nth(1).getByRole('button', { name: 'Retirer' })).toBeFocused()
 })
