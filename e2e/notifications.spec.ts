@@ -56,7 +56,18 @@ test('trois échanges reçus : badge lu par PostgREST, panneau au clavier, marqu
   await expect(badge(page)).toHaveText('1')
   await expect(bell(page)).toHaveAccessibleDescription('1 notification non lue')
   await expect(all).toBeFocused()
+  // Relecture du badge retenue : un second Entrée pendant ce temps ne renvoie aucun PATCH (mark attend store.refresh()).
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  await routeOnce(page, (u) => u.pathname === '/rest/v1/notifications', async (route) => {
+    await held
+    await route.fallback()
+  })
+  const reread = page.waitForRequest((r) => new URL(r.url()).pathname === '/rest/v1/notifications')
   await page.keyboard.press('Enter')
+  await reread
+  await page.keyboard.press('Enter')
+  release()
   await expect(badge(page)).toHaveCount(0)
   await expect(bell(page)).toHaveAccessibleDescription('Aucune notification non lue')
   await expect(marks).toHaveCount(0)

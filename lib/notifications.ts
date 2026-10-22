@@ -34,7 +34,8 @@ export function createUnreadStore(o: {
   // Fonctions sans this : useSyncExternalStore les reçoit détachées (P14).
   const subscribe = (cb: () => void) => {
     subs.add(cb)
-    if (subs.size === 1) {
+    // Sur stop, pas sur la taille : un même rappel abonné deux fois laisse le Set à 1 et lancerait un second poller, jamais arrêté.
+    if (!stop) {
       void refresh()
       stop = createPoller({ run: refresh, delay: () => delay, doc, setTimer, clearTimer })
     }

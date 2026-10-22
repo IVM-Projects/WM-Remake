@@ -49,7 +49,9 @@ export function NotificationPanel({ onClose }: { onClose: () => void }) {
       await api('/api/notifications', { method: 'PATCH', body: JSON.stringify(ids ? { ids } : {}), idem: true })
       refocus.current = row ?? null
       setList((l) => l && l.map((n) => (!ids || ids.includes(n.id) ? { ...n, read: true } : n)))
-      void store.refresh()
+      // Badge relu avant de rendre la main (refresh ne rejette jamais) : sinon un second Entrée sur « Tout marquer comme lu », lu avec
+      // l'ancien compte, renverrait un PATCH {} sous une clé neuve.
+      await store.refresh()
     } catch (e) {
       toast(userMessage(e, 'L\'action n\'a pas abouti.'))
     } finally {
@@ -58,7 +60,7 @@ export function NotificationPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
-  // Une non-lue hors des 50 affichées compte aussi (badge) : sans quoi « Tout marquer comme lu » ne pourrait plus l'effacer.
+  // Voulu, même sous « Aucune notification. » : « Tout marquer comme lu » suit aussi le badge, pour effacer les non-lues au-delà des 50 affichées.
   const none = !unread && !list?.some((n) => !n.read)
   return (
     <Modal onClose={onClose} label="Notifications" className="card-frame relative w-full max-w-md animate-fade-in-up p-6 max-h-[90vh] overflow-y-auto">

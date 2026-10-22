@@ -36,6 +36,18 @@ test('le premier qui part laisse le poller ; les deux désabonnés : aucun appel
   expect(fetchUnread).toHaveBeenCalledTimes(2)
 })
 
+test('le même rappel abonné deux fois : une seule lecture tout de suite ; les deux désabonnés, aucun appel pendant 60 s', async () => {
+  const fetchUnread = vi.fn().mockResolvedValue(1)
+  const store = createUnreadStore({ fetchUnread, doc: doc() })
+  const cb = () => {}
+  const offs = [store.subscribe(cb), store.subscribe(cb)]
+  await vi.advanceTimersByTimeAsync(0)
+  expect(fetchUnread).toHaveBeenCalledTimes(1)
+  offs.forEach((off) => off())
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(fetchUnread).toHaveBeenCalledTimes(1)
+})
+
 test('refresh() : un appel immédiat, les abonnés reçoivent le nouveau compte', async () => {
   const fetchUnread = vi.fn().mockResolvedValueOnce(3).mockResolvedValueOnce(2)
   const store = createUnreadStore({ fetchUnread, doc: doc() })

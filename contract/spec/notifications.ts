@@ -5,9 +5,11 @@ import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
 import { api, failed, idem, Iso, makeUser, noSession, ok, psql, send } from '../users.ts'
 import { rest } from './rest.ts'
 
-// Ligne de wm.notifications_list (R§3.7) ; data tel qu'écrit par wm.notify_* (M3-8, M4-12).
-const Notification = z.object({ id: z.uuid(), type: z.string(), data: z.record(z.string(), z.unknown()), read: z.boolean(), created_at: Iso })
-const Read = z.object({ ok: z.literal(true), updated: z.int() })
+// Ligne de wm.notifications_list (R§3.7) ; data tel qu'écrit par wm.notify_* (M3-8, M4-12). Stricts : les cinq clés sont tout le contrat,
+// et une clé en plus, dans une ligne ou dans l'enveloppe, ferait échouer le cas au lieu de disparaître avant le deepEqual.
+const Notification = z.strictObject({ id: z.uuid(), type: z.string(), data: z.record(z.string(), z.unknown()), read: z.boolean(), created_at: Iso })
+const List = z.strictObject({ notifications: z.array(Notification) })
+const Read = z.strictObject({ ok: z.literal(true), updated: z.int() })
 
 const db = (env: ContractEnv) => env.backend.databaseUrl
 const sql = (env: ContractEnv, query: string, vars: Record<string, string> = {}) => psql(db(env), query, vars)
@@ -40,7 +42,7 @@ select :'me', case when i = 30 then 'auction_outbid' else 'trade_received' end,
 from generate_series(1, 55) i order by i returning id, created_at)
 select string_agg(id::text, ',' order by created_at desc) from ins`, { me, outbid: JSON.stringify(outbid) }).split(',')
         unread(env, other, 3)
-        const { notifications } = await ok(await api(env, '/api/notifications', { uid: me }), z.object({ notifications: z.array(Notification) }))
+        const { notifications } = await ok(await api(env, '/api/notifications', { uid: me }), List)
         assert.deepEqual(notifications.map((n) => n.id), ids.slice(0, 50))
         assert.ok(notifications.every((n) => !n.read))
         assert.deepEqual(notifications.filter((n) => n.type === 'auction_outbid').map((n) => n.data), [outbid])
