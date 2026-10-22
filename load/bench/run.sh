@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Benchs du marché en tables journalisées (M3-4, P14), sur le banc local seulement, jamais sur la démo : mises sur une enchère disputée,
-# mises réparties sur 50 enchères, puis règlement de 5 000 enchères sous des lectures de la liste (P9). Chiffres indicatifs (A5), le M8
-# mesure sur Pro. Jamais pendant un banc de contrat ou d'E2E : il reprend .cache/pg et le port 54329, que db-test.sh:25-26 efface au
-# démarrage.
+# mises réparties sur 50 enchères, puis règlement de 5 000 enchères sous des lectures de la liste (P9), puis acceptations d'échange
+# 100 ↔ 100 et 10 ↔ 10 sur 5 000 échanges en attente, et leur expiration (M4-6). Chiffres indicatifs (A5), le M8 mesure sur Pro.
+# Jamais pendant un banc de contrat ou d'E2E : il reprend .cache/pg et le port 54329, que db-test.sh:25-26 efface au démarrage.
 set -euo pipefail
 export LC_ALL=C  # « Time: » de psql et sorties de pgbench non traduits : sinon les durées se lisent vides
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -56,8 +56,35 @@ ms="$(sed -n 's/^Time: \([0-9.]*\) ms.*/\1/p' "$tmp/settle")"
 # Une ligne de progression couvre la seconde qui finit à son horodatage : marquée si elle recouvre [t0, t0 + durée du lot].
 reads="$(awk -v t0="$t0" -v ms="$ms" '/^progress:/ { print $0 ($2 > t0 && $2 - 1 < t0 + ms / 1000 ? "  <- règlement" : "") }' "$tmp/read")"
 
+# Acceptations (M4-6) : 10 clients × 10 tours, 100 ↔ 100 puis 10 ↔ 10 en témoin. Latence par transaction en 3e colonne des journaux de
+# pgbench (µs) ; p50, p95 et max au rang le plus proche. Échec si le p95 atteint 500 ms.
+q -f "$here/trade_setup.sql" >/dev/null
+accept=()
+declare -A p95
+for size in 100 10; do
+  "$pgbench" -n -c 10 -j 10 -t 10 -D size=$size -l --log-prefix="$tmp/acc$size" -f "$here/trade_accept.sql" "$DATABASE_URL" \
+    | tee "$tmp/trade$size"
+  grep -q '^number of failed transactions: 0 ' "$tmp/trade$size" || fail "acceptation $size : transactions en échec"
+  ok="$(q -c "select count(*) from bench.trades b join public.trades t using (id) where b.size = $size and t.status = 'accepted'")"
+  [[ $ok == 100 ]] || fail "acceptation $size : $ok échanges acceptés sur 100"
+  read -r n us p50 p95ms max < <(cut -d' ' -f3 "$tmp/acc$size".* | sort -n | awk '{ v[NR] = $1 } END { p50 = v[int((50 * NR + 99) / 100)]
+    p95 = v[int((95 * NR + 99) / 100)]; printf "%d %d %.1f %.1f %.1f\n", NR, p95, p50 / 1000, p95 / 1000, v[NR] / 1000 }')
+  [[ $n == 100 ]] || fail "acceptation $size : $n lignes de journal sur 100"
+  p95[$size]=$us
+  accept+=("acceptation $size ↔ $size : p50 $p50 ms, p95 $p95ms ms, max $max ms ; $ok acceptés, $(grep -o 'tps = [0-9.]*' "$tmp/trade$size")")
+  ((us < 500000)) || fail "acceptation $size : p95 de $us µs (moins de 500 000 exigés)"
+done
+accept+=("rapport des p95 (100 ↔ 100 sur 10 ↔ 10) : $(awk -v a="${p95[100]}" -v b="${p95[10]}" 'BEGIN { printf "%.1f", a / b }')")
+
+# Expiration des 5 000 échanges de fond en un lot chronométré, qui tient leurs verrous de ligne jusqu'à son commit.
+q -c "update public.trades set expires_at = clock_timestamp() - interval '1 second' where status = 'pending' and id not in (select id from bench.trades)"
+q -c '\timing on' -c 'select wm.expire_trades(5000)' | tee "$tmp/expire"
+[[ "$(head -1 "$tmp/expire")" == 5000 ]] || fail "expiration : $(head -1 "$tmp/expire") échanges expirés sur 5 000"
+xms="$(sed -n 's/^Time: \([0-9.]*\) ms.*/\1/p' "$tmp/expire")"
+[[ -n $xms ]] || fail "durée de l'expiration illisible"
+
 [[ "$(deadlocks)" == "$dl0" ]] || fail "interblocages : $dl0 avant, $(deadlocks) après"
 inv="$(q -c 'select wm.check_invariants()')"
 [[ $inv == '[]' ]] || fail "invariants violés : $inv"
 printf '%s\n' '' '== Résumé' "${summary[@]}" "règlement de 5 000 enchères : $ms ms" 'lectures (wm.market_list), seconde par seconde :' \
-  "$reads" "interblocages : 0 ; invariants : $inv"
+  "$reads" "${accept[@]}" "expiration de 5 000 échanges en attente : $xms ms" "interblocages : 0 ; invariants : $inv"
