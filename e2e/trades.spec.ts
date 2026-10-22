@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Page, Request } from '@playwright/test'
+import type { Locator, Page, Request } from '@playwright/test'
 import { befriend, expect, giveCopies, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a ses joueurs, supprimés à la fin (échanges, éléments, amitiés et notifications
@@ -490,4 +490,277 @@ values (:'u', :'card', :'t', 'SR', 'Essai', 100, 100) returning id`, { u: other.
   await expect(page.locator('main')).toContainText(`De ${long.username} à ${me.username}`)
   await fits()
   await big(actions(page), 3)
+})
+
+// Composer /trades/new (P18) : panneaux « Tu offres » (mes copies, des PC) et « Tu demandes » (celles de l'ami, des C), sélecteurs bornés
+// à leur panneau.
+const offerPanel = (page: Page) => page.getByRole('region', { name: /^Tu offres/ })
+const askPanel = (page: Page) => page.getByRole('region', { name: /^Tu demandes/ })
+const qty = (panel: Locator, copy: string) => panel.getByLabel(`Quantité de ${titleOf(copy)}`, { exact: true })
+const posts = (r: Request) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/trades'
+const TRADE_URL = /\/trades\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const UNSURE_SEND = 'L\'envoi n\'a pas été confirmé : l\'échange a peut-être été proposé. Réessaie, il ne sera pas créé deux fois.'
+async function tabTo(page: Page, target: Locator) {
+  for (let i = 0; i < 80 && !(await target.evaluate((e) => e === document.activeElement)); i++) await page.keyboard.press('Tab')
+  await expect(target).toBeFocused()
+}
+
+test('composer au clavier : une copie de chaque côté, 10 wikibidous offerts, « Proposer l\'échange » → POST à 2 éléments et l\'en-tête du fuseau, détail, toast', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login)
+  await open(page, `/trades/new?with=${other.uid}`)
+  await expect(page.locator('main h1')).toHaveText('Nouvel échange')
+  await expect(page.locator('main')).toContainText(`Échange avec ${other.username}`)
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (0/100)')
+  await expect(askPanel(page).getByRole('heading')).toHaveText('Tu demandes (0/100)')
+  await tabTo(page, qty(offerPanel(page), mine[2]))
+  await page.keyboard.type('1')
+  await tabTo(page, qty(askPanel(page), theirs[1]))
+  await page.keyboard.type('1')
+  await tabTo(page, page.getByLabel('Wikibidous offerts'))
+  await page.keyboard.type('10')
+  const posted = page.waitForRequest(posts)
+  await tabTo(page, page.getByRole('button', { name: 'Proposer l\'échange' }))
+  await page.keyboard.press('Enter')
+  const req = await posted
+  const body = req.postDataJSON()
+  expect(body.items).toEqual([
+    { user_card_id: mine[2], card_id: sql(`select card_id from public.user_cards where id = :'c'`, { c: mine[2] }), offered_by: me.uid },
+    { user_card_id: theirs[1], card_id: sql(`select card_id from public.user_cards where id = :'c'`, { c: theirs[1] }), offered_by: other.uid },
+  ])
+  expect([body.recipient_id, body.initiator_wikibidous, body.recipient_wikibidous]).toEqual([other.uid, 10, 0])
+  expect(body).not.toHaveProperty('parent_trade_id')
+  expect(req.headers()['x-wiki-calendar-tz']).toBeTruthy()
+  await expect(page).toHaveURL(TRADE_URL)
+  await expect(toasts(page)).toContainText(`Échange proposé à ${other.username}.`)
+})
+
+test('compteur : une pile de 3, quantité 3 → « Tu offres (3/100) » ; 5 saisi, ramené à 3 en quittant le champ', async ({ page, login }) => {
+  const { other, mine } = await friends(login, 1)
+  sql(`update public.user_cards set count = 3 where id = :'c'`, { c: mine[0] })
+  await open(page, `/trades/new?with=${other.uid}`)
+  const input = qty(offerPanel(page), mine[0])
+  await expect(input).toHaveAttribute('max', '3')
+  await expect(offerPanel(page)).toContainText('×3')
+  await input.fill('3')
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (3/100)')
+  await input.fill('5')
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (3/100)')
+  await input.blur()
+  await expect(input).toHaveValue('3')
+})
+
+test('sans carte : « Proposer l\'échange » en aria-disabled, Entrée n\'envoie rien ; une carte choisie, Entrée → un POST', async ({ page, login }) => {
+  const { other, mine } = await friends(login, 1)
+  await open(page, `/trades/new?with=${other.uid}`)
+  await page.getByLabel('Wikibidous offerts').fill('5')
+  const send = page.getByRole('button', { name: 'Proposer l\'échange' })
+  await expect(send).toHaveAttribute('aria-disabled', 'true')
+  await send.focus()
+  // Une absence ne se prouve qu'avec une borne (settings.spec.ts) : un envoi partirait aussitôt après Entrée.
+  const sent = page.waitForRequest(posts, { timeout: 2000 }).catch(() => null)
+  await page.keyboard.press('Enter')
+  expect(await sent).toBeNull()
+  await qty(offerPanel(page), mine[0]).fill('1')
+  await expect(send).not.toHaveAttribute('aria-disabled', 'true')
+  const witness = page.waitForRequest(posts)
+  await send.focus()
+  await page.keyboard.press('Enter')
+  await witness
+  await expect(page).toHaveURL(TRADE_URL)
+})
+
+test('verrou (M4-2) : ma copie déjà dans un échange en attente porte « Déjà dans un échange » et reste choisissable', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login, 2)
+  propose(me, other, [mine[0], theirs[0]])
+  await open(page, `/trades/new?with=${other.uid}`)
+  const row = (copy: string) => offerPanel(page).getByRole('listitem').filter({ has: page.getByLabel(`Quantité de ${titleOf(copy)}`, { exact: true }) })
+  await expect(row(mine[0])).toContainText('Déjà dans un échange')
+  await expect(row(mine[1])).not.toContainText('Déjà dans un échange')
+  await qty(offerPanel(page), mine[0]).fill('1')
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
+  await page.getByRole('button', { name: 'Proposer l\'échange' }).click()
+  await expect(page).toHaveURL(TRADE_URL)
+})
+
+test('contre-offre : quantités et WB inversés, préremplis ; « Envoyer la contre-offre » → l\'enfant, toast ; le parent « Contre-offre » ; rouvert → « déjà traité »', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login)
+  const parent = propose(other, me, [theirs[0], mine[0]], { iwb: 300 })
+  const path = `/trades/new?with=${other.uid}&parent=${parent}`
+  await open(page, path)
+  await expect(page.locator('main h1')).toHaveText('Contre-offre')
+  await expect(page.locator('main')).toContainText(`Échange avec ${other.username}`)
+  await expect(qty(offerPanel(page), mine[0])).toHaveValue('1')
+  await expect(qty(offerPanel(page), mine[1])).toHaveValue('0')
+  await expect(qty(askPanel(page), theirs[0])).toHaveValue('1')
+  await expect(page.getByLabel('Wikibidous offerts')).toHaveValue('')
+  await expect(page.getByLabel('Wikibidous demandés')).toHaveValue('300')
+  await expect(offerPanel(page).getByRole('heading')).toHaveText('Tu offres (1/100)')
+  await expect(askPanel(page).getByRole('heading')).toHaveText('Tu demandes (1/100)')
+  const posted = page.waitForRequest(posts)
+  await page.getByRole('button', { name: 'Envoyer la contre-offre' }).click()
+  const body = (await posted).postDataJSON()
+  expect([body.recipient_id, body.parent_trade_id, body.initiator_wikibidous, body.recipient_wikibidous]).toEqual([other.uid, parent, 0, 300])
+  await expect(page).toHaveURL(TRADE_URL)
+  const child = new URL(page.url()).pathname.split('/')[2]
+  expect(sql(`select parent_trade_id from public.trades where id = :'child'`, { child })).toBe(parent)
+  await expect(toasts(page)).toContainText('Contre-offre envoyée.')
+  await open(page, `/trades/${parent}`)
+  await expect(status(page)).toHaveText('Contre-offre')
+  await open(page, path)
+  await expect(page.locator('main')).toContainText('Cet échange n\'est plus en attente (déjà traité)')
+  await expect(page.getByRole('button', { name: 'Envoyer la contre-offre' })).toHaveCount(0)
+})
+
+test('contre-offre hors de la première page : la copie demandée sort en 51e, listée sous « Tu offres » ; le POST porte un card_id uuid par élément', async ({ page, login }) => {
+  const me = await login({ balance: 1000 })
+  trash.push(me.uid)
+  const other = player({ balance: 1000 })
+  befriend(me, other)
+  giveCopies(me, 'C', 51)
+  const theirs = giveCopies(other, 'PC', 1)
+  // Ordre de wm.my_collection (tri par défaut) : la 51e est en page 2.
+  const far = sql(`select id from public.user_cards where user_id = :'me' order by snapshot_rarity desc, obtained_at desc, id offset 50 limit 1`, { me: me.uid })
+  const parent = propose(other, me, [theirs[0], far])
+  await open(page, `/trades/new?with=${other.uid}&parent=${parent}`)
+  const offer = offerPanel(page)
+  await expect(offer.getByRole('spinbutton')).toHaveCount(50)
+  await expect(qty(offer, far)).toHaveCount(0)
+  await expect(offer.getByRole('list', { name: 'Tes choix' })).toContainText(titleOf(far))
+  await expect(offer.getByRole('heading')).toHaveText('Tu offres (1/100)')
+  const posted = page.waitForRequest(posts)
+  await page.getByRole('button', { name: 'Envoyer la contre-offre' }).click()
+  const { items } = (await posted).postDataJSON() as { items: { user_card_id: string; card_id: string }[] }
+  expect(items.map((i) => i.user_card_id).sort()).toEqual([far, theirs[0]].sort())
+  for (const i of items) expect(i.card_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+  await expect(page).toHaveURL(TRADE_URL)
+})
+
+test('pages et filtre : « Charger la suite » → 51 copies, le focus sur la 51e ; un filtre revient en page 0 et garde les choix ; « Retirer »', async ({ page, login }) => {
+  const me = await login({ balance: 1000 })
+  trash.push(me.uid)
+  const other = player()
+  befriend(me, other)
+  const mine = giveCopies(me, 'C', 51)
+  giveCopies(other, 'PC', 1)
+  await open(page, `/trades/new?with=${other.uid}`)
+  const offer = offerPanel(page)
+  await expect(offer.getByRole('spinbutton')).toHaveCount(50)
+  await offer.getByRole('spinbutton').first().fill('1')
+  const more = offer.getByRole('button', { name: 'Charger la suite' })
+  await more.focus()
+  await page.keyboard.press('Enter')
+  await expect(offer.getByRole('spinbutton')).toHaveCount(51)
+  await expect(more).toHaveCount(0)
+  await expect(offer.getByRole('spinbutton').nth(50)).toBeFocused()
+  // Un titre du seed se termine par un numéro unique (contract/spec/collection.ts).
+  const t = titleOf(mine[0])
+  const filter = offer.getByRole('searchbox', { name: 'Filtrer mes cartes' })
+  await filter.fill(t.slice(-4))
+  await filter.press('Enter')
+  await expect(offer.getByRole('spinbutton')).toHaveCount(1)
+  await expect(qty(offer, mine[0])).toBeVisible()
+  await expect(offer.getByRole('heading')).toHaveText('Tu offres (1/100)')
+  const choices = offer.getByRole('list', { name: 'Tes choix' })
+  await expect(choices.getByRole('listitem')).toHaveCount(1)
+  await choices.getByRole('button', { name: 'Retirer' }).click()
+  await expect(offer.getByRole('heading')).toHaveText('Tu offres (0/100)')
+  await expect(choices).toHaveCount(0)
+  expect(await onBody(page)).toBe(false)
+})
+
+test('lecture en échec : « Impossible de charger cette page. » et « Réessayer », qui rend le composer ; un 200 illisible de même', async ({ page, login }) => {
+  const { other } = await friends(login, 1)
+  const path = `/trades/new?with=${other.uid}`
+  await routeOnce(page, '**/api/friends', (r) => r.fulfill({ status: 500 }))
+  await open(page, path)
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
+  await page.getByRole('button', { name: 'Réessayer' }).click()
+  await expect(page.locator('main')).toContainText(`Échange avec ${other.username}`)
+  await expect(offerPanel(page).getByRole('searchbox', { name: 'Filtrer mes cartes' })).toBeFocused()
+
+  await routeOnce(page, (url) => url.pathname === '/api/my-collection', (r) => r.fulfill({ status: 200, body: 'x' }))
+  await open(page, path)
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
+  await page.getByRole('button', { name: 'Réessayer' }).click()
+  await expect(askPanel(page).getByRole('heading')).toHaveText('Tu demandes (0/100)')
+})
+
+test('?with= d\'un non-ami → « Vous devez être amis pour échanger » et « Amis » ; parent dont `with` n\'est pas l\'initiateur, de même ; parent échu → « déjà traité »', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login, 2)
+  const stranger = player()
+  await open(page, `/trades/new?with=${stranger.uid}`)
+  await expect(page.locator('main')).toContainText('Vous devez être amis pour échanger')
+  await expect(page.locator('main').getByRole('link', { name: 'Amis', exact: true })).toHaveAttribute('href', '/friends')
+  await expect(page.getByRole('button', { name: 'Proposer l\'échange' })).toHaveCount(0)
+
+  // Mon propre échange : son initiateur, c'est moi.
+  const mineOut = propose(me, other, [mine[0], theirs[0]])
+  await open(page, `/trades/new?with=${other.uid}&parent=${mineOut}`)
+  await expect(page.locator('main')).toContainText('Vous devez être amis pour échanger')
+
+  const due = propose(other, me, [theirs[1], mine[1]])
+  sql(`update public.trades set expires_at = now() - interval '1 minute' where id = :'due'`, { due })
+  await open(page, `/trades/new?with=${other.uid}&parent=${due}`)
+  await expect(page.locator('main')).toContainText('Cet échange n\'est plus en attente (déjà traité)')
+  await expect(page.getByRole('button', { name: 'Envoyer la contre-offre' })).toHaveCount(0)
+})
+
+test('wikibidous : chiffres seuls, 5 au plus ; 10 001 → l\'alerte « Entre 0 et 10 000 wikibidous par côté »', async ({ page, login }) => {
+  const { other, mine } = await friends(login, 1)
+  await open(page, `/trades/new?with=${other.uid}`)
+  const wb = page.getByLabel('Wikibidous offerts')
+  await expect(wb).toHaveAttribute('maxlength', '5')
+  await expect(wb).toHaveAttribute('inputmode', 'numeric')
+  await wb.pressSequentially('1a00012')
+  await expect(wb).toHaveValue('10001')
+  await qty(offerPanel(page), mine[0]).fill('1')
+  await page.getByRole('button', { name: 'Proposer l\'échange' }).click()
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Entre 0 et 10 000 wikibidous par côté')
+  await expect(page).toHaveURL(/\/trades\/new\?/)
+})
+
+test('clé gardée (M4-8) : POST passé au serveur puis 503, l\'incertitude dite ; la relance garde sa clé et rejoue, un seul échange', async ({ page, login }) => {
+  const { me, other, mine } = await friends(login, 1)
+  const keys: string[] = []
+  page.on('request', (r) => { if (posts(r)) keys.push(r.headers()['idempotency-key'] ?? '') })
+  await routeOnce(page, '**/api/trades', async (r) => {
+    await r.fetch()
+    await r.fulfill({ status: 503, body: '' })
+  }, (r) => r.request().method() === 'POST')
+  await open(page, `/trades/new?with=${other.uid}`)
+  await qty(offerPanel(page), mine[0]).fill('1')
+  const send = page.getByRole('button', { name: 'Proposer l\'échange' })
+  await send.click()
+  await expect(page.locator('main').getByRole('alert')).toHaveText(UNSURE_SEND)
+  await expect(send).not.toHaveAttribute('aria-disabled', 'true')
+  await send.click()
+  await expect(page).toHaveURL(TRADE_URL)
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).toBe(keys[0])
+  expect(sql(`select count(*) from public.trades where initiator_id = :'me'`, { me: me.uid })).toBe('1')
+})
+
+test('composer à 360 px, ami au pseudo de 24 caractères et carte au titre long : aucun défilement horizontal ; champs et boutons ≥ 44 px', async ({ page, login }) => {
+  const long = player({ username: `w${randomUUID().replaceAll('-', '').slice(0, 23)}` })
+  expect(long.username).toHaveLength(24)
+  const { other } = await friends(login, 2, long)
+  const t = `Zz échange e2e ${randomUUID()}${randomUUID()}`.replaceAll('-', '')
+  const card = sql(`insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, category, summary)
+values (:'t', 'https://fr.wikipedia.org/wiki/' || :'t', 'SR', 100, 100, 'Essai', 'Résumé') returning id`, { t })
+  cards.push(card)
+  sql(`insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+values (:'u', :'card', :'t', 'SR', 'Essai', 100, 100)`, { u: other.uid, card, t })
+  await page.setViewportSize({ width: 360, height: 800 })
+  await open(page, `/trades/new?with=${other.uid}`)
+  await expect(page.locator('main')).toContainText(`Échange avec ${long.username}`)
+  await askPanel(page).getByLabel(`Quantité de ${t}`, { exact: true }).fill('1')
+  await expect(askPanel(page).getByRole('list', { name: 'Tes choix' })).toContainText(t)
+  expect(await page.locator('main').evaluate((m) => m.scrollWidth <= m.clientWidth)).toBe(true)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  const targets = page.locator('main').locator('input, button')
+  expect(await targets.count()).toBeGreaterThan(8)
+  for (const target of await targets.all()) {
+    const box = (await target.boundingBox())!
+    expect(Math.min(box.width, box.height), await target.evaluate((e) => e.outerHTML.slice(0, 80))).toBeGreaterThanOrEqual(44)
+  }
 })

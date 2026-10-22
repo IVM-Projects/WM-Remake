@@ -35,6 +35,8 @@ const READY: Record<string, string> = {
   '/settings': 'main:has(#settings-username) input[name="sounds"]',
   // Première lecture de /api/friends finie (sections ou erreur).
   '/friends': 'main [data-ready]',
+  // Ami, collections et parent lus (composer, blocage ou erreur).
+  '/trades/new': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -252,6 +254,24 @@ test('axe /trades/<id> : détail d\'une offre reçue, ses actions', async ({ pag
     await page.goto(`/trades/${trade(friend, me)}`)
     await page.locator('main [data-ready]').waitFor()
     await expect(page.getByRole('button', { name: 'Accepter' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
+test('axe /trades/new?with=<id> : deux panneaux garnis, une copie engagée, un choix', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(me, friend)
+    trade(me, friend)
+    await page.goto(`/trades/new?with=${friend.uid}`)
+    await page.locator(READY['/trades/new']).waitFor()
+    await expect(page.locator('main').getByText('Déjà dans un échange')).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('region', { name: /^Tu demandes/ }).getByRole('spinbutton').fill('1')
+    await expect(page.getByRole('list', { name: 'Tes choix' })).toBeVisible()
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
