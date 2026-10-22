@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
-import { api, failed, giveCards, Iso, makeUser, noSession, ok, psql } from '../users.ts'
+import { api, failed, giveCards, idem, Iso, makeUser, noSession, ok, psql, refused, send } from '../users.ts'
 
 // Joueur de wm.friend_search et des deux côtés de wm.friendship_json (R§3.7).
 const UserHit = z.object({ id: z.uuid(), username: z.string(), avatar_url: z.string().nullable() })
@@ -15,17 +15,9 @@ const One = z.object({ friendship: Friendship })
 
 const db = (env: ContractEnv) => env.backend.databaseUrl
 const sql = (env: ContractEnv, query: string, vars: Record<string, string> = {}) => psql(db(env), query, vars)
-const send = (env: ContractEnv, method: string, path: string, uid?: string, body?: unknown, headers?: Record<string, string>) =>
-  api(env, path, { method, uid, body, headers })
-const idem = () => ({ 'Idempotency-Key': randomUUID() })
 const at = (id: string) => `/api/friends/${id}`
 const player = (env: ContractEnv) => makeUser(db(env))
 const who = (f: z.infer<typeof Friendship>) => [f.id, f.status, f.requester_id, f.requester.username, f.addressee_id, f.addressee.username]
-
-// Corps entier de wm.raise_err (D§8.2) : code s'il est donné, error = message.
-async function refused(res: Response, status: number, error: string, code?: string) {
-  assert.deepEqual(await failed(res, status, code), { ...(code && { code }), error, message: error })
-}
 
 // Ligne d'amitié posée par SQL ; renvoie son id.
 const request = (env: ContractEnv, requester: string, addressee: string, status = 'pending') =>
@@ -144,10 +136,11 @@ where user_id = :'uid'`, { uid: b.uid })), [{ type: 'friend_request', data: { fr
   ],
 }
 
-// Un joueur et deux demandes reçues ; renvoie son « Tout accepter ».
+// Un joueur, deux demandes reçues et une envoyée (que « Tout accepter » laisse en attente) ; renvoie son « Tout accepter ».
 function receivedTwice(env: ContractEnv) {
   const me = player(env)
   for (let i = 0; i < 2; i++) request(env, player(env).uid, me.uid)
+  request(env, me.uid, player(env).uid)
   return async (headers?: Record<string, string>) => ok(await send(env, 'POST', '/api/friends/accept-all', me.uid, undefined, headers), z.unknown())
 }
 
@@ -193,6 +186,10 @@ export const friendAction: RouteSpec = {
       run: async (env) => void (await failed(await act(env, player(env).uid, 'abc', 'accept'), 400, 'invalid_request')),
     },
     {
+      name: 'action = demi-paire UTF-16 seule (\\ud800) → 400 « Caractère invalide » (zod ; sinon PGRST102, donc 500)',
+      run: async (env) => refused(await act(env, player(env).uid, randomUUID(), '\ud800'), 400, 'Caractère invalide', 'invalid_request'),
+    },
+    {
       name: 'le demandeur accepte → 403 FORBIDDEN « Seul le destinataire… » ; le destinataire accepte → { friendship } accepted',
       run: async (env) => {
         const [a, b] = [player(env), player(env)]
@@ -235,6 +232,10 @@ export const friendRemove: RouteSpec = {
   confidence: 'prob.',
   cases: [
     noSession('DELETE', at(randomUUID())),
+    {
+      name: 'friendshipId=abc → 400 invalid_request',
+      run: async (env) => void (await failed(await send(env, 'DELETE', at('abc'), player(env).uid), 400, 'invalid_request')),
+    },
     {
       name: 'un ami, un échange en attente dans chaque sens → { ok: true } ; l\'amitié disparaît, les deux échanges passent à cancelled (M4-11)',
       run: async (env) => {

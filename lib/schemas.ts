@@ -8,8 +8,9 @@ const intParam = z.coerce.number().int().min(0).max(2_147_483_647)
 export const pageParam = intParam.default(0)
 export const CollectionSort = z.enum(['rarity', 'obtained_at', 'added', 'name', 'atk', 'def', 'starred'])
 export const boolParam = z.enum(['1', 'true', '0', 'false']).optional().transform((v) => v === '1' || v === 'true')
-// Postgres refuse \0 dans un texte (22P05) : sans ce refus, un 500 au lieu d'un 400. Tout texte libre qui atteint le SQL passe par lui.
-export const pgText = z.string().refine((s) => !s.includes('\0'), 'Caractère invalide')
+// Postgres refuse \0 dans un texte (22P05), PostgREST une demi-paire UTF-16 seule (PGRST102) : sans ce refus, un 500 au lieu d'un 400.
+// Tout texte libre qui atteint le SQL passe par lui. \p{Cs} sous `u` ne voit que les demi-paires seules (isWellFormed manque aux vieux Safari).
+export const pgText = z.string().refine((s) => !s.includes('\0') && !/\p{Cs}/u.test(s), 'Caractère invalide')
 export const Username = pgText.min(1).max(64)
 export const AuctionParams = z.object({ auctionId: z.uuid() })
 export const FriendshipParams = z.object({ friendshipId: z.uuid() })
