@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Locator, Page, Request, Route } from '@playwright/test'
 import { formatInt } from '../lib/format.ts'
-import { expect, makePlayer, sql, test } from './fixtures'
+import { expect, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a sa carte au titre unique, filtre par ce titre et nettoie à la fin (Global Constraints).
 const title = () => `Zz marché e2e ${randomUUID().slice(-12)}`
@@ -532,13 +532,13 @@ const openerOf = (page: Page, t: string) => page.locator(`h3 > button[aria-label
 async function holdSale(page: Page, reply?: Parameters<Route['fulfill']>[0] | 'lost') {
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
-  await page.route('**/api/marketplace', async (route) => {
+  await routeOnce(page, '**/api/marketplace', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     await held
     if (reply !== 'lost') return reply ? route.fulfill(reply) : route.fallback()
     await route.fetch()
     return route.abort()
-  }, { times: 1 })
+  })
   return () => release()
 }
 const toastText = (page: Page, text: string) => page.getByRole('status').getByText(text, { exact: true })
@@ -750,11 +750,11 @@ test('issue inconnue de la vente d\'une copie unique : grille relue sous la moda
   const me = await login({ humanVerified: true })
   trash.uids.push(me.uid)
   for (let i = 0; i < 3; i++) copyOf(me.uid)
-  await page.route('**/api/marketplace', async (route) => {
+  await routeOnce(page, '**/api/marketplace', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     await route.fetch()
     await route.abort()
-  }, { times: 1 })
+  })
   await page.goto('/collection')
   const openers = page.locator('h3 > button[aria-label]')
   await expect(openers).toHaveCount(3)

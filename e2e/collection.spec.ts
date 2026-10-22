@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test'
-import { expect, sql, test } from './fixtures'
+import { expect, routeOnce, sql, test } from './fixtures'
 
 // 60 copies des cartes n° 0001 à 0060 du seed (L 1–6, UR 7–30, SR 31–60), la plus récente = le plus grand numéro.
 // Tri par rareté : page 1 = L 6…1, UR 30…7, SR 60…41 ; page 2 = SR 40…31, dont n° 0031 en 3 exemplaires.
@@ -177,7 +177,7 @@ test('modale fermée sur une grille en échec : le focus va à « Réessayer »'
   const { uid } = await login()
   seed60(uid)
   const dialog = await openUr30(page)
-  await page.route(isCollectionApi, (r) => r.abort(), { times: 1 })
+  await routeOnce(page, isCollectionApi, (r) => r.abort())
   await page.goForward()
   await expect(page.getByText('Ta collection n\'a pas pu être chargée.')).toBeVisible()
   await page.keyboard.press('Escape')
@@ -192,11 +192,11 @@ test('modale fermée pendant la relecture : le focus va à la première tuile un
   let seen = 0
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
-  await page.route(isCollectionApi, async (r) => {
+  await routeOnce(page, isCollectionApi, async (r) => {
     seen++
     await held
     await r.continue()
-  }, { times: 1 })
+  })
   await page.goForward()
   await expect.poll(() => seen).toBe(1)
   await page.keyboard.press('Escape')
@@ -214,11 +214,11 @@ test('modale fermée pendant une relecture qui échoue : le focus va à « Rées
   let seen = 0
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
-  await page.route(isCollectionApi, async (r) => {
+  await routeOnce(page, isCollectionApi, async (r) => {
     seen++
     await held
     await r.abort()
-  }, { times: 1 })
+  })
   await page.goForward()
   await expect.poll(() => seen).toBe(1)
   await page.keyboard.press('Escape')
@@ -292,7 +292,7 @@ test('grille en échec : aucune sélection sur les copies de la requête d\'avan
   await page.goto('/collection')
   await expect(tiles(page)).toHaveCount(50)
   await page.getByRole('button', { name: 'Sélectionner', exact: true }).click()
-  await page.route(isCollectionApi, (r) => r.abort(), { times: 1 })
+  await routeOnce(page, isCollectionApi, (r) => r.abort())
   await page.getByRole('button', { name: 'L', exact: true }).click()
   await expect(page.getByText('Ta collection n\'a pas pu être chargée.')).toBeVisible()
   // Les 50 copies d'avant restent en mémoire : ni « Tout sélectionner » ni « Défausser » ne s'y appliquent.
@@ -393,7 +393,7 @@ test('multi-sélection : tout sélectionner, défausser 50 cartes', async ({ pag
   // Changer de pastille vide la sélection ; pendant la relecture, rien ne se sélectionne dans la grille d'avant.
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
-  await page.route(isCollectionApi, async (r) => { await held; await r.continue() }, { times: 1 })
+  await routeOnce(page, isCollectionApi, async (r) => { await held; await r.continue() })
   await page.getByRole('button', { name: 'L', exact: true }).click()
   await expect(page.getByText('Aucune carte sélectionnée')).toBeVisible()
   await expect(all).toHaveAttribute('aria-disabled', 'true')
@@ -426,10 +426,7 @@ test('multi-sélection : tout sélectionner, défausser 50 cartes', async ({ pag
 test('défausse en masse découpée en lots de 50, solde illisible relu après', async ({ page, login }) => {
   const { uid } = await login({ balance: 0 })
   seed60(uid)
-  // Route gardée tout le test, pas { times: 1 } : son expiration coupe l'interception (Fetch.disable) pendant que /api/my-collection
-  // part, et Chromium perd alors parfois cette requête (jamais envoyée, jamais rendue).
-  let reads = 0
-  await page.route('**/api/wikibidous', (r) => (reads++ ? r.continue() : r.abort()))
+  await routeOnce(page, '**/api/wikibidous', (r) => r.abort())
   await page.goto('/collection')
   await expect(tiles(page)).toHaveCount(50)
   // Lecture du solde échouée : « — » et un nom lisible, jamais rien.
@@ -492,8 +489,8 @@ test('étiquettes illisibles signalées, nom fait d\'espaces refusé', async ({ 
   const { uid } = await login()
   seed60(uid)
   // La lecture des étiquettes de la page (avec leurs nombres de copies) échoue une fois ; un 500, que postgrest-js ne relance pas.
-  await page.route((u) => u.pathname === '/rest/v1/tags' && !!u.searchParams.get('select')?.includes('user_card_tags'),
-    (r) => r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"échec"}' }), { times: 1 })
+  await routeOnce(page, (u) => u.pathname === '/rest/v1/tags' && !!u.searchParams.get('select')?.includes('user_card_tags'),
+    (r) => r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"échec"}' }))
   await page.goto('/collection')
   await expect(page.getByText('Étiquettes indisponibles', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Sélectionner', exact: true }).click()
@@ -543,7 +540,7 @@ test('défausse : 504 en texte brut de la plateforme → message français, sold
   seed60(uid)
   await page.goto('/collection')
   await expect(balance(page)).toHaveText('100 wikibidous')
-  await page.route(isDiscard, (r) => r.fulfill(PLATFORM_504), { times: 1 })
+  await routeOnce(page, isDiscard, (r) => r.fulfill(PLATFORM_504))
   await opener(page, 6).click()
   const dialog = page.getByRole('dialog', { name: title(6) })
   const reread = page.waitForRequest((r) => r.url().endsWith('/api/wikibidous'))
@@ -559,10 +556,10 @@ test('réponse perdue après la défausse (504) : la relance garde la clé, un s
   const keys: string[] = []
   page.on('request', (r) => { if (isDiscard(new URL(r.url()))) keys.push(r.headers()['idempotency-key'] ?? '') })
   // La défausse atteint le serveur et s'y fait ; sa réponse est remplacée par la page d'erreur de la plateforme.
-  await page.route(isDiscard, async (r) => {
+  await routeOnce(page, isDiscard, async (r) => {
     await r.fetch()
     await r.fulfill(PLATFORM_504)
-  }, { times: 1 })
+  })
   await page.goto('/collection?page=1')
   await opener(page, 31).click()
   const dialog = page.getByRole('dialog', { name: title(31) })
@@ -651,11 +648,11 @@ async function discardThenClose(page: Page, answer: (r: Route) => Promise<void>,
   let seen = 0
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
-  await page.route(isDiscard, async (r) => {
+  await routeOnce(page, isDiscard, async (r) => {
     seen++
     await held
     await answer(r)
-  }, { times: 1 })
+  })
   await page.goto('/collection')
   await expect(balance(page)).toHaveText('100 wikibidous')
   await opener(page, 6).click()
@@ -711,11 +708,11 @@ test('défausse finie pendant que /collection est cachée (Activity) : au retour
   let seen = 0
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
-  await page.route(isDiscard, async (r) => {
+  await routeOnce(page, isDiscard, async (r) => {
     seen++
     await held
     await r.continue()
-  }, { times: 1 })
+  })
   await page.goto('/collection')
   await opener(page, 6).click()
   const dialog = page.getByRole('dialog', { name: title(6) })
@@ -749,12 +746,12 @@ test('étoile sur une grille périmée : inactive (aria-disabled) et focalisable
   const read = new Promise<void>((r) => { fetched = r })
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
-  await page.route(isCollectionApi, async (r) => {
+  await routeOnce(page, isCollectionApi, async (r) => {
     const res = await r.fetch()
     fetched()
     await held
     await r.fulfill({ response: res })
-  }, { times: 1 })
+  })
   await page.getByRole('button', { name: 'L', exact: true }).click()
   await read
   const star = tile(page, 6).getByRole('button', { name: 'Ajouter aux favoris' })

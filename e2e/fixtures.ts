@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { test as base, expect, type Page } from '@playwright/test'
+import { test as base, expect, type Page, type Route } from '@playwright/test'
 import type { Backend } from '../contract/harness.ts'
 import { authCookie, makeUser, psql } from '../contract/users.ts'
 
@@ -17,6 +17,16 @@ export const sql = (query: string, vars?: Record<string, string>): string => psq
 
 // Cookie de session d'un joueur de makePlayer, pour son propre contexte de navigateur (P22).
 export const cookieFor = (u: User) => authCookie(backend(), u.uid)
+
+// { times: 1 } qui reste tout le test (les requêtes suivantes : fallback) : son expiration envoie Fetch.disable, et Chromium perd parfois une requête en vol.
+export async function routeOnce(page: Page, url: Parameters<Page['route']>[0], handler: (route: Route) => unknown): Promise<void> {
+  let used = false
+  await page.route(url, (route) => {
+    if (used) return route.fallback()
+    used = true
+    return handler(route)
+  })
+}
 
 // login() crée un joueur neuf (makeUser) et pose son cookie de session : aucun état partagé entre tests ni workers.
 export const test = base.extend<{ login: (opts?: Parameters<typeof makeUser>[1]) => Promise<User> }>({
