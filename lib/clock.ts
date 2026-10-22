@@ -12,3 +12,10 @@ export function noteServerDate(res: Response): void {
 }
 
 export const serverNow = (): number => Date.now() + (offset ?? 0)
+
+// Un store plutôt qu'un état : une page réaffichée (Activity) lit l'heure du moment, pas celle de son départ.
+// Sondé 4 fois par seconde : un minuteur en retard ne fait jamais sauter ni figer une seconde (rendu seulement quand elle change).
+export function subscribeClock(cb: () => void) {
+  const id = setInterval(cb, 250)
+  return () => clearInterval(id)
+}

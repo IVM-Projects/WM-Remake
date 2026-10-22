@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, makePlayer, sql, test } from './fixtures'
@@ -132,6 +133,27 @@ test('axe /global-collection : modale de carte ouverte, liste de souhaits vide, 
   await page.getByRole('button', { name: 'Rechercher', exact: true }).click()
   await expect(page.locator('main').getByRole('alert')).toBeVisible()
   await expectNoSeriousViolations(page)
+})
+
+// Tuile du contrat (R§6.8) attendue avant l'analyse : une enchère d'une carte neuve, filtrée par son titre ; tout est supprimé à la fin.
+test('axe /marketplace : tuile d\'une enchère créée par sql', async ({ page, login }) => {
+  const { uid } = await login()
+  const seller = makePlayer({ humanVerified: true })
+  const t = `Zz marché e2e ${randomUUID().slice(-12)}`
+  const card = sql(`insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, category, summary)
+values (:'t', 'https://fr.wikipedia.org/wiki/' || replace(:'t', ' ', '_'), 'SR', 100, 100, 'Essai', 'Résumé') returning id`, { t })
+  try {
+    const id = sql(`select from wm.grant_copy(:'s', :'card', true) \\g /dev/null
+select wm.create_auction(:'s', :'card', 100, 60) ->> 'id'`, { s: seller.uid, card })
+    await page.goto('/marketplace')
+    await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).fill(t)
+    await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).press('Enter')
+    await page.locator(`[id="marketplace-auction-${id}"]`).filter({ visible: true }).waitFor()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'uid', :'s');
+delete from public.cards where id = :'card'`, { uid, s: seller.uid, card })
+  }
 })
 
 test('axe /settings : erreurs affichées (pseudo pris, mots de passe différents)', async ({ page, login }) => {

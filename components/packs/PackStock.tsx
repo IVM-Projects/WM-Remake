@@ -2,15 +2,8 @@
 
 import { useEffect, useEffectEvent, useSyncExternalStore, type Ref } from 'react'
 import { brand } from '@/lib/brand'
-import { serverNow } from '@/lib/clock'
+import { serverNow, subscribeClock } from '@/lib/clock'
 import { formatCountdown } from '@/lib/format'
-
-// Un store plutôt qu'un état : une page réaffichée (Activity) lit l'heure du moment, pas celle de son départ.
-// Sondé 4 fois par seconde : un minuteur en retard ne fait jamais sauter ni figer une seconde (rendu seulement quand elle change).
-function subscribeClock(cb: () => void) {
-  const id = setInterval(cb, 250)
-  return () => clearInterval(id)
-}
 
 type Props = {
   remaining: number
