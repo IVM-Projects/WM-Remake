@@ -62,7 +62,7 @@ do $$ begin
     'note manquante';
 end $$;
 
--- Index du D:810, définition complète.
+-- Index du D:810 et de la recherche de pseudo (M4-11), définition complète.
 do $$ declare bad text; begin
   select string_agg(v.n, ', ') into bad from (values
     ('trades_initiator_idx', 'public.trades USING btree (initiator_id, status, created_at DESC)'),
@@ -72,7 +72,8 @@ do $$ declare bad text; begin
     ('trade_items_trade_idx', 'public.trade_items USING btree (trade_id)'),
     ('trade_items_offered_idx', 'public.trade_items USING btree (offered_by, card_id)'),
     ('friendships_requester_idx', 'public.friendships USING btree (requester_id)'),
-    ('friendships_addressee_idx', 'public.friendships USING btree (addressee_id)')) v (n, def)
+    ('friendships_addressee_idx', 'public.friendships USING btree (addressee_id)'),
+    ('profiles_username_prefix_idx', 'public.profiles USING btree (lower(username) text_pattern_ops)')) v (n, def)
   where not exists (select from pg_indexes i where i.indexname = v.n and i.indexdef = format('CREATE INDEX %s ON %s', v.n, v.def));
   assert bad is null, 'index absents ou différents : ' || bad;
 end $$;
@@ -83,7 +84,7 @@ do $$ declare fs text[] := array['create_auction', 'bulk_discard', 'friend_reque
   select string_agg(f, ', ') into bad from unnest(fs) f, lateral (select prosrc s from pg_proc where oid = to_regproc('wm.' || f)) p,
     lateral (select strpos(s, 'perform set_config(''lock_timeout'', ''2s'', true);') t,
       (select min(i) from unnest(array[strpos(s, 'for update'), strpos(s, 'wm.lock_users('), strpos(s, 'wm.lock_user(')]) i where i > 0) l) x
-  where not (t > 0 and t < l);
+  where not coalesce(t > 0 and t < l, false);
   assert bad is null, 'lock_timeout absent ou posé après un verrou : ' || bad;
   assert (select count(*) from unnest(fs) f where to_regproc('wm.' || f) is not null) = cardinality(fs), 'fonction absente';
 end $$;
@@ -246,9 +247,10 @@ do $$ declare a uuid := pg_temp.player('AmiA2'); b uuid := pg_temp.player('AmiB2
     coalesce(pg_temp.err(format(q, a, f, 'decline'))::text, 'refusé');
   assert pg_temp.err(format(q, carol, f, 'accept')) = nf and pg_temp.err(format(q, b, gen_random_uuid(), 'accept')) = nf, 'étranger ou inconnue';
   assert pg_temp.err(format(q, b, f, 'xyz')) = '{"status":400,"code":"invalid_request","error":"Action inconnue","message":"Action inconnue"}', 'xyz';
-  r := wm.friend_action(b, f, 'accept');
+  r := wm.friend_action(b, f, 'accept', 'k-acc');
   assert r = jsonb_build_object('friendship', (select wm.friendship_json(x) from public.friendships x where id = f))
     and r #>> '{friendship,status}' = 'accepted', r::text;
+  assert wm.friend_action(b, f, 'accept', 'k-acc') = r, 'acceptation rejouée';
   assert (select array_agg(data) from public.notifications where user_id = a and type = 'friend_accepted')
     = array[jsonb_build_object('friendship_id', f, 'user_id', b, 'username', 'AmiB2')], 'notification d''acceptation';
   assert wm.are_friends(a, b) and wm.are_friends(b, a) and not wm.are_friends(a, carol), 'are_friends';
@@ -336,9 +338,11 @@ do $$ declare a uuid := pg_temp.player('Retrait1'); b uuid := pg_temp.player('Re
   assert pg_temp.err(format('select wm.friend_remove(%L, %L)', carol, f)) = '{"status":404,"error":"Demande d''ami introuvable","message":"Demande d''ami introuvable"}',
     coalesce(pg_temp.err(format('select wm.friend_remove(%L, %L)', carol, f))::text, 'retiré');
   assert wm.friend_remove(b, f, 'k-rm') = '{"ok":true}', 'retrait';
-  s := (select jsonb_object_agg(id, jsonb_build_array(status, closed_at is not null)) from public.trades where id in (t1, t2, t3, t4, t5));
-  assert s = jsonb_build_object(t1, '["cancelled",true]'::jsonb, t2, '["cancelled",true]'::jsonb, t3, '["accepted",false]'::jsonb,
-    t4, '["pending",false]'::jsonb, t5, '["pending",false]'::jsonb), s::text;
+  -- [statut, closed_at posé, updated_at après la création] ; created_at et updated_at valent now() à l'insertion.
+  s := (select jsonb_object_agg(id, jsonb_build_array(status, closed_at is not null, updated_at > created_at)) from public.trades
+    where id in (t1, t2, t3, t4, t5));
+  assert s = jsonb_build_object(t1, '["cancelled",true,true]'::jsonb, t2, '["cancelled",true,true]'::jsonb,
+    t3, '["accepted",false,false]'::jsonb, t4, '["pending",false,false]'::jsonb, t5, '["pending",false,false]'::jsonb), s::text;
   assert (select wm.trade_json(t) ->> 'status' from public.trades t where id = t4) = 'expired', 'échu lu pending';
   assert not wm.card_locked(a, x) and not wm.card_locked(b, y), 'cartes encore verrouillées';
   assert not exists (select from public.friendships where id = f), 'amitié encore là';
@@ -375,6 +379,12 @@ do $$ declare s uuid := pg_temp.player('zz_0'); j jsonb; q text := 'select wm.fr
     where username = 'Zeta_1'), j ->> 'users';
   assert jsonb_path_query_array(wm.friend_search(s, 'zeta_') -> 'users', '$[*].username') = '["Zeta_1"]', '_ littéral';
   assert wm.friend_search(s, 'z%') = '{"users":[]}', '% littéral';
+  -- Antislash échappé d'abord : à l'envers, « zw\_ » deviendrait zw\\\\_% (deux antislashs puis un caractère quelconque) et ne trouverait rien.
+  -- Pseudos hérités, jamais revérifiés (C28) : l'inscription refuse l'antislash, pas la base.
+  perform pg_temp.player(n) from unnest(array['zw_1', 'zwa2']) n;
+  update public.profiles set username = 'zw\' || substr(username, 3) where username in ('zw_1', 'zwa2');
+  assert jsonb_path_query_array(wm.friend_search(s, 'zw\') -> 'users', '$[*].username') = '["zw\\_1","zw\\a2"]', '\ littéral';
+  assert jsonb_path_query_array(wm.friend_search(s, 'zw\_') -> 'users', '$[*].username') = '["zw\\_1"]', '\ puis _ littéraux';
   j := wm.friend_search(s, 'zz') -> 'users';
   assert jsonb_array_length(j) = 20 and not jsonb_path_exists(j, '$[*] ? (@.id == $s)', jsonb_build_object('s', s)), j::text;
   assert pg_temp.err(format(q, s, 'z')) = d and pg_temp.err(format(q, s, '  z ')) = d, 'moins de 2 caractères';

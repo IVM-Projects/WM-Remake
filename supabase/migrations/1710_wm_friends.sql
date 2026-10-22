@@ -27,9 +27,9 @@ declare
   n int;
 begin
   insert into public.notifications (user_id, type, data)
-  select case when f.requester_id = p_actor then f.addressee_id else f.requester_id end, p_type,
+  select case when f.requester_id = p_actor then f.addressee_id else f.requester_id end user_id, p_type,
     jsonb_build_object('friendship_id', f.id, 'user_id', p_actor, 'username', v_name)
-  from public.friendships f where f.id = any (p_friendship_ids) order by 1;
+  from public.friendships f where f.id = any (p_friendship_ids) order by user_id;
   get diagnostics n = row_count;
   return n;
 end $$;
@@ -111,6 +111,8 @@ begin
     delete from public.friendships where id = f.id;
     return wm.idem_store(p_uid, p_idem, '{"ok": true}');
   end if;
+  -- shortcut: sans verrou de profil, des acceptations parallèles dépassent la limite (limite + N − 1) ; avant de l'activer, prendre
+  -- wm.lock_users des joueurs après les lignes d'amitié.
   perform wm.friend_limit_check(array[f.requester_id, f.addressee_id]);
   update public.friendships set status = 'accepted' where id = f.id returning * into f;
   perform wm.notify_friend(array[f.id], 'friend_accepted', p_uid);
@@ -157,6 +159,8 @@ begin
   perform wm.actor(p_uid);
   perform set_config('lock_timeout', '2s', true);
   v_ids := array(select id from public.friendships where addressee_id = p_uid and status = 'pending' order by id for update);
+  -- shortcut: sans verrou de profil, des acceptations parallèles dépassent la limite (limite + N − 1) ; avant de l'activer, prendre
+  -- wm.lock_users des joueurs après les lignes d'amitié.
   perform wm.friend_limit_check(array(select x from public.friendships f, unnest(array[f.requester_id, f.addressee_id]) x
     where f.id = any (v_ids)));
   update public.friendships set status = 'accepted' where id = any (v_ids);
