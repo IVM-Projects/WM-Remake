@@ -465,7 +465,8 @@ end $$;
 do $$ declare a uuid := pg_temp.player('Refus1', 100); b uuid := pg_temp.player('Refus2'); carol uuid := pg_temp.player('Refus3');
   ka uuid := pg_temp.copy(a, pg_temp.card('Refus A')); kp uuid := pg_temp.copy(a, pg_temp.card('Refus P'), 150);
   k2 uuid := pg_temp.copy(a, pg_temp.card('Refus D'), 2); kb uuid := pg_temp.copy(b, pg_temp.card('Refus B'));
-  q text := 'select wm.create_trade(%L, %L, %L, %s, %s)'; one jsonb; d jsonb; r jsonb; begin
+  km uuid := pg_temp.copy(a, pg_temp.card('Refus M')); q text := 'select wm.create_trade(%L, %L, %L, %s, %s)'; one jsonb; d jsonb; r jsonb;
+  t1 uuid; t2 uuid; begin
   perform pg_temp.friends(a, b);
   one := pg_temp.items(a, array[ka]);
   assert pg_temp.err(format(q, a, carol, one, 0, 0)) = '{"status":403,"code":"FORBIDDEN","error":"Vous devez être amis pour échanger","message":"Vous devez être amis pour échanger"}',
@@ -482,17 +483,22 @@ do $$ declare a uuid := pg_temp.player('Refus1', 100); b uuid := pg_temp.player(
     '101 unités';
   d := '{"status":400,"code":"invalid_request","error":"Entre 0 et 10 000 wikibidous par côté","message":"Entre 0 et 10 000 wikibidous par côté"}';
   assert pg_temp.err(format(q, a, b, one, 0, 10001)) = d and pg_temp.err(format(q, a, b, one, 0, -1)) = d
-    and pg_temp.err(format(q, a, b, one, 10001, 0)) = d, 'WB hors bornes';
+    and pg_temp.err(format(q, a, b, one, 10001, 0)) = d and pg_temp.err(format(q, a, b, one, -1, 0)) = d, 'WB hors bornes';
   assert wm.create_trade(a, b, one, 0, 10000) -> 'recipient_wikibidous' = '10000', '10 000 WB demandés à B';
   r := wm.create_trade(a, b, one, null, null);
   assert r -> 'initiator_wikibidous' = '0' and r -> 'recipient_wikibidous' = '0', 'WB nuls';
-  assert (select count(*) from public.trade_items i join public.trades t on t.id = i.trade_id where i.user_card_id = ka and t.status = 'pending') = 2,
-    'même copie dans deux échanges en attente';
-  assert pg_temp.err(format(q, a, b, one || jsonb_build_array(jsonb_build_object('user_card_id', kb, 'card_id', null, 'offered_by', carol)), 0, 0))
-    = '{"status":400,"code":"invalid_request","error":"Élément d''échange invalide","message":"Élément d''échange invalide"}', 'élément de Carol';
+  t1 := wm.create_trade(a, b, pg_temp.items(a, array[km])) ->> 'id';
+  t2 := wm.create_trade(a, b, pg_temp.items(a, array[km])) ->> 'id';
+  assert (select count(*) from public.trades t join public.trade_items i on i.trade_id = t.id
+    where t.id in (t1, t2) and t.status = 'pending' and i.user_card_id = km) = 2, 'même copie dans deux échanges en attente';
+  d := '{"status":400,"code":"invalid_request","error":"Élément d''échange invalide","message":"Élément d''échange invalide"}';
+  assert pg_temp.err(format(q, a, b, one || jsonb_build_array(jsonb_build_object('user_card_id', kb, 'card_id', null, 'offered_by', carol)), 0, 0)) = d,
+    'élément de Carol';
+  assert pg_temp.err(format(q, a, b, jsonb_build_array(jsonb_build_object('user_card_id', ka, 'offered_by', null)), 0, 0)) = d, 'offered_by null';
   d := '{"status":403,"code":"42501","error":"Vous ne possédez pas cette carte","message":"Vous ne possédez pas cette carte"}';
   assert pg_temp.err(format(q, a, b, pg_temp.items(a, array[k2, k2, k2]), 0, 0)) = d, 'trois unités d''une pile de 2';
   assert pg_temp.err(format(q, a, b, pg_temp.items(a, array[kb]), 0, 0)) = d, 'copie de B offerte par A';
+  assert pg_temp.err(format(q, a, b, pg_temp.items(a, array[gen_random_uuid()]), 0, 0)) = d, 'copie inexistante';
   assert pg_temp.err(format(q, a, b, one, 101, 0)) = '{"status":409,"code":"insufficient_balance","error":"Solde insuffisant","message":"Solde insuffisant"}',
     'solde';
   assert wm.create_trade(a, b, one, 100, 0) -> 'initiator_wikibidous' = '100', 'tout le solde';
@@ -539,7 +545,8 @@ do $$ declare a uuid := pg_temp.player('Contre1'); b uuid := pg_temp.player('Con
       jsonb_build_array(b, 'trade_received', jsonb_build_object('trade_id', t1, 'user_id', a, 'username', 'Contre1'))], 'notifications';
   assert pg_temp.err(format(q, b, a, pg_temp.items(b, array[kb]), t1)) = d, 'parent déjà countered';
   t3 := wm.create_trade(a, b, pg_temp.items(a, array[ka])) ->> 'id';
-  update public.trades set expires_at = clock_timestamp() - interval '1 second' where id = t3;
+  -- Échu entre le début de la transaction et maintenant : une garde sur now() le croirait encore en attente.
+  update public.trades set expires_at = now() + (clock_timestamp() - now()) / 2 where id = t3;
   assert pg_temp.err(format(q, b, a, pg_temp.items(b, array[kb]), t3)) = d, 'parent échu';
 end $$;
 

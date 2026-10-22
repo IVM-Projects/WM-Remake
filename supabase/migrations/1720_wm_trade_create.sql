@@ -3,8 +3,8 @@
 -- Compatible pg-safeupdate (préchargé par le PostgREST hébergé, même dans les fonctions) : tout DELETE/UPDATE garde un WHERE.
 
 -- p_items : [{user_card_id, card_id, offered_by}], une unité par élément ; le card_id du client est ignoré (P2). p_tz est reçu, sans effet
--- (C30). Sans séquestre ni verrou d'échange à la création (M4-2) : la même copie peut figurer dans deux échanges en attente. L'amitié est
--- lue sans verrou (P4). Messages figés (tableau des erreurs du M4a) : ils ne suivent pas trade_limits.
+-- (C30). Sans séquestre ni verrou d'échange à la création (M4-2) : la même copie peut figurer dans deux échanges en attente. Messages
+-- figés (tableau des erreurs du M4a) : ils ne suivent pas trade_limits.
 create or replace function wm.create_trade(p_uid uuid, p_recipient_id uuid, p_items jsonb, p_initiator_wikibidous int default 0,
   p_recipient_wikibidous int default 0, p_parent_trade_id uuid default null, p_tz text default null, p_idem text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -57,6 +57,7 @@ begin
     perform wm.raise_err(404, null, 'Joueur introuvable');
   end if;
   perform wm.lock_users(array[p_uid, p_recipient_id]);
+  -- P4 : amitié lue sans verrou ; un retrait concurrent laisse l'échange en attente, refusé à l'acceptation (403).
   if not wm.are_friends(p_uid, p_recipient_id) then
     perform wm.raise_err(403, 'FORBIDDEN', 'Vous devez être amis pour échanger');
   end if;
