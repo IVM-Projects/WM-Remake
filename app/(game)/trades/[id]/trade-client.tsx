@@ -45,7 +45,7 @@ export function TradeClient() {
   const retried = useRef(false)
   // Lectures parties avant cet instant (performance.now) jetées : un poll en vol déferait la réponse d'une écriture (auction-client.tsx).
   const hold = useRef(0)
-  // Statut affiché au dernier rendu : celui auquel une issue inconnue s'applique au moment où elle arrive.
+  // Statut affiché au dernier rendu : celui auquel une issue inconnue s'applique, lu au départ de l'action.
   const shown = useRef<TradeStatus | undefined>(undefined)
   useEffect(() => { shown.current = trade?.status })
 
@@ -92,6 +92,8 @@ export function TradeClient() {
 
   async function act(action: Action) {
     if (inflight.current) return
+    // Avant tout await : un poll appliqué pendant la requête (l'action faite, réponse lente) ne doit pas recevoir son incertitude.
+    const at = shown.current ?? null
     inflight.current = true
     setBusy(true)
     setError(null)
@@ -106,7 +108,7 @@ export function TradeClient() {
       toast(DONE[action])
     } catch (e) {
       // Issue inconnue (5xx, réseau) : la clé reste (apiOnce), la relance rejoue ; le message tombe dès qu'une lecture change le statut.
-      if (unsure(e)) setError({ text: userMessage(e, UNSURE), status: shown.current ?? null })
+      if (unsure(e)) setError({ text: userMessage(e, UNSURE), status: at })
       else {
         // Refus : l'échange a changé ailleurs, il est relu ; un poll parti avant est jeté.
         setError({ text: userMessage(e, 'L\'action n\'a pas abouti.'), status: null })

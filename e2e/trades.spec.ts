@@ -52,27 +52,28 @@ const status = (page: Page) => page.locator('main p[tabindex="-1"]').filter({ vi
 const onBody = (page: Page) => page.evaluate(() => document.activeElement === document.body)
 const short = (iso: string) => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(new Date(iso))
 const titleOf = (copy: string) => sql(`select c.wikipedia_title from public.user_cards u join public.cards c on c.id = u.card_id where u.id = :'copy'`, { copy })
-// Polling de 20 s (M4-15). Le poll de la liste est armé au montage, juste après le départ de sa première lecture ; celui du détail quand
-// l'échange arrive en attente, juste après la fin de cette lecture. Repère commun : la fin de la première lecture (timing(), horloge
-// réelle), que l'horloge installée du navigateur suit jusqu'à pauseAt.
+// Polling de 20 s (M4-15). Repère du poll, en horloge réelle (timing()), que l'horloge installée du navigateur suit jusqu'à pauseAt : la
+// liste l'arme au montage, juste après le départ de sa première lecture (`start`) ; le détail quand l'échange arrive en attente, juste
+// après la fin de cette lecture (`end`).
 const reads = (path: string) => (r: Request) => r.method() === 'GET' && new URL(r.url()).pathname === path
-async function openFrozen(page: Page, path: string, api: string): Promise<void> {
+async function openFrozen(page: Page, path: string, api: string, armed: 'start' | 'end'): Promise<void> {
   await page.clock.install()
   const first = page.waitForRequest(reads(api))
   await open(page, path)
   const { startTime, responseEnd } = (await first).timing()
-  const loaded = startTime + responseEnd
-  expect(Date.now(), 'page lue en plus de 2 s').toBeLessThan(loaded + 2_000)
-  await page.clock.pauseAt(loaded + 2_000)
+  const at = armed === 'start' ? startTime : startTime + responseEnd
+  // 5 s pour lire et rendre la page, même sur un banc lent ; le poll est armé avant l'arrêt (data-ready suit son rendu).
+  expect(Date.now(), 'page lue et rendue en plus de 5 s').toBeLessThan(at + 5_000)
+  await page.clock.pauseAt(at + 5_000)
 }
-// Horloge arrêtée 2 s après le repère (openFrozen) : jusqu'à 19 s, aucune lecture de `api` ne part (un poll trop tôt partirait pendant
-// runFor : 1 s de temps réel suffit à le voir) ; à 20 s, une part (250 ms de marge : le rendu qui arme le poll suit la fin de la réponse).
+// Horloge arrêtée 5 s après le repère (openFrozen) : jusqu'à 19 s, aucune lecture de `api` ne part (un poll trop tôt partirait pendant
+// runFor : 1 s de temps réel suffit à le voir) ; avant 21 s, une part (1 s de marge : rendu lent qui arme le poll, départ réseau).
 async function polledAt20s(page: Page, api: string) {
   const early = page.waitForRequest(reads(api), { timeout: 1_000 }).then(() => true, () => false)
-  await page.clock.runFor(17_000)
+  await page.clock.runFor(14_000)
   expect(await early, `${api} relu avant 20 s`).toBe(false)
   const read = page.waitForRequest(reads(api))
-  await page.clock.runFor(1_250)
+  await page.clock.runFor(2_000)
   await read
 }
 const emptyReceived = (page: Page) => page.getByRole('tabpanel').getByText('Aucune offre reçue en attente.', { exact: true })
@@ -148,7 +149,7 @@ test('polling 20 s : l\'offre focalisée annulée ailleurs sort de « Reçues »
   const { me, other, mine, theirs } = await friends(login)
   const older = propose(other, me, [theirs[0], mine[0]])
   const newer = propose(other, me, [theirs[1], mine[1]])
-  await openFrozen(page, '/trades', '/api/trades')
+  await openFrozen(page, '/trades', '/api/trades', 'start')
   await expect(offers(page)).toHaveCount(2)
   // Plus récente d'abord.
   await offerButton(page).first().focus()
@@ -166,6 +167,31 @@ test('polling 20 s : l\'offre focalisée annulée ailleurs sort de « Reçues »
   await page.clock.runFor(20_000)
   await expect(offers(page)).toHaveCount(1)
   await expect(offerButton(page)).toBeFocused()
+})
+
+test('deux polls en échec sous une offre focalisée, puis le focus rendu à body : le poll réussi ne le reprend pas', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login)
+  propose(other, me, [theirs[0], mine[0]])
+  await page.clock.install()
+  await open(page)
+  await offerButton(page).focus()
+  // Le second échec ne change plus rien à l'état de la page.
+  for (let n = 0; n < 2; n++) {
+    await routeOnce(page, '**/api/trades', (r) => r.fulfill({ status: 500 }))
+    const failed = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/trades' && r.status() === 500)
+    await page.clock.runFor(20_000)
+    await failed
+  }
+  await expect(offers(page)).toHaveCount(1)
+  // Le joueur quitte l'offre, qui reste : rien de focalisé n'a disparu.
+  await offerButton(page).evaluate((b) => (b as HTMLElement).blur())
+  expect(await onBody(page)).toBe(true)
+  const ok = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/trades' && r.status() === 200)
+  await page.clock.runFor(20_000)
+  await ok
+  // Le temps que la page déplace le focus si un ancien armement survivait.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  expect(await onBody(page)).toBe(true)
 })
 
 test('détail en destinataire : compte à rebours, « Contre-offre » ; « Accepter » au clavier → toast, statut focalisé, plus d\'action', async ({ page, login }) => {
@@ -201,7 +227,7 @@ test('détail en destinataire : compte à rebours, « Contre-offre » ; « Accep
 test('polling du détail : annulé ailleurs → « Annulé », sans bouton, focus jamais sur body', async ({ page, login }) => {
   const { me, other, mine, theirs } = await friends(login)
   const id = propose(other, me, [theirs[0], mine[0]])
-  await openFrozen(page, `/trades/${id}`, `/api/trades/${id}`)
+  await openFrozen(page, `/trades/${id}`, `/api/trades/${id}`, 'end')
   await expect(page.getByRole('button', { name: 'Accepter' })).toBeVisible()
   act(other, id, 'cancel')
   await polledAt20s(page, `/api/trades/${id}`)
@@ -276,6 +302,35 @@ test('clé gardée (M4-8) : 503 après le passage au serveur, l\'incertitude dit
   await page.clock.runFor(20_000)
   await expect(status(page)).toHaveText('Refusé')
   await expect(alert).toHaveCount(0)
+})
+
+test('« Accepter » qui répond lentement puis en 503 : le poll a montré « Accepté » entre-temps, aucune incertitude affichée', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login)
+  const id = propose(other, me, [theirs[0], mine[0]])
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  let seen = () => {}
+  const committed = new Promise<void>((r) => { seen = r })
+  await page.clock.install()
+  await open(page, `/trades/${id}`)
+  // Le PATCH atteint le serveur et s'y fait ; sa réponse (un 503) est retenue jusqu'après le poll.
+  await routeOnce(page, `**/api/trades/${id}`, async (r) => {
+    await r.fetch()
+    seen()
+    await held
+    await r.fulfill({ status: 503, body: '' })
+  }, (r) => r.request().method() === 'PATCH')
+  await page.getByRole('button', { name: 'Accepter' }).click()
+  await committed
+  await page.clock.runFor(20_000)
+  await expect(status(page)).toHaveText('Accepté')
+  const lost = page.waitForResponse((r) => r.url().endsWith(`/api/trades/${id}`) && r.status() === 503)
+  release()
+  await lost
+  // Le temps que la page affiche l'alerte si elle la rattachait au statut relu.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  await expect(status(page)).toHaveText('Accepté')
+  await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
 })
 
 test('poll du détail en vol pendant « Accepter », rendu après la réponse : jeté, l\'échange reste accepté', async ({ page, login }) => {

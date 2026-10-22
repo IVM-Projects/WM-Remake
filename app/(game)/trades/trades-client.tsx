@@ -54,11 +54,15 @@ export function TradesClient() {
       ([r, { data: auth }]) => r && auth.session && { me: auth.session.user.id, trades: r.trades },
       () => null,
     ).then((next) => {
-      const el = document.activeElement
-      const i = [...(panel.current?.querySelectorAll(OFFER) ?? [])].findIndex((b) => b === el)
-      if (i >= 0) refocus.current = i
-      else if (el && (panel.current?.contains(el) || el === retryButton.current)) refocus.current = 0
-      if (next) setData(next)
+      // Armé sur une lecture réussie seulement : setData la rend toujours, donc l'effet le consomme. Un échec ne retire rien de focalisé (la
+      // liste reste, ou la carte d'erreur revient) et, sans changement d'état, laisserait l'armement en place.
+      if (next) {
+        const el = document.activeElement
+        const i = [...(panel.current?.querySelectorAll(OFFER) ?? [])].findIndex((b) => b === el)
+        if (i >= 0) refocus.current = i
+        else if (el && (panel.current?.contains(el) || el === retryButton.current)) refocus.current = 0
+        setData(next)
+      }
       setFailed(!next)
     })
   const onShow = useEffectEvent(() => void read())
