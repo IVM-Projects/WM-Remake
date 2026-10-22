@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { befriend, expect, makePlayer, sql, test } from './fixtures'
+import { befriend, expect, giveCopies, makePlayer, sql, test } from './fixtures'
 
 type Known = { rule: string; selector: string }
 
@@ -211,6 +211,50 @@ test('axe /friends : une demande reçue et un ami, puis la modale de retrait', a
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'a', :'f')`, { me: me.uid, a: asker.uid, f: friend.uid })
+  }
+})
+
+// Écart de contrat connu, comme R21 (à consigner pour le M7) : l'offre de R§6.8 garde le nom figé « Voir le détail de l'échange » sur un
+// bouton qui contient « De <pseudo> », le statut, la date et les colonnes ; axe y lève label-content-name-mismatch (WCAG 2.5.3). Les
+// offres se distinguent par aria-describedby (M4-15).
+const TRADE_OFFER: Known = { rule: 'label-content-name-mismatch', selector: 'div.card-frame.p-4 > button[aria-label="Voir le détail de l\'échange"]' }
+
+// Échange de `from` vers `to` par wm.create_trade : une copie de chacun ; renvoie son id.
+const trade = (from: { uid: string; username: string }, to: { uid: string; username: string }) =>
+  sql(`select wm.create_trade(:'a', :'b', (select jsonb_agg(jsonb_build_object('user_card_id', id, 'card_id', card_id, 'offered_by', user_id))
+from public.user_cards where id in (:'x', :'y'))) ->> 'id'`, { a: from.uid, b: to.uid, x: giveCopies(from, 'SR')[0], y: giveCopies(to, 'C')[0] })
+
+test('axe /trades : une offre par onglet (reçue, envoyée, refusée)', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(me, friend)
+    trade(friend, me)
+    trade(me, friend)
+    sql(`select wm.trade_action(:'me', :'t', 'decline')`, { me: me.uid, t: trade(friend, me) })
+    await page.goto('/trades')
+    await page.locator('main [data-ready]').waitFor()
+    for (const name of ['Reçues', 'Envoyées', 'Historique']) {
+      await page.getByRole('tab', { name }).click()
+      await expect(page.getByRole('tabpanel').locator('div.card-frame.p-4')).toHaveCount(1)
+      await expectNoSeriousViolations(page, TRADE_OFFER)
+    }
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
+test('axe /trades/<id> : détail d\'une offre reçue, ses actions', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(me, friend)
+    await page.goto(`/trades/${trade(friend, me)}`)
+    await page.locator('main [data-ready]').waitFor()
+    await expect(page.getByRole('button', { name: 'Accepter' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
   }
 })
 

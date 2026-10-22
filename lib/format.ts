@@ -23,3 +23,7 @@ export function formatRemaining(ms: number): string {
 // Date et heure fr-FR, à la seconde (historique des mises, ventes) : « 21/10/2026 14:03:12 », heure locale du joueur.
 const when = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'short', timeStyle: 'medium' })
 export const formatDateTime = (iso: string): string => when.format(new Date(iso))
+
+// Date courte fr-FR d'une offre (R§6.8) : « 20 sept. », heure locale du joueur.
+const day = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' })
+export const formatShortDate = (iso: string): string => day.format(new Date(iso))

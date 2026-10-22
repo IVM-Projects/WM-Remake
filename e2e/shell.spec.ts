@@ -91,7 +91,7 @@ test.describe('chaque page a son h1', () => {
       await page.goto(href)
       await expect(page.locator('main h1')).toHaveText(title)
       await expect(page).toHaveTitle(new RegExp(`^${title} — `))
-      if (!['/pulls', '/collection', '/marketplace', '/global-collection', '/friends', '/settings'].includes(href)) await expect(page.locator('main')).toContainText('Cette section arrive bientôt.')
+      if (!['/pulls', '/collection', '/marketplace', '/global-collection', '/friends', '/trades', '/settings'].includes(href)) await expect(page.locator('main')).toContainText('Cette section arrive bientôt.')
     })
   }
 })
