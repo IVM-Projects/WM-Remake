@@ -137,6 +137,8 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
   const dirty = useRef(false)
   // Rang de la tuile de la modale fermée : si la relecture la retire, le focus va à la suivante, jamais sur body.
   const refocus = useRef<number | null>(null)
+  // Vente à l'issue inconnue : rang de la copie dans la grille de cette adresse, pour que le focus aille à sa voisine si la relecture la retire.
+  const maybeSold = useRef<{ id: string; query: string; rank: number } | null>(null)
   const grid = useRef<HTMLDivElement>(null)
   const empty = useRef<HTMLDivElement>(null)
   const retry = useRef<HTMLButtonElement>(null)
@@ -243,9 +245,11 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
   function closeModal() {
     // Grille périmée ou en échec : la place de la copie dans la grille de l'adresse est inconnue.
     const i = stale ? -1 : items.findIndex((x) => x.id === open?.id)
+    const m = maybeSold.current
+    maybeSold.current = null
     // Toujours : l'effet ne bouge le focus que s'il est tombé sur body (tuile d'origine démontée, grille relue ou en échec) ;
     // il va alors à la tuile de même rang (le nouveau nœud de la copie si elle est revenue), sinon à la première.
-    refocus.current = Math.max(0, i)
+    refocus.current = Math.max(0, i < 0 && m && m.id === open?.id && m.query === query ? m.rank : i)
     if (dirty.current) {
       dirty.current = false
       refresh()
@@ -432,10 +436,18 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
             setOpen((o) => (o === open ? null : o))
           }}
           onChanged={(change) => onChanged(open.id, change)}
-          // Partie au séquestre : la grille gardée par Activity ne doit plus la montrer au retour (P20).
-          onListed={() => { setOpen(null); refresh() }}
+          // Partie au séquestre : la grille gardée par Activity ne doit plus la montrer au retour (P20). Vente finie après la fermeture :
+          // jamais une modale ouverte depuis, et si sa tuile disparaît sous le focus, la suivante le prend (comme la défausse).
+          onListed={() => {
+            refocus.current = Math.max(0, items.findIndex((x) => x.id === open.id))
+            refresh()
+            setOpen((o) => (o === open ? null : o))
+          }}
           // Vente à l'issue inconnue : la grille se relit derrière la modale, qui reste ouverte pour la relance.
-          onUnsure={refresh}
+          onUnsure={() => {
+            if (!stale) maybeSold.current = { id: open.id, query, rank: items.findIndex((x) => x.id === open.id) }
+            refresh()
+          }}
         />
       )}
     </>

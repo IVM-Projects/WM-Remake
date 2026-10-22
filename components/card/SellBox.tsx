@@ -44,6 +44,12 @@ export function SellBox({ copy, onListed, onUnsure, onBusy }: Props) {
   // Vente à relancer une fois la vérification anti-bot passée.
   const [verify, setVerify] = useState<Sale | null>(null)
   const inflight = useRef(false)
+  // Vente finie après la fermeture de la modale : issue en toast, et aucune navigation loin de là où le joueur est allé (comme la défausse).
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   // Prix du marché de la rareté figée de la copie (P21).
   useEffect(() => {
@@ -76,13 +82,15 @@ export function SellBox({ copy, onListed, onUnsure, onBusy }: Props) {
       })
       toast(`${face.wikipedia_title} a bien été mise aux enchères pour ${formatInt(base)} wikibidous`)
       onListed()
-      router.push(`/marketplace/${id}`)
+      if (mounted.current) router.push(`/marketplace/${id}`)
     } catch (e) {
       const body = (e instanceof ApiError ? e.body : null) as { code?: string } | null
       // Une seule relance après la vérification : un second refus s'affiche, sans boucle.
       if (body?.code === 'human_verification_required' && !token) setVerify({ base, duration })
       const maybe = sent && unsure(e)
-      setError(userMessage(e, maybe ? UNSURE : 'La carte n\'a pas pu être mise aux enchères.'))
+      const message = userMessage(e, maybe ? UNSURE : 'La carte n\'a pas pu être mise aux enchères.')
+      if (mounted.current) setError(message)
+      else toast(message)
       if (maybe) onUnsure?.()
     } finally {
       inflight.current = false
