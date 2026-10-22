@@ -43,19 +43,21 @@ export function TradesClient() {
   const [failed, setFailed] = useState(false)
   const panel = useRef<HTMLDivElement>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
-  // Rang de l'offre focalisée quand une lecture s'applique (ou 0 après « Réessayer ») : si elle disparaît sous le focus, l'offre qui prend
-  // sa place, la dernière au-delà, ou l'état vide de l'onglet.
+  // Rang de l'offre focalisée quand une lecture s'applique (0 pour l'état vide, « Réessayer » ou son clic) : si l'élément disparaît sous le
+  // focus, l'offre qui prend sa place, la dernière au-delà, ou l'état vide de l'onglet.
   const refocus = useRef<number | null>(null)
 
   // Lue à chaque affichage (Activity compris), puis toutes les 20 s onglet visible (M4-15). Une relecture en échec garde la liste d'avant :
-  // l'erreur ne s'affiche que sans liste.
+  // l'erreur ne s'affiche que sans liste. Un 2xx au corps illisible (api() rend null) est une lecture en échec.
   const read = () =>
-    Promise.all([api<{ trades: Trade[] }>('/api/trades'), createBrowserSupabase().auth.getSession()]).then(
-      ([r, { data: auth }]) => auth.session && { me: auth.session.user.id, trades: r.trades },
+    Promise.all([api<{ trades: Trade[] } | null>('/api/trades'), createBrowserSupabase().auth.getSession()]).then(
+      ([r, { data: auth }]) => r && auth.session && { me: auth.session.user.id, trades: r.trades },
       () => null,
     ).then((next) => {
-      const i = [...(panel.current?.querySelectorAll(OFFER) ?? [])].findIndex((b) => b === document.activeElement)
+      const el = document.activeElement
+      const i = [...(panel.current?.querySelectorAll(OFFER) ?? [])].findIndex((b) => b === el)
       if (i >= 0) refocus.current = i
+      else if (el && (panel.current?.contains(el) || el === retryButton.current)) refocus.current = 0
       if (next) setData(next)
       setFailed(!next)
     })

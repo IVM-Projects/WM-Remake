@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Page } from '@playwright/test'
+import type { Page, Request } from '@playwright/test'
 import { befriend, expect, giveCopies, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a ses joueurs, supprimés à la fin (échanges, éléments, amitiés et notifications
@@ -52,13 +52,31 @@ const status = (page: Page) => page.locator('main p[tabindex="-1"]').filter({ vi
 const onBody = (page: Page) => page.evaluate(() => document.activeElement === document.body)
 const short = (iso: string) => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(new Date(iso))
 const titleOf = (copy: string) => sql(`select c.wikipedia_title from public.user_cards u join public.cards c on c.id = u.card_id where u.id = :'copy'`, { copy })
-// Polling de 20 s (M4-15), horloge du navigateur arrêtée juste après la lecture (pauseAt) : 10 s passent sans qu'une lecture de `path`
-// parte. Un poll trop tôt partirait pendant runFor : 1 s de temps réel suffit à le voir.
-async function quiet(page: Page, path: string) {
-  const early = page.waitForRequest((r) => r.method() === 'GET' && new URL(r.url()).pathname === path, { timeout: 1_000 }).then(() => true, () => false)
-  await page.clock.runFor(10_000)
-  expect(await early, `${path} relu avant 20 s`).toBe(false)
+// Polling de 20 s (M4-15). Le poll de la liste est armé au montage, juste après le départ de sa première lecture ; celui du détail quand
+// l'échange arrive en attente, juste après la fin de cette lecture. Repère commun : la fin de la première lecture (timing(), horloge
+// réelle), que l'horloge installée du navigateur suit jusqu'à pauseAt.
+const reads = (path: string) => (r: Request) => r.method() === 'GET' && new URL(r.url()).pathname === path
+async function openFrozen(page: Page, path: string, api: string): Promise<void> {
+  await page.clock.install()
+  const first = page.waitForRequest(reads(api))
+  await open(page, path)
+  const { startTime, responseEnd } = (await first).timing()
+  const loaded = startTime + responseEnd
+  expect(Date.now(), 'page lue en plus de 2 s').toBeLessThan(loaded + 2_000)
+  await page.clock.pauseAt(loaded + 2_000)
 }
+// Horloge arrêtée 2 s après le repère (openFrozen) : jusqu'à 19 s, aucune lecture de `api` ne part (un poll trop tôt partirait pendant
+// runFor : 1 s de temps réel suffit à le voir) ; à 20 s, une part (250 ms de marge : le rendu qui arme le poll suit la fin de la réponse).
+async function polledAt20s(page: Page, api: string) {
+  const early = page.waitForRequest(reads(api), { timeout: 1_000 }).then(() => true, () => false)
+  await page.clock.runFor(17_000)
+  expect(await early, `${api} relu avant 20 s`).toBe(false)
+  const read = page.waitForRequest(reads(api))
+  await page.clock.runFor(1_250)
+  await read
+}
+const emptyReceived = (page: Page) => page.getByRole('tabpanel').getByText('Aucune offre reçue en attente.', { exact: true })
+const UNSURE = 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu. L\'échange se met à jour.'
 const ACTIVE = 'border-b-2 border-[var(--color-accent)] text-[var(--color-accent)]'
 
 test('/trades : trois onglets, « Reçues » actif ; offres reçue, envoyée, refusée et acceptée sous leur onglet, au DOM du contrat', async ({ page, login }) => {
@@ -126,26 +144,28 @@ test('Review Focus, échéance passée sans cron : « · Expiré » sous « Hist
   await expect(offers(page).locator('span', { hasText: /^· / })).toHaveText('· Expiré')
 })
 
-test('polling 20 s : l\'offre focalisée annulée ailleurs sort de « Reçues », le focus passe à la suivante, puis à l\'état vide', async ({ page, login }) => {
+test('polling 20 s : l\'offre focalisée annulée ailleurs sort de « Reçues », le focus passe à la suivante, puis à l\'état vide, puis à l\'offre arrivée', async ({ page, login }) => {
   const { me, other, mine, theirs } = await friends(login)
   const older = propose(other, me, [theirs[0], mine[0]])
   const newer = propose(other, me, [theirs[1], mine[1]])
-  await page.clock.install()
-  await open(page)
+  await openFrozen(page, '/trades', '/api/trades')
   await expect(offers(page)).toHaveCount(2)
   // Plus récente d'abord.
   await offerButton(page).first().focus()
   act(other, newer, 'cancel')
-  await page.clock.pauseAt(Date.now() + 1_000)
-  await quiet(page, '/api/trades')
-  await page.clock.runFor(10_000)
+  await polledAt20s(page, '/api/trades')
   await expect(offers(page)).toHaveCount(1)
   await expect(offerButton(page)).toBeFocused()
   act(other, older, 'cancel')
   await page.clock.runFor(20_000)
   await expect(offers(page)).toHaveCount(0)
-  await expect(page.getByRole('tabpanel').getByText('Aucune offre reçue en attente.', { exact: true })).toBeFocused()
+  await expect(emptyReceived(page)).toBeFocused()
   expect(await onBody(page)).toBe(false)
+  // L'état vide focalisé disparaît sous une offre arrivée : elle prend le focus.
+  propose(other, me, [theirs[2], mine[2]])
+  await page.clock.runFor(20_000)
+  await expect(offers(page)).toHaveCount(1)
+  await expect(offerButton(page)).toBeFocused()
 })
 
 test('détail en destinataire : compte à rebours, « Contre-offre » ; « Accepter » au clavier → toast, statut focalisé, plus d\'action', async ({ page, login }) => {
@@ -181,13 +201,10 @@ test('détail en destinataire : compte à rebours, « Contre-offre » ; « Accep
 test('polling du détail : annulé ailleurs → « Annulé », sans bouton, focus jamais sur body', async ({ page, login }) => {
   const { me, other, mine, theirs } = await friends(login)
   const id = propose(other, me, [theirs[0], mine[0]])
-  await page.clock.install()
-  await open(page, `/trades/${id}`)
+  await openFrozen(page, `/trades/${id}`, `/api/trades/${id}`)
   await expect(page.getByRole('button', { name: 'Accepter' })).toBeVisible()
   act(other, id, 'cancel')
-  await page.clock.pauseAt(Date.now() + 1_000)
-  await quiet(page, `/api/trades/${id}`)
-  await page.clock.runFor(10_000)
+  await polledAt20s(page, `/api/trades/${id}`)
   await expect(status(page)).toHaveText('Annulé')
   await expect(actions(page)).toHaveCount(0)
   expect(await onBody(page)).toBe(false)
@@ -220,36 +237,74 @@ test('accepté ailleurs entre la lecture et le clic : « Accepter » → le refu
   await expect(status(page)).toBeFocused()
 })
 
-test('clé gardée (M4-8) : 503 après le passage au serveur, la relance de « Accepter » garde sa clé ; « Refuser » ailleurs en a une autre', async ({ page, login }) => {
+test('clé gardée (M4-8) : 503 après le passage au serveur, l\'incertitude dite ; la relance de « Accepter » garde sa clé ; « Refuser » ailleurs en a une autre, et le poll qui le montre refusé efface l\'incertitude', async ({ page, login }) => {
   const { me, other, mine, theirs } = await friends(login)
   const id = propose(other, me, [theirs[0], mine[0]])
+  const second = propose(other, me, [theirs[1], mine[1]])
   const keys: string[] = []
   page.on('request', (r) => { if (r.method() === 'PATCH' && new URL(r.url()).pathname.startsWith('/api/trades/')) keys.push(r.headers()['idempotency-key'] ?? '') })
-  await open(page, `/trades/${id}`)
-  // Après la lecture (même adresse) : le premier PATCH atteint le serveur et s'y fait ; sa réponse est remplacée par un 503.
-  await routeOnce(page, `**/api/trades/${id}`, async (r) => {
+  // Le PATCH atteint le serveur et s'y fait ; sa réponse est remplacée par un 503. Les GET de la même adresse passent.
+  const lose = (trade: string) => routeOnce(page, `**/api/trades/${trade}`, async (r) => {
     await r.fetch()
     await r.fulfill({ status: 503, body: '' })
-  })
+  }, (r) => r.request().method() === 'PATCH')
+  const alert = page.locator('main').getByRole('alert')
+  // Temps qui s'écoule normalement (toasts) ; seul runFor fait passer le poll de 20 s.
+  await page.clock.install()
+  await lose(id)
+  await open(page, `/trades/${id}`)
   const accept = page.getByRole('button', { name: 'Accepter' })
   const lost = page.waitForResponse((r) => r.url().endsWith(`/api/trades/${id}`) && r.status() === 503)
   await accept.click()
   await lost
-  await expect(page.locator('main').getByRole('alert')).toHaveText('L\'action n\'a pas abouti.')
+  await expect(alert).toHaveText(UNSURE)
   await expect(accept).not.toHaveAttribute('aria-disabled', 'true')
   await accept.click()
   await expect(toasts(page)).toContainText('Échange accepté.')
   await expect(status(page)).toHaveText('Accepté')
-  await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
+  await expect(alert).toHaveCount(0)
   expect(keys).toHaveLength(2)
   expect(keys[1]).toBe(keys[0])
 
-  const second = propose(other, me, [theirs[1], mine[1]])
+  await lose(second)
   await open(page, `/trades/${second}`)
   await page.getByRole('button', { name: 'Refuser' }).click()
-  await expect(toasts(page)).toContainText('Échange refusé.')
+  await expect(alert).toHaveText(UNSURE)
   expect(keys).toHaveLength(3)
   expect(keys[2]).not.toBe(keys[0])
+  // Le poll montre l'échange refusé : l'incertitude ne vaut plus.
+  await page.clock.runFor(20_000)
+  await expect(status(page)).toHaveText('Refusé')
+  await expect(alert).toHaveCount(0)
+})
+
+test('poll du détail en vol pendant « Accepter », rendu après la réponse : jeté, l\'échange reste accepté', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login)
+  const id = propose(other, me, [theirs[0], mine[0]])
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  let seen = () => {}
+  const fetched = new Promise<void>((r) => { seen = r })
+  await page.clock.install()
+  await open(page, `/trades/${id}`)
+  // Le poll lit l'échange encore en attente ; sa réponse est retenue jusqu'après l'acceptation.
+  await routeOnce(page, `**/api/trades/${id}`, async (r) => {
+    const res = await r.fetch()
+    seen()
+    await held
+    await r.fulfill({ response: res })
+  }, (r) => r.request().method() === 'GET')
+  await page.clock.runFor(20_000)
+  await fetched
+  await page.getByRole('button', { name: 'Accepter' }).click()
+  await expect(status(page)).toHaveText('Accepté')
+  const stale = page.waitForResponse((r) => r.url().endsWith(`/api/trades/${id}`) && r.request().method() === 'GET')
+  release()
+  await stale
+  // Le temps que la page l'applique si elle ne la jetait pas.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  await expect(status(page)).toHaveText('Accepté')
+  await expect(actions(page)).toHaveCount(0)
 })
 
 test('cloche : le lien d\'une trade_received réelle mène au détail', async ({ page, login }) => {
@@ -289,6 +344,17 @@ test('/trades/<uuid inconnu> : « Échange introuvable » et « Retour aux écha
   await expect(page.getByRole('link', { name: 'Retour aux échanges' })).toHaveAttribute('href', '/trades')
 })
 
+test('lecture en échec puis « Réessayer » sur un échange introuvable : le focus sur « Retour aux échanges »', async ({ page, login }) => {
+  trash.push((await login()).uid)
+  const unknown = randomUUID()
+  await routeOnce(page, `**/api/trades/${unknown}`, (r) => r.fulfill({ status: 500 }))
+  await open(page, `/trades/${unknown}`)
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
+  await page.getByRole('button', { name: 'Réessayer' }).click()
+  await expect(page.locator('main h1')).toHaveText('Échange introuvable')
+  await expect(page.getByRole('link', { name: 'Retour aux échanges' })).toBeFocused()
+})
+
 test('clavier : Tab jusqu\'à l\'offre, Entrée → détail ; Tab jusqu\'à « Accepter », Entrée → toast', async ({ page, login }) => {
   const { me, other, mine, theirs } = await friends(login)
   const id = propose(other, me, [theirs[0], mine[0]])
@@ -315,7 +381,25 @@ test('lecture en échec : « Impossible de charger cette page. » et « Réessay
   await page.getByRole('button', { name: 'Réessayer' }).click()
   await expect(page.getByRole('tab')).toHaveText(['Reçues', 'Envoyées', 'Historique'])
   // « Réessayer » disparu sous le focus : l'état vide de l'onglet le prend.
-  await expect(page.getByRole('tabpanel').getByText('Aucune offre reçue en attente.', { exact: true })).toBeFocused()
+  await expect(emptyReceived(page)).toBeFocused()
+
+  // 200 au corps illisible (portail captif, connexion coupée après les en-têtes) : api() rend null, une lecture en échec comme une autre.
+  await routeOnce(page, '**/api/trades', (r) => r.fulfill({ status: 200, body: 'x' }))
+  await open(page)
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
+  await page.getByRole('button', { name: 'Réessayer' }).click()
+  await expect(page.getByRole('tab')).toHaveText(['Reçues', 'Envoyées', 'Historique'])
+})
+
+test('lecture en échec, « Réessayer » focalisé, puis le poll réussit : les onglets, le focus sur l\'état vide', async ({ page, login }) => {
+  trash.push((await login()).uid)
+  await routeOnce(page, '**/api/trades', (r) => r.fulfill({ status: 500 }))
+  await page.clock.install()
+  await open(page)
+  await page.getByRole('button', { name: 'Réessayer' }).focus()
+  await page.clock.runFor(20_000)
+  await expect(page.getByRole('tab')).toHaveText(['Reçues', 'Envoyées', 'Historique'])
+  await expect(emptyReceived(page)).toBeFocused()
 })
 
 test('360 px, initiateur au pseudo de 24 caractères et carte au titre long : aucun défilement horizontal ; cibles ≥ 44 px', async ({ page, login }) => {

@@ -26,10 +26,12 @@ export const befriend = (a: User, b: User): string =>
 export const cookieFor = (u: User) => authCookie(backend(), u.uid)
 
 // { times: 1 } qui reste tout le test (les requêtes suivantes : fallback) : son expiration envoie Fetch.disable, et Chromium perd parfois une requête en vol.
-export async function routeOnce(page: Page, url: Parameters<Page['route']>[0], handler: (route: Route) => unknown): Promise<void> {
+// `when` : seule la première requête qui le vérifie est prise (une méthode sur une adresse partagée par GET et PATCH).
+export async function routeOnce(page: Page, url: Parameters<Page['route']>[0], handler: (route: Route) => unknown,
+  when: (route: Route) => boolean = () => true): Promise<void> {
   let used = false
   await page.route(url, (route) => {
-    if (used) return route.fallback()
+    if (used || !when(route)) return route.fallback()
     used = true
     return handler(route)
   })

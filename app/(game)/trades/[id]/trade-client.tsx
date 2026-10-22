@@ -7,7 +7,7 @@ import { Countdown } from '@/components/market/Countdown'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
 import { TradeSides } from '@/components/trades/TradeCard'
-import { STATUS_LABEL, type Trade } from '@/components/trades/types'
+import { STATUS_LABEL, type Trade, type TradeStatus } from '@/components/trades/types'
 import { ghost } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { toast } from '@/components/ui/toast'
@@ -21,6 +21,8 @@ const link = 'inline-flex min-h-11 items-center text-sm font-medium text-[var(--
 // Toasts (P19).
 const DONE = { accept: 'Échange accepté.', decline: 'Échange refusé.', cancel: 'Échange annulé.' } as const
 type Action = keyof typeof DONE
+// Réponse perdue ou 5xx : l'action a pu avoir lieu ; relancée, elle garde sa clé (apiOnce) et le serveur rejoue sa réponse.
+const UNSURE = 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu. L\'échange se met à jour.'
 
 // /trades/[id] (M4-15). Aucun id d'élément : le statut est la cible du focus quand les actions disparaissent.
 export function TradeClient() {
@@ -32,26 +34,39 @@ export function TradeClient() {
   const [failed, setFailed] = useState(false)
   // Une action à la fois : aria-disabled et garde, jamais disabled.
   const [busy, setBusy] = useState(false)
-  // Refus de la dernière action (role=alert), gardé jusqu'à la suivante.
-  const [error, setError] = useState<string | null>(null)
+  // Échec de la dernière action (role=alert). Un refus reste jusqu'à l'action suivante (status null) ; une issue inconnue, tant que l'échange
+  // garde le statut affiché quand elle est arrivée.
+  const [error, setError] = useState<{ text: string; status: TradeStatus | null } | null>(null)
   const inflight = useRef(false)
   const keys = useRef(new Map<string, string>())
   const status = useRef<HTMLParagraphElement>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
+  const back = useRef<HTMLAnchorElement>(null)
   const retried = useRef(false)
+  // Lectures parties avant cet instant (performance.now) jetées : un poll en vol déferait la réponse d'une écriture (auction-client.tsx).
+  const hold = useRef(0)
+  // Statut affiché au dernier rendu : celui auquel une issue inconnue s'applique au moment où elle arrive.
+  const shown = useRef<TradeStatus | undefined>(undefined)
+  useEffect(() => { shown.current = trade?.status })
 
-  const read = () =>
-    api<{ trade: Trade }>(`/api/trades/${id}`).then(
+  const read = () => {
+    const started = performance.now()
+    return api<{ trade: Trade } | null>(`/api/trades/${id}`).then(
       (r) => {
+        if (started < hold.current) return
+        // 2xx au corps illisible (portail captif, connexion coupée après les en-têtes) : api() rend null, une lecture en échec.
+        if (!r) return setFailed(true)
         setTrade(r.trade)
         setFailed(false)
       },
       (e) => {
+        if (started < hold.current) return
         // Inconnu ou étranger (404), adresse invalide (400) : « Échange introuvable ». Autre échec : l'échange affiché reste.
         if (e instanceof ApiError && (e.status === 404 || e.status === 400)) setMissing(true)
         else setFailed(true)
       },
     )
+  }
   // Lu à chaque affichage (Activity compris), puis toutes les 20 s tant qu'il est en attente (M4-15).
   const onShow = useEffectEvent(() => void read())
   useEffect(() => onShow(), [])
@@ -64,16 +79,16 @@ export function TradeClient() {
   const recipient = pending && !!uid && trade.recipient_id === uid
   const initiator = pending && !!uid && trade.initiator_id === uid
   // Les actions disparaissent sous le focus (action faite, refus relu, poll) ou « Réessayer » sous le clic : le focus tombé sur body va
-  // au statut, ou au « Réessayer » revenu. Rien si le joueur l'a mis ailleurs.
+  // au statut, au « Réessayer » revenu, ou à « Retour aux échanges ». Rien si le joueur l'a mis ailleurs.
   const had = useRef(false)
   useEffect(() => {
     const lost = had.current && !(recipient || initiator)
     had.current = recipient || initiator
-    if (!trade && !failed) return
+    if (!trade && !failed && !missing) return
     const want = lost || retried.current
     retried.current = false
-    if (want && document.activeElement === document.body) (trade ? status : retryButton).current?.focus()
-  }, [recipient, initiator, trade, failed])
+    if (want && document.activeElement === document.body) (missing ? back : trade ? status : retryButton).current?.focus()
+  }, [recipient, initiator, trade, failed, missing])
 
   async function act(action: Action) {
     if (inflight.current) return
@@ -86,12 +101,18 @@ export function TradeClient() {
         body: JSON.stringify({ action }),
         headers: calendarTz(),
       })
+      hold.current = performance.now()
       setTrade(r.trade)
       toast(DONE[action])
     } catch (e) {
-      setError(userMessage(e, 'L\'action n\'a pas abouti.'))
-      // Refus : l'échange a changé ailleurs, il est relu. Issue inconnue (5xx, réseau) : la clé reste (apiOnce), la relance rejoue.
-      if (!unsure(e)) await read()
+      // Issue inconnue (5xx, réseau) : la clé reste (apiOnce), la relance rejoue ; le message tombe dès qu'une lecture change le statut.
+      if (unsure(e)) setError({ text: userMessage(e, UNSURE), status: shown.current ?? null })
+      else {
+        // Refus : l'échange a changé ailleurs, il est relu ; un poll parti avant est jeté.
+        setError({ text: userMessage(e, 'L\'action n\'a pas abouti.'), status: null })
+        hold.current = performance.now()
+        await read()
+      }
     } finally {
       inflight.current = false
       setBusy(false)
@@ -110,7 +131,7 @@ export function TradeClient() {
       {missing ? (
         <div className="card-frame mx-auto flex max-w-md flex-col items-center gap-3 p-6 text-center">
           <h1 className="text-xl font-bold">Échange introuvable</h1>
-          <Link href="/trades" className={link}>Retour aux échanges</Link>
+          <Link ref={back} href="/trades" className={link}>Retour aux échanges</Link>
         </div>
       ) : !trade ? (
         failed ? (
@@ -147,7 +168,9 @@ export function TradeClient() {
           {initiator && (
             <button type="button" aria-disabled={busy || undefined} onClick={() => void act('cancel')} className={ghost}>Annuler</button>
           )}
-          {error && <p role="alert" className="text-sm font-medium text-red-400">{error}</p>}
+          {error && (error.status === null || error.status === trade.status) && (
+            <p role="alert" className="text-sm font-medium text-red-400">{error.text}</p>
+          )}
           {(trade.parent_trade_id || trade.counter_trade_id) && (
             <div className="flex flex-wrap gap-x-6">
               {trade.parent_trade_id && <Link href={`/trades/${trade.parent_trade_id}`} className={link}>Voir l&apos;offre d&apos;origine</Link>}
