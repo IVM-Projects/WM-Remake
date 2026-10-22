@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { test as base, expect, type Page, type Route } from '@playwright/test'
+import { test as base, expect, type Locator, type Page, type Route } from '@playwright/test'
 import type { Backend } from '../contract/harness.ts'
 import { authCookie, makeUser, psql } from '../contract/users.ts'
 
@@ -42,6 +42,11 @@ export const test = base.extend<{ login: (opts?: Parameters<typeof makeUser>[1])
     })
   },
 })
+
+// Un <Link> de Next cliqué avant l'hydratation est un <a> nu : rechargement complet, qui sort de l'historique SPA (Activity perdue).
+export async function hydrated(link: Locator): Promise<void> {
+  await expect.poll(() => link.evaluate((a) => Object.keys(a).some((k) => k.startsWith('__reactProps')))).toBe(true)
+}
 
 export type Account = { username: string; email: string; password: string }
 
