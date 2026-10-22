@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useEffectEvent, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useEffectEvent, useId, useRef, useState, type FormEvent } from 'react'
 import { AuctionTile } from '@/components/market/AuctionTile'
 import { appendPage, mergeReread, type List, type Page } from '@/components/market/pages'
 import type { Auction, MineLists } from '@/components/market/types'
@@ -9,6 +9,7 @@ import { navEntry } from '@/components/shell/nav'
 import { ghost } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { RarityChips } from '@/components/ui/RarityChips'
+import { tabKey } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
 import { api, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
@@ -77,17 +78,6 @@ export function MarketClient() {
     history: `Historique${count(mine?.counts.history)}`,
   }
 
-  // Clavier de CardModal.tsx : flèches (en boucle), Début et Fin ; l'onglet suit le focus.
-  const tabKey = (e: KeyboardEvent) => {
-    const i = TABS.indexOf(tab)
-    const j = ({ ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: TABS.length - 1 } as Record<string, number>)[e.key]
-    if (j === undefined) return
-    e.preventDefault()
-    const next = TABS[(j + TABS.length) % TABS.length]
-    setTab(next)
-    document.getElementById(`${id}-tab-${next}`)?.focus()
-  }
-
   function submit(e: FormEvent) {
     e.preventDefault()
     const v = text.trim()
@@ -123,7 +113,7 @@ export function MarketClient() {
             aria-controls={`${id}-panel`}
             tabIndex={tab === t ? 0 : -1}
             onClick={() => setTab(t)}
-            onKeyDown={tabKey}
+            onKeyDown={(e) => tabKey(e, TABS, tab, id, setTab)}
             className={`inline-flex min-h-11 shrink-0 items-center whitespace-nowrap px-4 text-sm font-semibold transition-colors focus-visible:-outline-offset-2 ${tab === t ? 'border-b-2 border-amber-500 text-amber-600' : 'border-b-2 border-transparent text-[var(--color-foreground)]/70 hover:text-[var(--color-foreground)]'}`}
           >
             {LABELS[t]}

@@ -1,13 +1,14 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useEffectEvent, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
 import { TradeCard } from '@/components/trades/TradeCard'
 import type { Trade } from '@/components/trades/types'
-import { ghost } from '@/components/ui/button'
+import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
+import { tabKey } from '@/components/ui/tabs'
 import { api } from '@/lib/api'
 import { usePoll } from '@/lib/poll'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -85,17 +86,6 @@ export function TradesClient() {
     ;(offers?.[Math.min(i, offers.length - 1)] ?? panel.current?.querySelector<HTMLElement>('[tabindex="-1"]'))?.focus()
   }, [data, failed])
 
-  // Clavier de market-client.tsx : flèches (en boucle), Début et Fin ; l'onglet suit le focus.
-  const tabKey = (e: KeyboardEvent) => {
-    const i = TABS.indexOf(tab)
-    const j = ({ ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: TABS.length - 1 } as Record<string, number>)[e.key]
-    if (j === undefined) return
-    e.preventDefault()
-    const next = TABS[(j + TABS.length) % TABS.length]
-    setTab(next)
-    document.getElementById(`${id}-tab-${next}`)?.focus()
-  }
-
   // « Réessayer » disparaît pendant la relecture : le focus va ensuite à la première offre, à l'état vide, ou au bouton revenu.
   function retry() {
     refocus.current = 0
@@ -109,12 +99,7 @@ export function TradesClient() {
       <PageHeader title={entry.title} icon={entry.icon} />
       {!rows ? (
         failed ? (
-          <div className="card-frame mx-auto flex max-w-md flex-col items-center gap-3 p-6 text-center">
-            <p role="alert" className="text-sm">Impossible de charger cette page.</p>
-            <button ref={retryButton} type="button" onClick={retry} className={`${ghost} justify-center`}>
-              Réessayer
-            </button>
-          </div>
+          <LoadError ref={retryButton} onRetry={retry} />
         ) : (
           <Loading label="Chargement des échanges" />
         )
@@ -132,7 +117,7 @@ export function TradesClient() {
                 aria-controls={`${id}-panel`}
                 tabIndex={tab === t ? 0 : -1}
                 onClick={() => setTab(t)}
-                onKeyDown={tabKey}
+                onKeyDown={(e) => tabKey(e, TABS, tab, id, setTab)}
                 className={`inline-flex min-h-11 shrink-0 items-center whitespace-nowrap px-4 text-sm font-semibold transition-colors focus-visible:-outline-offset-2 ${tab === t ? 'border-b-2 border-[var(--color-accent)] text-[var(--color-accent)]' : 'border-b-2 border-transparent text-[var(--color-foreground)]/70 hover:text-[var(--color-foreground)]'}`}
               >
                 {LABELS[t]}

@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
-import { ghost } from '@/components/ui/button'
+import { ghost, primary } from '@/components/ui/button'
+import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
@@ -14,7 +15,6 @@ import { unreadStore } from '@/lib/notifications'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 
 const entry = navEntry('/friends')
-const primary = 'inline-flex min-h-11 items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-progress aria-disabled:opacity-80'
 const danger = 'inline-flex min-h-11 items-center rounded-xl bg-red-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-red-800 aria-disabled:cursor-progress aria-disabled:opacity-80'
 const row = 'flex flex-wrap items-center justify-between gap-2 px-4 py-2'
 // Un pseudo de 24 caractères sans coupure passe à la ligne au lieu d'élargir la page (360 px).
@@ -58,7 +58,7 @@ export function FriendsClient() {
   const applied = useRef(0)
   const refocus = useRef<Focus | null>(null)
   const root = useRef<HTMLDivElement>(null)
-  const retry = useRef<HTMLButtonElement>(null)
+  const retryButton = useRef<HTMLButtonElement>(null)
 
   // Sans polling propre (Q25 : la cloche signale les demandes) : lue à chaque affichage (Activity compris), quand le compte de la cloche
   // change, après chaque action et sur « Réessayer ».
@@ -93,7 +93,7 @@ export function FriendsClient() {
     const f = refocus.current
     refocus.current = null
     if (!f || document.activeElement !== document.body) return
-    if (failed || !data) return retry.current?.focus()
+    if (failed || !data) return retryButton.current?.focus()
     const { part, row, name } = f
     const rows = split(data.me, data.rows)[part]
     const i = Array.isArray(row) ? rows.findIndex((x) => row.includes(x.id)) : row
@@ -148,6 +148,14 @@ export function FriendsClient() {
       { part: 'received', row: i, name: action === 'accept' ? 'Accepter' : 'Refuser' })
   const remove = (f: Friendship, part: Part, i: number, done: string) =>
     act(`remove:${f.id}`, `/api/friends/${f.id}`, { method: 'DELETE' }, () => done, { part, row: i, name: 'Retirer' })
+
+  // Chargement jusqu'à la relecture : jamais l'ancienne liste et ses boutons actifs. Le bouton disparaît pendant la relecture : le focus va
+  // ensuite à la première section.
+  function retry() {
+    setData(null)
+    setFailed(false)
+    void read({ part: 'received', row: 0 })
+  }
 
   // Échap, voile ou « Annuler », jamais pendant le retrait. Une relecture a pu retirer la ligne d'origine sous la modale : le focus
   // rendu tombe alors sur body, et l'effet le passe au « Retirer » de la ligne de même rang.
@@ -212,23 +220,7 @@ export function FriendsClient() {
       </div>
 
       {failed ? (
-        <div className="card-frame mx-auto flex max-w-md flex-col items-center gap-3 p-6 text-center">
-          <p role="alert" className="text-sm">Impossible de charger cette page.</p>
-          {/* Le bouton disparaît pendant la relecture : le focus va ensuite à la première section. */}
-          <button
-            ref={retry}
-            type="button"
-            // Chargement jusqu'à la relecture : jamais l'ancienne liste et ses boutons actifs.
-            onClick={() => {
-              setData(null)
-              setFailed(false)
-              void read({ part: 'received', row: 0 })
-            }}
-            className={`${ghost} justify-center`}
-          >
-            Réessayer
-          </button>
-        </div>
+        <LoadError ref={retryButton} onRetry={retry} />
       ) : !s ? (
         <Loading label="Chargement des amis" />
       ) : (

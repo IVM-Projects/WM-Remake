@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useEffectEvent, useId, useRef, useState, type FormEvent } from 'react'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
-import { ghost } from '@/components/ui/button'
+import { ghost, link, primary } from '@/components/ui/button'
+import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { toast } from '@/components/ui/toast'
 import { api, ApiError, apiOnce, calendarTz, unsure, userMessage } from '@/lib/api'
@@ -16,8 +17,6 @@ import { buildBody, invertTrade, sideCount, type Picks } from './compose'
 import type { Trade } from './types'
 
 const entry = navEntry('/trades')
-const primary = 'inline-flex min-h-11 items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-progress aria-disabled:opacity-80'
-const link = 'inline-flex min-h-11 items-center text-sm font-medium text-[var(--color-accent-light)] underline-offset-2 hover:underline'
 const field = 'min-h-11 min-w-0 rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm placeholder:text-[var(--color-foreground)]/60'
 const PAGE = 50
 const LOAD_FAILED = 'Impossible de charger cette page.'
@@ -384,12 +383,7 @@ function Composer({ withId, parentId }: { withId: string; parentId?: string }) {
           </div>
         </>
       ) : failed ? (
-        <div className="card-frame mx-auto flex max-w-md flex-col items-center gap-3 p-6 text-center">
-          <p role="alert" className="text-sm">{LOAD_FAILED}</p>
-          <button ref={retryButton} type="button" onClick={retry} className={`${ghost} justify-center`}>
-            Réessayer
-          </button>
-        </div>
+        <LoadError ref={retryButton} onRetry={retry} />
       ) : (
         <Loading label="Chargement de l'échange" />
       )}

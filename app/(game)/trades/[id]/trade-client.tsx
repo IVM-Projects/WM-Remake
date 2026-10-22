@@ -8,7 +8,8 @@ import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
 import { TradeSides } from '@/components/trades/TradeCard'
 import { STATUS_LABEL, type Trade, type TradeStatus } from '@/components/trades/types'
-import { ghost } from '@/components/ui/button'
+import { ghost, link, primary } from '@/components/ui/button'
+import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { toast } from '@/components/ui/toast'
 import { api, ApiError, apiOnce, calendarTz, unsure, userMessage } from '@/lib/api'
@@ -16,8 +17,6 @@ import { usePoll } from '@/lib/poll'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 
 const entry = navEntry('/trades')
-const primary = 'inline-flex min-h-11 items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-progress aria-disabled:opacity-80'
-const link = 'inline-flex min-h-11 items-center text-sm font-medium text-[var(--color-accent-light)] underline-offset-2 hover:underline'
 // Toasts (P19).
 const DONE = { accept: 'Échange accepté.', decline: 'Échange refusé.', cancel: 'Échange annulé.' } as const
 type Action = keyof typeof DONE
@@ -137,12 +136,7 @@ export function TradeClient() {
         </div>
       ) : !trade ? (
         failed ? (
-          <div className="card-frame mx-auto flex max-w-md flex-col items-center gap-3 p-6 text-center">
-            <p role="alert" className="text-sm">Impossible de charger cette page.</p>
-            <button ref={retryButton} type="button" onClick={retry} className={`${ghost} justify-center`}>
-              Réessayer
-            </button>
-          </div>
+          <LoadError ref={retryButton} onRetry={retry} />
         ) : (
           <Loading label="Chargement de l'échange" />
         )
