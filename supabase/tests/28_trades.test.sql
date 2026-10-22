@@ -79,7 +79,8 @@ do $$ declare bad text; begin
 end $$;
 
 -- lock_timeout de 2 s (P5, M4-2) avant le premier verrou (for update, lock_users, lock_user) ; chaque tâche ajoute ses fonctions.
-do $$ declare fs text[] := array['create_auction', 'bulk_discard', 'friend_request', 'friend_action', 'friend_remove', 'friend_accept_all'];
+do $$ declare fs text[] := array['create_auction', 'bulk_discard', 'friend_request', 'friend_action', 'friend_remove', 'friend_accept_all',
+  'create_trade'];
   bad text; begin
   select string_agg(f, ', ') into bad from unnest(fs) f, lateral (select prosrc s from pg_proc where oid = to_regproc('wm.' || f)) p,
     lateral (select strpos(s, 'perform set_config(''lock_timeout'', ''2s'', true);') t,
@@ -87,6 +88,9 @@ do $$ declare fs text[] := array['create_auction', 'bulk_discard', 'friend_reque
   where not coalesce(t > 0 and t < l, false);
   assert bad is null, 'lock_timeout absent ou posé après un verrou : ' || bad;
   assert (select count(*) from unnest(fs) f where to_regproc('wm.' || f) is not null) = cardinality(fs), 'fonction absente';
+  -- Ligne métier avant les profils (M4-2, C4) : le parent d'une contre-offre est pris avant wm.lock_users.
+  assert (select strpos(prosrc, 'for update') between 1 and strpos(prosrc, 'wm.lock_users(') from pg_proc where oid = to_regproc('wm.create_trade')),
+    'create_trade : premier for update absent ou après wm.lock_users';
 end $$;
 
 -- card_locked (M4-2, P3) : A offre une copie de X et demande à B une copie de Y ; les deux côtés sont verrouillés, au niveau card_id.
@@ -419,4 +423,132 @@ do $$ begin
   assert (select jsonb_object_agg(proname, provolatile::text) from pg_proc where pronamespace = 'wm'::regnamespace
     and proname in ('are_friends', 'friendship_json', 'friends_list', 'friend_search'))
     = '{"are_friends":"s","friendship_json":"s","friends_list":"s","friend_search":"s"}', 'volatilité des lectures d''amitié';
+end $$;
+
+-- Création d'un échange (1720, M4-2, M4-9, M4-12, P2).
+-- p_items de create_trade : un élément par entrée de p_copies (répétée pour plusieurs unités), offert par p_by, au card_id de la copie.
+create function pg_temp.items(p_by uuid, p_copies uuid[]) returns jsonb language sql as $$
+  select coalesce(jsonb_agg(jsonb_build_object('user_card_id', x, 'card_id', (select card_id from public.user_cards where id = x),
+    'offered_by', p_by) order by o), '[]')
+  from unnest(p_copies) with ordinality u (x, o)
+$$;
+
+-- Réponse = trade_json : pending, éléments de l'initiateur d'abord malgré l'ordre d'envoi, card_id pris sur la copie et non sur le client
+-- (P2) ; échéance à 168 h ; une trade_received pour le destinataire ; ni grand livre ni solde touchés ; carte offerte verrouillée.
+do $$ declare a uuid := pg_temp.player('Creation1', 500); b uuid := pg_temp.player('Creation2'); x uuid := pg_temp.card('Création X');
+  a1 uuid := pg_temp.copy(a, pg_temp.card('Création A1', 'UR')); a2 uuid := pg_temp.copy(a, x, 3);
+  b1 uuid := pg_temp.copy(b, pg_temp.card('Création B1')); t0 timestamptz; t1 timestamptz; r jsonb; begin
+  perform pg_temp.friends(a, b);
+  t0 := clock_timestamp();
+  r := wm.create_trade(a, b, pg_temp.items(b, array[b1]) || jsonb_build_array(jsonb_build_object('user_card_id', a1, 'card_id', x,
+    'offered_by', a)) || pg_temp.items(a, array[a2, a2]), 300, 0);
+  t1 := clock_timestamp();
+  assert r = (select wm.trade_json(t) from public.trades t where id = (r ->> 'id')::uuid), r::text;
+  assert r ->> 'status' = 'pending' and r -> 'initiator_wikibidous' = '300' and r -> 'recipient_wikibidous' = '0'
+    and r -> 'parent_trade_id' = 'null', r::text;
+  assert jsonb_path_query_array(r -> 'items', '$[*].user_card_id') = jsonb_build_array(a1, a2, a2, b1)
+    and jsonb_path_query_array(r -> 'items', '$[*].offered_by') = jsonb_build_array(a, a, a, b), r ->> 'items';
+  assert r #> '{items,0,card_id}' = (select to_jsonb(card_id) from public.user_cards where id = a1), 'card_id du client (P2)';
+  assert (r ->> 'expires_at')::timestamptz between t0 + interval '168 hours' and t1 + interval '168 hours', r ->> 'expires_at';
+  assert (select array_agg(jsonb_build_array(user_id, type, data)) from public.notifications where user_id in (a, b))
+    = array[jsonb_build_array(b, 'trade_received', jsonb_build_object('trade_id', r -> 'id', 'user_id', a, 'username', 'Creation1'))],
+    'notification';
+  assert not exists (select from wm.wb_ledger where user_id in (a, b)), 'grand livre';
+  assert (select wikibidous_balance from public.profiles where id = a) = 500 and (select wikibidous_balance from public.profiles where id = b) = 0,
+    'soldes';
+  assert wm.card_locked(a, x), 'carte offerte non verrouillée';
+  perform pg_temp.inv('create_trade');
+end $$;
+
+-- Refus aux corps exacts (M4-9). Passent : 100 unités d'une pile de 150 (plus une carte de B, le plafond est par côté), 10 000 WB demandés à
+-- un joueur sans rien, WB nuls lus 0, tout le solde offert. La même copie dans plusieurs échanges en attente (M4-2).
+do $$ declare a uuid := pg_temp.player('Refus1', 100); b uuid := pg_temp.player('Refus2'); carol uuid := pg_temp.player('Refus3');
+  ka uuid := pg_temp.copy(a, pg_temp.card('Refus A')); kp uuid := pg_temp.copy(a, pg_temp.card('Refus P'), 150);
+  k2 uuid := pg_temp.copy(a, pg_temp.card('Refus D'), 2); kb uuid := pg_temp.copy(b, pg_temp.card('Refus B'));
+  q text := 'select wm.create_trade(%L, %L, %L, %s, %s)'; one jsonb; d jsonb; r jsonb; begin
+  perform pg_temp.friends(a, b);
+  one := pg_temp.items(a, array[ka]);
+  assert pg_temp.err(format(q, a, carol, one, 0, 0)) = '{"status":403,"code":"FORBIDDEN","error":"Vous devez être amis pour échanger","message":"Vous devez être amis pour échanger"}',
+    coalesce(pg_temp.err(format(q, a, carol, one, 0, 0))::text, 'créé');
+  assert pg_temp.err(format(q, a, a, one, 0, 0)) = '{"status":400,"code":"invalid_request","error":"Tu ne peux pas échanger avec toi-même","message":"Tu ne peux pas échanger avec toi-même"}',
+    'soi-même';
+  assert pg_temp.err(format(q, a, gen_random_uuid(), one, 0, 0)) = '{"status":404,"error":"Joueur introuvable","message":"Joueur introuvable"}',
+    'inconnu';
+  assert pg_temp.err(format(q, a, b, '[]', 10, 10)) = '{"status":400,"code":"invalid_request","error":"Un échange contient au moins une carte","message":"Un échange contient au moins une carte"}',
+    'WB seuls';
+  assert jsonb_array_length(wm.create_trade(a, b, pg_temp.items(a, array_fill(kp, array[100])) || pg_temp.items(b, array[kb])) -> 'items') = 101,
+    '100 unités et une carte de B';
+  assert pg_temp.err(format(q, a, b, pg_temp.items(a, array_fill(kp, array[101])), 0, 0)) = '{"status":400,"code":"invalid_request","error":"Au plus 100 cartes par côté","message":"Au plus 100 cartes par côté"}',
+    '101 unités';
+  d := '{"status":400,"code":"invalid_request","error":"Entre 0 et 10 000 wikibidous par côté","message":"Entre 0 et 10 000 wikibidous par côté"}';
+  assert pg_temp.err(format(q, a, b, one, 0, 10001)) = d and pg_temp.err(format(q, a, b, one, 0, -1)) = d
+    and pg_temp.err(format(q, a, b, one, 10001, 0)) = d, 'WB hors bornes';
+  assert wm.create_trade(a, b, one, 0, 10000) -> 'recipient_wikibidous' = '10000', '10 000 WB demandés à B';
+  r := wm.create_trade(a, b, one, null, null);
+  assert r -> 'initiator_wikibidous' = '0' and r -> 'recipient_wikibidous' = '0', 'WB nuls';
+  assert (select count(*) from public.trade_items i join public.trades t on t.id = i.trade_id where i.user_card_id = ka and t.status = 'pending') = 2,
+    'même copie dans deux échanges en attente';
+  assert pg_temp.err(format(q, a, b, one || jsonb_build_array(jsonb_build_object('user_card_id', kb, 'card_id', null, 'offered_by', carol)), 0, 0))
+    = '{"status":400,"code":"invalid_request","error":"Élément d''échange invalide","message":"Élément d''échange invalide"}', 'élément de Carol';
+  d := '{"status":403,"code":"42501","error":"Vous ne possédez pas cette carte","message":"Vous ne possédez pas cette carte"}';
+  assert pg_temp.err(format(q, a, b, pg_temp.items(a, array[k2, k2, k2]), 0, 0)) = d, 'trois unités d''une pile de 2';
+  assert pg_temp.err(format(q, a, b, pg_temp.items(a, array[kb]), 0, 0)) = d, 'copie de B offerte par A';
+  assert pg_temp.err(format(q, a, b, one, 101, 0)) = '{"status":409,"code":"insufficient_balance","error":"Solde insuffisant","message":"Solde insuffisant"}',
+    'solde';
+  assert wm.create_trade(a, b, one, 100, 0) -> 'initiator_wikibidous' = '100', 'tout le solde';
+  assert (select wikibidous_balance from public.profiles where id = a) = 100, 'solde débité à la création';
+end $$;
+
+-- Un seul côté (M4-9), acceptés à la Task 5 : A offre a3 seule contre 50 WB, sans élément de B ; A demande b2 seule, B ne demande rien.
+do $$ declare a uuid := pg_temp.player('Cote1'); b uuid := pg_temp.player('Cote2');
+  a3 uuid := pg_temp.copy(a, pg_temp.card('Côté A3')); b2 uuid := pg_temp.copy(b, pg_temp.card('Côté B2')); r jsonb; begin
+  perform pg_temp.friends(a, b);
+  r := wm.create_trade(a, b, pg_temp.items(a, array[a3]), 0, 50);
+  assert r ->> 'status' = 'pending' and jsonb_path_query_array(r -> 'items', '$[*].user_card_id') = jsonb_build_array(a3)
+    and r -> 'recipient_wikibidous' = '50', r::text;
+  r := wm.create_trade(a, b, pg_temp.items(b, array[b2]));
+  assert r ->> 'status' = 'pending' and jsonb_path_query_array(r -> 'items', '$[*].user_card_id') = jsonb_build_array(b2)
+    and r -> 'initiator_wikibidous' = '0' and r -> 'recipient_wikibidous' = '0', r::text;
+end $$;
+
+-- Contre-offre (D§7.6, M4-12) : B répond à T1 de A ; T2 pointe vers T1, T1 passe à countered (closed_at) et son counter_trade_id vaut T2 ;
+-- une trade_countered pour A, aucune trade_received de plus. Refus : l'initiateur 403, un tiers ou un parent inconnu 404, un autre
+-- destinataire 400, un parent clos ou échu (Review Focus) 409.
+do $$ declare a uuid := pg_temp.player('Contre1'); b uuid := pg_temp.player('Contre2'); carol uuid := pg_temp.player('Contre3');
+  ka uuid := pg_temp.copy(a, pg_temp.card('Contre A')); kb uuid := pg_temp.copy(b, pg_temp.card('Contre B'));
+  q text := 'select wm.create_trade(%L, %L, %L, p_parent_trade_id => %L)'; t1 uuid; t2 uuid; t3 uuid; r jsonb;
+  nf jsonb := '{"status":404,"error":"Échange introuvable","message":"Échange introuvable"}';
+  d jsonb := '{"status":409,"error":"Cet échange n''est plus en attente (déjà traité)","message":"Cet échange n''est plus en attente (déjà traité)"}';
+  begin
+  perform pg_temp.friends(a, b);
+  t1 := wm.create_trade(a, b, pg_temp.items(a, array[ka])) ->> 'id';
+  assert pg_temp.err(format(q, a, b, pg_temp.items(b, array[kb]), t1)) = '{"status":403,"code":"FORBIDDEN","error":"Seul le destinataire peut faire une contre-offre","message":"Seul le destinataire peut faire une contre-offre"}',
+    coalesce(pg_temp.err(format(q, a, b, pg_temp.items(b, array[kb]), t1))::text, 'créée');
+  assert pg_temp.err(format(q, carol, a, pg_temp.items(a, array[ka]), t1)) = nf
+    and pg_temp.err(format(q, b, a, pg_temp.items(b, array[kb]), gen_random_uuid())) = nf, 'tiers ou parent inconnu';
+  assert pg_temp.err(format(q, b, carol, pg_temp.items(b, array[kb]), t1)) = '{"status":400,"code":"invalid_request","error":"La contre-offre s''adresse à l''initiateur de l''échange","message":"La contre-offre s''adresse à l''initiateur de l''échange"}',
+    'autre destinataire';
+  r := wm.create_trade(b, a, pg_temp.items(b, array[kb]) || pg_temp.items(a, array[ka]), p_parent_trade_id => t1);
+  t2 := r ->> 'id';
+  assert r ->> 'status' = 'pending' and r ->> 'initiator_id' = b::text and r ->> 'recipient_id' = a::text
+    and r ->> 'parent_trade_id' = t1::text, r::text;
+  assert (select status = 'countered' and closed_at is not null and updated_at > created_at from public.trades where id = t1), 'parent';
+  assert (select wm.trade_json(t) ->> 'counter_trade_id' from public.trades t where id = t1) = t2::text, 'lien enfant';
+  assert (select array_agg(jsonb_build_array(user_id, type, data) order by type) from public.notifications where user_id in (a, b))
+    = array[jsonb_build_array(a, 'trade_countered', jsonb_build_object('trade_id', t2, 'user_id', b, 'username', 'Contre2')),
+      jsonb_build_array(b, 'trade_received', jsonb_build_object('trade_id', t1, 'user_id', a, 'username', 'Contre1'))], 'notifications';
+  assert pg_temp.err(format(q, b, a, pg_temp.items(b, array[kb]), t1)) = d, 'parent déjà countered';
+  t3 := wm.create_trade(a, b, pg_temp.items(a, array[ka])) ->> 'id';
+  update public.trades set expires_at = clock_timestamp() - interval '1 second' where id = t3;
+  assert pg_temp.err(format(q, b, a, pg_temp.items(b, array[kb]), t3)) = d, 'parent échu';
+end $$;
+
+-- Même Idempotency-Key → même réponse, un seul échange, une seule notification ; p_tz reçu sans effet (C30).
+do $$ declare a uuid := pg_temp.player('CleEch1'); b uuid := pg_temp.player('CleEch2'); one jsonb; r jsonb; begin
+  perform pg_temp.friends(a, b);
+  one := pg_temp.items(a, array[pg_temp.copy(a, pg_temp.card('Clé échange'))]);
+  r := wm.create_trade(a, b, one, p_tz => 'Europe/Paris', p_idem => 'k-trade');
+  assert wm.create_trade(a, b, one, p_tz => 'Europe/Paris', p_idem => 'k-trade') = r, 'rejeu';
+  assert (select count(*) from public.trades where initiator_id = a) = 1 and (select count(*) from public.notifications where user_id = b) = 1,
+    'effet rejoué';
 end $$;
