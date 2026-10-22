@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Échanges en parallèle (joueurs et cartes supprimés à la sortie, config restaurée). A, B et C amis deux à deux, une carte par copie (count 1),
 # M = Σ soldes des trois joueurs, conservé. Derrière un bloqueur, l'attente est prouvée : il tient ses verrous jusqu'à n appels en attente,
-# 1 s au plus, et le nombre maximal vu doit atteindre la moitié de n.
+# 1 s au plus après le premier vu (5 s en tout), et le nombre maximal vu doit atteindre la moitié de n.
 # 1. Défausse et mise en vente pendant l'acceptation : 30 accept, 20 discard et 10 create_auction des copies offertes par les initiateurs,
 #    derrière A et B tenus → aucun 40P01 ni 55P03, aucune erreur d'accept, seuls refus « déjà engagée » ou « Vous ne possédez pas cette
 #    carte », aucune enchère, copies chez l'autre joueur, M = m0, invariants vides.
 # 2. Acceptation bloquée après sa première écriture (M4-7 C, P24) : compteurs de rareté de A et B tenus 3 s → 55P03 après 1,9 à 2,9 s, levée
 #    dans le trigger de l'instruction (1) de trade_move ; instantané inchangé ; la même clé, le bloqueur fini → accepted.
-# 3. Double acceptation : 20 accept sans clé → 1 succès, 19 « déjà traité », 2 lignes trade:<T2>, copies déplacées une fois.
+# 3. Double acceptation : 20 accept sans clé, derrière A et B tenus → 1 succès, 19 « déjà traité », 2 lignes trade:<T2>, copies déplacées
+#    une fois.
 # 4. Même clé, deux sessions (M4-8) : la seconde attend au moins 0,5 s, puis rejoue la réponse de la première ; 2 lignes trade:<T3>.
 # 5. Acceptations croisées : 30 échanges sur A–B, B–C et C–A, dans les deux sens, derrière les trois profils tenus → aucun 40P01 ni 55P03,
 #    aucune erreur, 30 accepted, M = m0, invariants vides.
@@ -55,11 +56,15 @@ trade() {  # $1 → $2, WB $3 de l'initiateur et $4 du destinataire, puis les co
   local from=$1 to=$2 iwb=$3 rwb=$4; shift 4
   q -c "select wm.create_trade('$from', '$to', $(items "$@"), $iwb, $rwb) ->> 'id'"
 }
-# Chaque copie offerte dans les échanges $@ est chez l'autre joueur, en une unité : déplacée une fois, et une seule.
+# Chaque copie offerte dans les échanges $2… est chez l'autre joueur, en une unité : déplacée une fois, et une seule ; sinon échec $1.
 moved() {
-  [[ "$(q -c "select count(*) from public.trade_items i join public.trades t on t.id = i.trade_id
-    left join public.user_cards uc on uc.id = i.user_card_id where t.id in ($(list "$@")) and (uc.count is distinct from 1
-      or uc.user_id is distinct from case i.offered_by when t.initiator_id then t.recipient_id else t.initiator_id end)")" == 0 ]]
+  local label=$1 bad; shift
+  bad="$(q -c "select string_agg(format('%s chez %s (count %s)', i.user_card_id, coalesce(p.username, 'personne'), uc.count), ', ')
+    from public.trade_items i join public.trades t on t.id = i.trade_id
+    left join public.user_cards uc on uc.id = i.user_card_id left join public.profiles p on p.id = uc.user_id
+    where t.id in ($(list "$@")) and (uc.count is distinct from 1
+      or uc.user_id is distinct from case i.offered_by when t.initiator_id then t.recipient_id else t.initiator_id end)")"
+  [[ -z $bad ]] || fail "$label : copies mal placées : $bad"
 }
 money() { q -c "select sum(wikibidous_balance) from public.profiles where id in ('$a', '$b', '$c')"; }
 # Appels en arrière-plan, SQLSTATE dans les erreurs (VERBOSITY verbose) : $1 = fichier d'erreurs, puis la requête.
@@ -78,19 +83,26 @@ check() {
   [[ "$(money)" == "$m0" ]] || fail "$1 : M = $(money), $m0 attendu"
   [[ "$(q -c 'select wm.check_invariants()')" == '[]' ]] || fail "$1 : invariants violés $(q -c 'select wm.check_invariants()')"
 }
-sleeping() { until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do kill -0 "$blocker"; done; }
-# Bloqueur $1 : prend $2 (un perform … for update) et le tient jusqu'à ce que $3 appels de bg attendent un verrou, 1 s au plus (la moitié du
-# lock_timeout), puis imprime le nombre maximal vu en attente ; rendu dès son premier PgSleep, avant le lancement des appels.
+# Attend le PgSleep du bloqueur ; mort avant, il échoue avec sa sortie d'erreur $1, si elle est donnée.
+sleeping() {
+  until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do
+    kill -0 "$blocker" 2>/dev/null || fail "bloqueur mort avant son PgSleep" ${1:+"$1"}
+  done
+}
+# Bloqueur $1 : prend $2 (un perform … for update) et le tient jusqu'à ce que $3 appels de bg attendent un verrou, 1 s au plus après le premier
+# vu (la moitié du lock_timeout : chaque appel attend donc ~1 s plus la vidange, même si les connexions arrivent lentement), 5 s au plus en
+# tout ; puis imprime le nombre maximal vu en attente. Rendu dès son premier PgSleep, avant le lancement des appels.
 hold() {
   cat >"$tmp/$1.sql" <<SQL
 begin;
-do \$\$ declare n int; m int := 0; t timestamptz := clock_timestamp(); begin
+do \$\$ declare n int; m int := 0; t timestamptz; t1 timestamptz := clock_timestamp(); begin
   $2;
   loop
     perform pg_stat_clear_snapshot();  -- sinon pg_stat_activity reste figé pour toute la transaction
     n := (select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query like 'set role service_role;%');
     m := greatest(m, n);
-    exit when n >= $3 or clock_timestamp() > t + interval '1 second';
+    if t is null and n > 0 then t := clock_timestamp(); end if;
+    exit when n >= $3 or clock_timestamp() > t + interval '1 second' or clock_timestamp() > t1 + interval '5 seconds';
     perform pg_sleep(0.05);
   end loop;
   perform set_config('wm_test.max_waiters', m::text, true);
@@ -100,7 +112,7 @@ commit;
 SQL
   q -f "$tmp/$1.sql" >"$tmp/$1.out" 2>"$tmp/$1.err" &
   blocker=$!
-  sleeping
+  sleeping "$tmp/$1.err"
 }
 # Fin du bloqueur $1 : au moins $2 appels vus en attente. La contention est prouvée, même si, sur un runner lent, quelques appels partent
 # après la libération.
@@ -131,11 +143,16 @@ done
 released s1 30
 waitall
 refusals 'Cette carte est déjà engagée dans un échange en attente|Vous ne possédez pas cette carte' "$tmp"/1[dv]*
+# Le verrou d'échange doit avoir servi, pour la défausse comme pour la vente : sinon chaque appel est passé après l'accept de son échange.
+engaged() { { grep -l 'Cette carte est déjà engagée' "$@" || true; } | wc -l; }  # fichiers qui la contiennent
+locked="$(engaged "$tmp"/1d*)"; listed="$(engaged "$tmp"/1v*)"
+echo "17_trades_concurrency : s1 : verrou d'échange opposé à $locked défausses sur 20 et $listed mises en vente sur 10" >&2
+(( locked > 0 && listed > 0 )) || fail "défausse et vente : verrou d'échange jamais exercé"
 refusals . "$tmp"/1a*  # aucun 40P01 ni 55P03 ; aucune erreur du tout, vérifié après
 [[ "$(q -c "select count(*) from public.auctions where seller_id in ('$a', '$b', '$c')")" == 0 ]] || fail "défausse et vente : enchère créée"
 for f in "$tmp"/1[dv]*; do [[ -s $f ]] || fail "${f##*/} passée ; accept du même échange :" "$tmp/1a${f##*/1[dv]}"; done
 quiet "$tmp"/1a*
-moved "${t1[@]}" || fail "défausse et vente : copies offertes ailleurs que chez l'autre joueur"
+moved "défausse et vente" "${t1[@]}"
 check "défausse et vente pendant l'acceptation"
 
 # 2. Acceptation bloquée après sa première écriture : a1 (R) contre b1 (C), donc l'instruction (1) de trade_move change les compteurs de
@@ -165,15 +182,18 @@ wait "$blocker"
 [[ "$(q -c "set role service_role; $busy")" == *'"status": "accepted"'* ]] || fail "acceptation rejouée : non acceptée"
 check "acceptation bloquée"
 
-# 3. Double acceptation.
+# 3. Double acceptation : derrière A et B tenus, le premier appel tient l'échange et attend les profils, les 19 autres attendent l'échange ;
+# à la libération, ils le relisent clos.
 copies x "$a" 1; copies y "$b" 1
 t2="$(trade "$a" "$b" 3 5 "$x" "$y")"
+hold s3 "perform from public.profiles where id in ('$a', '$b') for update" 20
 for i in $(seq 20); do bg "3-$i" "select wm.trade_action('$b', '$t2', 'accept')"; done
+released s3 10
 waitall
 refusals "$done409" "$tmp"/3-*
 [[ $fails == 19 ]] || fail "double acceptation : $((20 - fails)) succès"
 [[ "$(q -c "select count(*) from wm.wb_ledger where ref = 'trade:$t2'")" == 2 ]] || fail "double acceptation : lignes trade:<T2>"
-moved "$t2" || fail "double acceptation : copies"
+moved "double acceptation" "$t2"
 check "double acceptation"
 
 # 4. Même clé, deux sessions : la seconde attend l'unicité de la clé tenue par la première, puis lit sa réponse.
@@ -211,9 +231,9 @@ released s5 15
 waitall
 refusals . "$tmp"/5-*  # aucun 40P01 ni 55P03, puis aucune erreur du tout
 quiet "$tmp"/5-*
-[[ "$(q -c "select count(*) from public.trades where id in ($(list "${t5[@]}")) and status = 'accepted'")" == 30 ]] \
-  || fail "acceptations croisées : échanges non acceptés"
-moved "${t5[@]}" || fail "acceptations croisées : copies"
+got="$(q -c "select count(*) from public.trades where id in ($(list "${t5[@]}")) and status = 'accepted'")"
+[[ $got == 30 ]] || fail "acceptations croisées : $got échanges acceptés sur 30"
+moved "acceptations croisées" "${t5[@]}"
 check "acceptations croisées"
 
 # 6. Contre-offre, acceptation et annulation du même parent : le premier qui tient le parent gagne, les deux autres le relisent clos.
@@ -236,7 +256,8 @@ declare -A status=([a]=accepted [c]=countered [x]=cancelled)
 for i in $(seq 0 9); do
   won=""; for k in a c x; do [[ -s $tmp/6$k$i ]] || won+=$k; done
   [[ ${#won} == 1 ]] || fail "parent $i : succès « $won », un seul attendu"
-  [[ "$(q -c "select status from public.trades where id = '${p6[i]}'")" == "${status[$won]}" ]] || fail "parent $i : statut, ${status[$won]} attendu"
+  got="$(q -c "select status from public.trades where id = '${p6[i]}'")"
+  [[ $got == "${status[$won]}" ]] || fail "parent $i : statut $got, ${status[$won]} attendu"
 done
 check "contre-offre contre acceptation"
 

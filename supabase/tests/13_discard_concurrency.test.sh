@@ -18,17 +18,19 @@ one="$(q -c "select (wm.grant_copy('$uid', '$card', false)).id")"
 many="$(q -c "select (wm.grant_copy('$uid', '$card', true)).id")"
 q -c "update public.user_cards set count = 25 where id = '$many'" >/dev/null
 
-# Le profil est verrouillé jusqu'à ce que les 50 appels attendent derrière lui, 1 s au plus (la moitié du lock_timeout de bulk_discard,
-# M4-2) : ils se disputent tous le même verrou à sa libération. Le bloqueur imprime le nombre maximal d'appels vus en attente.
+# Le profil est verrouillé jusqu'à ce que les 50 appels attendent derrière lui, 1 s au plus après le premier vu (la moitié du lock_timeout de
+# bulk_discard, M4-2, même si les connexions arrivent lentement), 5 s au plus en tout : ils se disputent tous le même verrou à sa libération.
+# Le bloqueur imprime le nombre maximal d'appels vus en attente.
 cat >"$tmp/b.sql" <<SQL
 begin;
-do \$\$ declare n int; m int := 0; t timestamptz := clock_timestamp(); begin
+do \$\$ declare n int; m int := 0; t timestamptz; t1 timestamptz := clock_timestamp(); begin
   perform from public.profiles where id = '$uid' for update;
   loop
     perform pg_stat_clear_snapshot();  -- sinon pg_stat_activity reste figé pour toute la transaction
     n := (select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query like '%discard%');
     m := greatest(m, n);
-    exit when n >= 50 or clock_timestamp() > t + interval '1 second';
+    if t is null and n > 0 then t := clock_timestamp(); end if;
+    exit when n >= 50 or clock_timestamp() > t + interval '1 second' or clock_timestamp() > t1 + interval '5 seconds';
     perform pg_sleep(0.05);
   end loop;
   perform set_config('wm_test.max_waiters', m::text, true);
