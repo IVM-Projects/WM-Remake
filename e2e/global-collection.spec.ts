@@ -10,16 +10,12 @@ const grid = (page: Page) => page.locator('main div.flex.flex-wrap.justify-cente
 const cards = (page: Page) => grid(page).locator('> div[class*="glow-"]')
 const opener = (page: Page, name: string) => cards(page).getByRole('button', { name, exact: true })
 const isCardsApi = (u: string) => new URL(u).pathname === '/api/cards'
-// Retient les lectures de /api/cards jusqu'à release() ; la route est retirée ensuite (unroute compare le prédicat par référence).
+// Retient les lectures de /api/cards jusqu'à release() ; la route reste ensuite (fallback) : un unroute enverrait Fetch.disable (routeOnce).
 async function hold(page: Page): Promise<() => Promise<void>> {
   let release!: () => void
   const gate = new Promise<void>((r) => { release = r })
-  const match = (u: URL) => isCardsApi(u.href)
-  await page.route(match, async (route) => { await gate; await route.fallback() })
-  return async () => {
-    release()
-    await page.unroute(match)
-  }
+  await page.route((u) => isCardsApi(u.href), async (route) => { await gate; await route.fallback() })
+  return async () => release()
 }
 
 test('catalogue : en-tête, totaux par rareté, grille sans marqueur de possession, tri, recherche', async ({ page, login }) => {

@@ -14,7 +14,7 @@ import { Loading } from '@/components/ui/Loading'
 import { Pagination } from '@/components/ui/Pagination'
 import { WCoin } from '@/components/ui/WCoin'
 import { api } from '@/lib/api'
-import { formatInt } from '@/lib/format'
+import { formatInt, wikibidous } from '@/lib/format'
 import type { RarityCode } from '@/lib/rarity'
 import { CollectionQuery, Rarity } from '@/lib/schemas'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -81,7 +81,7 @@ export function CollectionClient() {
             ) : (
               <>
                 {formatInt(balance)}
-                <span className="sr-only"> wikibidous</span>
+                <span className="sr-only"> {wikibidous(balance)}</span>
               </>
             )}
           </p>
@@ -137,6 +137,8 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
   const dirty = useRef(false)
   // Rang de la tuile de la modale fermée : si la relecture la retire, le focus va à la suivante, jamais sur body.
   const refocus = useRef<number | null>(null)
+  // Vente à l'issue inconnue : rang de la copie dans la grille de cette adresse, pour que le focus aille à sa voisine si la relecture la retire.
+  const maybeSold = useRef<{ id: string; query: string; rank: number } | null>(null)
   const grid = useRef<HTMLDivElement>(null)
   const empty = useRef<HTMLDivElement>(null)
   const retry = useRef<HTMLButtonElement>(null)
@@ -240,12 +242,19 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
     }
   }
 
+  // Rang de la copie dans la grille ; grille périmée ou en échec : la place de la copie dans la grille de l'adresse est inconnue,
+  // sauf celle gardée par une vente à l'issue inconnue de cette copie à cette adresse (la relecture a pu la retirer).
+  function rankOf(id: string | undefined) {
+    const i = stale ? -1 : items.findIndex((x) => x.id === id)
+    const m = maybeSold.current
+    return i < 0 && m && m.id === id && m.query === query ? m.rank : i
+  }
+
   function closeModal() {
-    // Grille périmée ou en échec : la place de la copie dans la grille de l'adresse est inconnue.
-    const i = stale ? -1 : items.findIndex((x) => x.id === open?.id)
     // Toujours : l'effet ne bouge le focus que s'il est tombé sur body (tuile d'origine démontée, grille relue ou en échec) ;
     // il va alors à la tuile de même rang (le nouveau nœud de la copie si elle est revenue), sinon à la première.
-    refocus.current = Math.max(0, i)
+    refocus.current = Math.max(0, rankOf(open?.id))
+    maybeSold.current = null
     if (dirty.current) {
       dirty.current = false
       refresh()
@@ -432,6 +441,23 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
             setOpen((o) => (o === open ? null : o))
           }}
           onChanged={(change) => onChanged(open.id, change)}
+          // Partie au séquestre : la grille gardée par Activity ne doit plus la montrer au retour (P20). Vente finie après la fermeture :
+          // jamais une modale ouverte depuis, et si sa tuile disparaît sous le focus, la suivante le prend (comme la défausse).
+          onListed={() => {
+            refocus.current = Math.max(0, rankOf(open.id))
+            refresh()
+            setOpen((o) => (o === open ? null : o))
+          }}
+          // Vente à l'issue inconnue : la grille se relit derrière la modale, qui reste ouverte pour la relance. Rang gardé pour la fermeture,
+          // et posé dès maintenant si la modale est déjà fermée (la tuile peut disparaître sous le focus) ; un rang inconnu garde le précédent.
+          onUnsure={() => {
+            const rank = rankOf(open.id)
+            if (rank >= 0) {
+              maybeSold.current = { id: open.id, query, rank }
+              refocus.current = rank
+            }
+            refresh()
+          }}
         />
       )}
     </>

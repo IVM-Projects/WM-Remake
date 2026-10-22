@@ -168,3 +168,22 @@ describe('paramètres et catalogue', () => {
     expect(contrast(resolve('--color-accent'), resolve('--color-background'))).toBeGreaterThanOrEqual(4.5)
   })
 })
+
+// /marketplace : onglet actif (amber-600, sur la page) ; tuiles card-frame, au repos (surface) et survolées (surface claire).
+describe('page du marché', () => {
+  it('onglet actif, amber-600 sur la page ≥ 4,5:1', () => expect(contrast('#e17100', resolve('--color-background'))).toBeGreaterThanOrEqual(4.5))
+  it.each(['--color-surface', '--color-surface-light'].flatMap((bg) => [
+    ['compte à rebours, amber-600', bg, '#e17100'],
+    ['libellés, /70', bg, fg(0.7, bg)],
+    ['« Possédée », « En tête », « Gagnée », émeraude clair', bg, '--color-accent-light'],
+    ['« Surenchéri », red-300', bg, '#ffa2a2'],
+  ]))('%s, sur %s ≥ 4,5:1', (_label, bg, c) => expect(contrast(resolve(c), resolve(bg))).toBeGreaterThanOrEqual(4.5))
+})
+
+// /marketplace/[auctionId] : états et lien posés sur la page (graphite), hors des panneaux.
+describe('détail d\'une enchère', () => {
+  it.each([
+    ['« En tête », « Remportée », « Retour au marché », émeraude clair', resolve('--color-accent-light')],
+    ['« Invendue », /70', fg(0.7, '--color-background')],
+  ])('%s sur la page ≥ 4,5:1', (_label, c) => expect(contrast(c, resolve('--color-background'))).toBeGreaterThanOrEqual(4.5))
+})

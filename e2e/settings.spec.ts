@@ -94,25 +94,27 @@ test('préférences : images sensibles, sons et profil public enregistrés', asy
 
 test('préférences : un enregistrement refusé revient en arrière, une lecture en échec se réessaie', async ({ page, login }) => {
   await login()
-  await page.route('**/api/settings/preferences', (route) => (route.request().method() === 'GET' ? route.abort() : route.fallback()))
+  // Routes désarmées par phase, jamais retirées : un unroute enverrait Fetch.disable (routeOnce).
+  let phase = 1
+  await page.route('**/api/settings/preferences', (route) => (phase === 1 && route.request().method() === 'GET' ? route.abort() : route.fallback()))
   await page.goto('/settings')
   const section = page.locator('section', { has: page.getByRole('heading', { name: 'Préférences' }) })
   await expect(section.getByRole('alert')).toHaveText('Tes préférences n\'ont pas pu être chargées.')
-  await page.unroute('**/api/settings/preferences')
+  phase = 2
   await section.getByRole('button', { name: 'Réessayer' }).click()
   const sounds = page.getByRole('checkbox', { name: 'Sons', exact: true })
   await expect(sounds).toBeChecked()
   await expect(page.getByRole('heading', { name: 'Préférences', exact: true })).toBeFocused()
 
   // 200, mais le serveur garde l'autre valeur : pas de « Préférence enregistrée. », la case revient, l'erreur est dite.
-  await page.route('**/api/settings/preferences', (route) => (route.request().method() === 'POST'
+  await page.route('**/api/settings/preferences', (route) => (phase === 2 && route.request().method() === 'POST'
     ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sounds: true, hide_sensitive: true, is_public: true }) })
     : route.fallback()))
   await sounds.click()
   await expect(section.getByRole('alert')).toHaveText('Ta préférence n\'a pas pu être enregistrée.')
   await expect(sounds).toBeChecked()
   await expect(section.getByRole('status')).toHaveText('')
-  await page.unroute('**/api/settings/preferences')
+  phase = 3
 
   await page.route('**/api/settings/preferences', (route) =>
     route.request().method() === 'POST' ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }) : route.fallback())

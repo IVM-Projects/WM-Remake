@@ -46,7 +46,7 @@ export const cards: RouteSpec = {
       },
     },
     {
-      name: 'q=a → 400 « La recherche demande au moins 2 caractères »',
+      name: 'q=a → 400 « La recherche demande au moins 2 caractères » ; q=%00ab → 400 « Caractère invalide » (zod : un \\0 atteignant PG serait un 22P05, donc un 500)',
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl)
         // Deux lectures : la seconde sort du cache, qui garde le code et le détail du P0001 (P14).
@@ -54,6 +54,7 @@ export const cards: RouteSpec = {
           const body = await failed(await api(env, '/api/cards?q=a', { uid }), 400, 'invalid_request')
           assert.equal(body.error, 'La recherche demande au moins 2 caractères')
         }
+        assert.equal((await failed(await api(env, '/api/cards?q=%00ab', { uid }), 400, 'invalid_request')).error, 'Caractère invalide')
       },
     },
     {

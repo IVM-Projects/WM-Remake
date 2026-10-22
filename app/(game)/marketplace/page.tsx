@@ -1,10 +1,15 @@
 import type { Metadata } from 'next'
 import { navEntry } from '@/components/shell/nav'
-import { ComingSoon } from '@/components/shell/PageHeader'
+import { MarketClient } from './market-client'
 
 const entry = navEntry('/marketplace')
 export const metadata: Metadata = { title: entry.title }
 
+// Coquille statique ; les enchères se lisent au client (/api/marketplace), comme le catalogue (M3-3).
 export default function MarketplacePage() {
-  return <ComingSoon entry={entry} />
+  return (
+    <div className="flex-1 p-4 md:p-6 space-y-6">
+      <MarketClient />
+    </div>
+  )
 }

@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, sql, test } from './fixtures'
+import { expect, routeOnce, sql, test } from './fixtures'
 
 const RARITY_LABEL = '(Légendaire|Ultra rare|Super rare|Rare|Peu commune|Commune)'
 
@@ -189,13 +189,13 @@ test('une relecture du stock partie avant l\'ouverture n\'écrase pas le stock q
   const read = new Promise<void>((r) => { fetched = r })
   let delivered = () => {}
   const served = new Promise<void>((r) => { delivered = r })
-  await page.route('**/rest/v1/rpc/sync_profile_packs', async (route) => {
+  await routeOnce(page, '**/rest/v1/rpc/sync_profile_packs', async (route) => {
     const res = await route.fetch()
     fetched()
     await held
     await route.fulfill({ response: res })
     delivered()
-  }, { times: 1 })
+  })
   await page.locator('nav a[href="/collection"]').first().click()
   await expect(page).toHaveURL('/collection')
   await page.locator('nav a[href="/pulls"]').first().click()
@@ -213,7 +213,7 @@ test('une relecture du stock partie avant l\'ouverture n\'écrase pas le stock q
 // Le retour sur la page gardée par Activity relit le stock ; cette relecture-là échoue (une fois).
 async function failNextRead(page: Page) {
   await expect(stockFrame(page)).toContainText('1 / 10')
-  await page.route('**/rest/v1/rpc/sync_profile_packs', (route) => route.abort(), { times: 1 })
+  await routeOnce(page, '**/rest/v1/rpc/sync_profile_packs', (route) => route.abort())
   await page.locator('nav a[href="/collection"]').first().click()
   await expect(page).toHaveURL('/collection')
   await page.locator('nav a[href="/pulls"]').first().click()
@@ -252,12 +252,12 @@ test('Pro du jour récupéré avant la toute première lecture du stock : le sto
   const held = new Promise<void>((r) => { release = r })
   let delivered = () => {}
   const served = new Promise<void>((r) => { delivered = r })
-  await page.route('**/rest/v1/rpc/sync_profile_packs', async (route) => {
+  await routeOnce(page, '**/rest/v1/rpc/sync_profile_packs', async (route) => {
     const res = await route.fetch()
     await held
     await route.fulfill({ response: res })
     delivered()
-  }, { times: 1 })
+  })
   await page.goto('/pulls')
   await page.getByRole('region', { name: 'Paquet PRO du jour' }).getByRole('button', { name: 'Récupérer' }).click()
   await expect(counter(page, 1, 15)).toBeVisible()
@@ -344,10 +344,10 @@ test('réponse perdue après l\'ouverture (504) : message français, stock relu,
   const keys: string[] = []
   page.on('request', (r) => { if (r.url().endsWith('/api/packs/open')) keys.push(r.headers()['idempotency-key'] ?? '') })
   // L'ouverture atteint le serveur et s'y fait ; sa réponse est remplacée par la page d'erreur de la plateforme.
-  await page.route('**/api/packs/open', async (route) => {
+  await routeOnce(page, '**/api/packs/open', async (route) => {
     await route.fetch()
     await route.fulfill(PLATFORM_504)
-  }, { times: 1 })
+  })
   await page.goto('/pulls')
   await expect(stockFrame(page)).toContainText('3 / 10')
   await openButton(page).click()
@@ -381,10 +381,10 @@ test('stock vidé ailleurs : « Ouvrir » refusé (0 paquet) garde le focus dans
 test('dernier paquet ouvert, réponse perdue (504) : stock relu à 0, le focus passe à la zone de repos, le message est annoncé', async ({ page, login }) => {
   await login({ humanVerified: true })
   // L'ouverture du dernier paquet se fait côté serveur ; sa réponse est remplacée par la page d'erreur de la plateforme.
-  await page.route('**/api/packs/open', async (route) => {
+  await routeOnce(page, '**/api/packs/open', async (route) => {
     await route.fetch()
     await route.fulfill(PLATFORM_504)
-  }, { times: 1 })
+  })
   await page.goto('/pulls')
   await expect(stockFrame(page)).toContainText('1 / 10')
   await openButton(page).focus()

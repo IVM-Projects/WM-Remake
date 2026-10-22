@@ -3,6 +3,7 @@
 # stub Supabase, schéma auth de GoTrue, migrations, helpers, puis supabase/tests/*.test.{sql,sh}.
 # --setup-only : applique aussi supabase/seed.sql s'il existe, imprime une seule ligne DATABASE_URL=… et laisse la base en place.
 # --stop : arrête et supprime le cluster local laissé par --setup-only (rien à faire avec $DATABASE_URL).
+# PG_FSYNC=on : cluster local avec fsync (benchs de load/bench, P14) ; off par défaut.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +33,7 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   as_pg "$pgbin/initdb" -D "$dir" -U postgres --pwfile="$dir.pw" --auth=scram-sha-256 -E UTF8 --locale=C.UTF-8 -N >/dev/null
   rm "$dir.pw"
   as_pg "$pgbin/pg_ctl" -D "$dir" -l "$dir/log" -w \
-    -o "-p 54329 -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=off" start >/dev/null
+    -o "-p 54329 -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=${PG_FSYNC:-off}" start >/dev/null
   DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54329/postgres
 fi
 
@@ -49,9 +50,10 @@ run -f "$tests/bootstrap_local.sql" >/dev/null
 (cd "$root/.cache/gotrue" && GOTRUE_DB_DRIVER=postgres DATABASE_URL="$(sed -E 's#^([a-z]+://)([^@/]*@)?#\1supabase_auth_admin:auth@#' <<<"$url")" \
   GOTRUE_JWT_SECRET=banc-de-test-secret-hs256-inutilise-32c API_EXTERNAL_URL=http://127.0.0.1:54321/auth/v1 \
   GOTRUE_SITE_URL=http://127.0.0.1:3100 GOTRUE_LOG_LEVEL=warn ./auth migrate >/dev/null)
-cron="$(run -Atc "select exists (select from pg_available_extensions where name = 'pg_cron')")"
+# pg_cron n'est utilisable que préchargé (M3-1) : sinon les migrations 9xxx (cron) sont sautées, comme sur le banc et la CI (P12).
+cron="$(run -Atc "select current_setting('shared_preload_libraries') ~ 'pg_cron'")"
 for f in "$root"/supabase/migrations/*.sql; do
-  [[ $cron == f && ${f##*/} == 9000_* ]] && continue
+  [[ $cron == f && ${f##*/} == 9[0-9][0-9][0-9]_* ]] && continue
   run -f "$f" >/dev/null
 done
 run -f "$tests/helpers.sql" >/dev/null

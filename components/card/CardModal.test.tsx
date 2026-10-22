@@ -5,6 +5,12 @@ import { ImageCredit } from './ImageCredit'
 
 // Sans DOM (R18) : balisage initial seulement ; Échap, défausse et retrait d'étiquette sont couverts en e2e (Task 14).
 vi.mock('@/lib/prefs', () => ({ usePrefs: () => ({ sounds: true, hideSensitive: true, ready: true }) }))
+// Onglet de départ : sans DOM, aucun clic ; « market » rend l'onglet Marché (seul useState('details') est touché).
+const start = vi.hoisted(() => ({ tab: 'details' }))
+vi.mock('react', async (orig) => {
+  const react = await orig<typeof import('react')>()
+  return { ...react, useState: ((init: unknown) => react.useState(init === 'details' ? start.tab : init)) as typeof react.useState }
+})
 
 const catalogue: CatalogCard = {
   id: 'c-1', wikipedia_title: 'Chat', rarity: 'L', category: 'Espèce de mammifère carnivore', atk: 8663, def: 6694,
@@ -79,8 +85,26 @@ describe('CardModal (R§6.5)', () => {
     expect(text).toContain('Texte de l\'article : CC BY-SA 4.0 — crédits sur la page Wikipédia.')
   })
 
-  test('pied : « Défausser », la pièce W et « +1 »', () => {
-    expect(h).toMatch(/<button type="button"[^>]*>Défausser.*?M7.5 8.5 9.5 15.5 12 10 14.5 15.5 16.5 8.5.*?\+1<\/button>/)
+  test('pied : « Mettre aux enchères » (accent doux, replié), puis « Défausser », la pièce W et « +1 »', () => {
+    const sell = h.match(/<button [^>]*>(?:(?!<\/button>).)*Mettre aux enchères<\/button>/)?.[0] ?? ''
+    expect(sell).toContain('aria-expanded="false"')
+    expect(sell).toContain('bg-[var(--color-accent)]/10 text-[var(--color-accent)]')
+    expect(h).toMatch(/Mettre aux enchères<\/button><button type="button"[^>]*>Défausser.*?M7.5 8.5 9.5 15.5 12 10 14.5 15.5 16.5 8.5.*?\+1<\/button>/)
+    // Boîte de vente fermée tant que le bouton n'est pas pressé.
+    expect(h).not.toContain('Mise de départ')
+  })
+
+  test('onglet « Marché » : le panneau du marché, plus « Arrive bientôt »', () => {
+    start.tab = 'market'
+    try {
+      for (const item of [owned, catalogue]) {
+        const t = textOf(html(<CardModal item={item} onClose={noop} />))
+        expect(t).toContain('VENTES RÉCENTES')
+        expect(t).not.toContain('Arrive bientôt')
+      }
+    } finally {
+      start.tab = 'details'
+    }
   })
 
   test('carte du catalogue : liste de souhaits à la place des étiquettes et de la défausse', () => {
@@ -89,6 +113,7 @@ describe('CardModal (R§6.5)', () => {
     expect(t).toContain('Ajouter à ma liste de souhaits')
     expect(t).not.toContain('ÉTIQUETTES')
     expect(t).not.toContain('Défausser')
+    expect(t).not.toContain('Mettre aux enchères')
     expect(t).not.toContain('Exemplaires')
     expect(c).toContain('glow-l')
     expect(t).toContain('Q-Score : 51.24')
