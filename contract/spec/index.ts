@@ -11,7 +11,8 @@ import { health } from './health.ts'
 import { marketReads, marketWrites } from './market.ts'
 import { packs } from './packs.ts'
 import { restSpecs } from './rest.ts'
+import { trades } from './trades.ts'
 import { wallet } from './wallet.ts'
 
 // Une entrée par route ; recap-coverage.ts compte les routes du recap couvertes ici.
-export const specs: RouteSpec[] = [health, gate, auth, ...packs, wallet, ...collection, cards, credits, cron, ...accounts, ...restSpecs, ...marketWrites, ...marketReads, ...friends]
+export const specs: RouteSpec[] = [health, gate, auth, ...packs, wallet, ...collection, cards, credits, cron, ...accounts, ...restSpecs, ...marketWrites, ...marketReads, ...friends, ...trades]
