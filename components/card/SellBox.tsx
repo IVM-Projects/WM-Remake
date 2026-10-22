@@ -89,8 +89,9 @@ export function SellBox({ copy, onListed, onUnsure, onBusy }: Props) {
       if (body?.code === 'human_verification_required' && !token) setVerify({ base, duration })
       const maybe = sent && unsure(e)
       const message = userMessage(e, maybe ? UNSURE : 'La carte n\'a pas pu être mise aux enchères.')
-      if (mounted.current) setError(message)
-      else toast(message)
+      // Toujours dans la boîte : cachée par Activity (effets nettoyés), elle est encore là au retour ; démontée, setError est sans effet.
+      setError(message)
+      if (!mounted.current) toast(message)
       if (maybe) onUnsure?.()
     } finally {
       inflight.current = false

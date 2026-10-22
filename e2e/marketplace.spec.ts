@@ -528,14 +528,16 @@ const busyReply = { status: 503, headers: { 'Retry-After': '1' }, json: { status
 // Tuiles de /collection (sans le rôle : la modale ouverte peut sortir la page de l'arbre d'accessibilité) et leur bouton d'ouverture.
 const gridTiles = (page: Page) => page.locator('div.flex.flex-wrap.justify-center.gap-3 > div.relative.isolate.group')
 const openerOf = (page: Page, t: string) => page.locator(`h3 > button[aria-label="${t}"]`)
-// Première vente retenue jusqu'à release(), puis passée au serveur ou remplacée par `reply`.
-async function holdSale(page: Page, reply?: Parameters<Route['fulfill']>[0]) {
+// Première vente retenue jusqu'à release(), puis passée au serveur, remplacée par `reply`, ou validée avec sa réponse perdue ('lost').
+async function holdSale(page: Page, reply?: Parameters<Route['fulfill']>[0] | 'lost') {
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
   await page.route('**/api/marketplace', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     await held
-    return reply ? route.fulfill(reply) : route.fallback()
+    if (reply !== 'lost') return reply ? route.fulfill(reply) : route.fallback()
+    await route.fetch()
+    return route.abort()
   }, { times: 1 })
   return () => release()
 }
@@ -767,6 +769,53 @@ test('issue inconnue de la vente d\'une copie unique : grille relue sous la moda
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(openerOf(page, names[2])).toBeFocused()
+})
+
+test('modale fermée pendant une vente d\'issue inconnue (copie unique) : toast, grille relue, le focus va à la voisine, jamais à body', async ({ page, login }) => {
+  const me = await login({ humanVerified: true })
+  trash.uids.push(me.uid)
+  for (let i = 0; i < 3; i++) copyOf(me.uid)
+  const release = await holdSale(page, 'lost')
+  await page.goto('/collection')
+  const openers = page.locator('h3 > button[aria-label]')
+  await expect(openers).toHaveCount(3)
+  const names = await openers.evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')!))
+  await openers.nth(1).click()
+  const dialog = page.getByRole('dialog', { name: names[1] })
+  await dialog.getByRole('button', { name: 'Mettre aux enchères' }).click()
+  const sent = page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/marketplace')
+  await dialog.getByRole('button', { name: 'Lancer l\'enchère' }).click()
+  await sent
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(openerOf(page, names[1])).toBeFocused()
+  const reread = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/my-collection')
+  release()
+  await expect(toastText(page, UNSURE_SALE)).toBeVisible()
+  expect((await reread).ok()).toBe(true)
+  await expect(openers).toHaveCount(2)
+  await expect(openerOf(page, names[2])).toBeFocused()
+})
+
+test('/collection cachée par Activity pendant la vente : refus BUSY en toast, et au retour la boîte le montre encore', async ({ page, login }) => {
+  const me = await login({ humanVerified: true })
+  trash.uids.push(me.uid)
+  const { t } = copyOf(me.uid)
+  const release = await holdSale(page, busyReply)
+  const dialog = await openCopy(page, t)
+  await dialog.getByRole('button', { name: 'Mettre aux enchères' }).click()
+  const sent = page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/marketplace')
+  await dialog.getByRole('button', { name: 'Lancer l\'enchère' }).click()
+  await sent
+  // Le voile de la modale couvre la barre latérale : le clic est remis au lien lui-même (navigation du routeur, page gardée par Activity).
+  await page.locator('nav a[href="/pulls"]').first().dispatchEvent('click')
+  await expect(page).toHaveURL('/pulls')
+  release()
+  await expect(toastText(page, BUSY)).toBeVisible()
+  await page.goBack()
+  await expect(page).toHaveURL('/collection')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('alert')).toHaveText(BUSY)
 })
 
 test('boîte de vente : « Marché · Rare : 12 wikibidous », moyenne arrondie des ventes de la carte en R (11 et 12)', async ({ page, login }) => {
