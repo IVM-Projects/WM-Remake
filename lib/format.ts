@@ -16,3 +16,7 @@ export function formatRemaining(ms: number): string {
   const two = (n: number) => String(n).padStart(2, '0')
   return h ? `${h}h ${two(m)}m ${two(sec)}s` : m ? `${m}m ${two(sec)}s` : `${sec}s`
 }
+
+// Date et heure fr-FR, à la seconde (historique des mises, ventes) : « 21/10/2026 14:03:12 », heure locale du joueur.
+const when = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'short', timeStyle: 'medium' })
+export const formatDateTime = (iso: string): string => when.format(new Date(iso))

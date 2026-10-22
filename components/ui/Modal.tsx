@@ -5,11 +5,12 @@ import { createPortal } from 'react-dom'
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]'
 
-type Props = { onClose: () => void; labelledBy: string; className: string; children: ReactNode }
+// Nom de la boîte : labelledBy (id d'un titre), ou label quand la page n'a aucun id d'élément (détail d'une enchère, M3-2).
+type Props = { onClose: () => void; labelledBy?: string; label?: string; className: string; children: ReactNode }
 
 // Portail div.fixed.inset-0 de l'original (R§6.3), mais en role="dialog" avec piège de focus et Échap (D§8.6).
 // Le panneau (className) est l'élément dialog : c'est lui qui porte card-frame dans la modale de carte.
-export function Modal({ onClose, labelledBy, className, children }: Props) {
+export function Modal({ onClose, labelledBy, label, className, children }: Props) {
   const panel = useRef<HTMLDivElement>(null)
   const downOnBackdrop = useRef(false)
   // Une fois par montage : réaffichée par Activity, la modale ne prend pas pour ouvreur le lien de navigation cliqué entre-temps.
@@ -68,6 +69,7 @@ export function Modal({ onClose, labelledBy, className, children }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}
+        aria-label={label}
         tabIndex={-1}
         onBlur={onBlur}
         className={`${className} outline-none`}

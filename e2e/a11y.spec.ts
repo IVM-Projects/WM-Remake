@@ -156,6 +156,28 @@ delete from public.cards where id = :'card'`, { uid, s: seller.uid, card })
   }
 })
 
+test('axe /marketplace/<id> : détail d\'une enchère créée par sql, avec une mise', async ({ page, login }) => {
+  const { uid } = await login()
+  const seller = makePlayer({ humanVerified: true })
+  const bidder = makePlayer({ balance: 100, humanVerified: true })
+  const t = `Zz marché e2e ${randomUUID().slice(-12)}`
+  const card = sql(`insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, category, summary)
+values (:'t', 'https://fr.wikipedia.org/wiki/' || replace(:'t', ' ', '_'), 'SR', 100, 100, 'Essai', 'Résumé') returning id`, { t })
+  try {
+    const id = sql(`select from wm.grant_copy(:'s', :'card', true) \\g /dev/null
+select wm.create_auction(:'s', :'card', 10, 60) ->> 'id' as id \\gset
+select from wm.place_bid(:'b', :'id', 10) \\g /dev/null
+\\echo :id`, { s: seller.uid, b: bidder.uid, card })
+    await page.goto(`/marketplace/${id}`)
+    await expect(page.locator('main h1')).toHaveText(t)
+    await expect(page.getByRole('list', { name: 'Historique des mises' }).getByRole('listitem')).toHaveCount(1)
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'uid', :'s', :'b');
+delete from public.cards where id = :'card'`, { uid, s: seller.uid, b: bidder.uid, card })
+  }
+})
+
 test('axe /settings : erreurs affichées (pseudo pris, mots de passe différents)', async ({ page, login }) => {
   await login()
   const { username } = makePlayer()

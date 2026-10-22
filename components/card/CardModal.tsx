@@ -10,6 +10,7 @@ import { formatInt } from '@/lib/format'
 import { usePrefs } from '@/lib/prefs'
 import { rarityOf, type RarityCode } from '@/lib/rarity'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
+import { readWished, saveWished } from '@/lib/wishlist'
 import { Card, showsImage, type CardFace } from './Card'
 import { ImageCredit, type Credit } from './ImageCredit'
 import { TagPicker, type Tag } from './TagPicker'
@@ -104,10 +105,10 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
     }
     if (!isOwned) {
       // Lecture en échec : dit, et l'état reste inconnu (« Ajouter » reste sûr, un doublon revient en 23505).
-      void sb.from('wishlist_items').select('card_id').eq('card_id', card.id).maybeSingle().then(({ data, error }) => {
+      void readWished(card.id).then((w) => {
         if (!live) return
-        if (error) setError('Ta liste de souhaits n\'a pas pu être lue.')
-        else setWished(!!data)
+        if (w === null) setError('Ta liste de souhaits n\'a pas pu être lue.')
+        else setWished(w)
       })
     }
     return () => { live = false }
@@ -138,17 +139,11 @@ export function CardModal({ item, onClose, onDiscarded, onChanged }: Props) {
 
   async function toggleWish() {
     if (busy) return
-    const sb = createBrowserSupabase()
     setBusy(true)
     setError(null)
-    const { data: auth } = await sb.auth.getSession()
-    // select : une écriture que la RLS écarte ne renvoie aucune ligne, ce n'est pas un succès.
-    const { data: rows, error } = wished
-      ? await sb.from('wishlist_items').delete().eq('card_id', card.id).select('card_id')
-      : await sb.from('wishlist_items').insert({ user_id: auth.session?.user.id, card_id: card.id }).select('card_id')
+    const ok = await saveWished(card.id, !wished)
     setBusy(false)
-    // 23505 : déjà dans la liste (autre onglet), l'état voulu est atteint.
-    if (error?.code !== '23505' && (error || !rows?.length)) return setError('La liste de souhaits n\'a pas pu être mise à jour.')
+    if (!ok) return setError('La liste de souhaits n\'a pas pu être mise à jour.')
     setWished(!wished)
     onChanged?.({ wishlisted: !wished })
   }

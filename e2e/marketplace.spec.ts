@@ -201,3 +201,225 @@ returning id`, { me: me.uid, seller: seller.uid, card }).split('\n')
   await expect(tile(page, cancelled).locator('time')).toHaveText('Terminée')
   await expect(tile(page, unsold).locator('time')).toHaveText('Terminée')
 })
+
+// Détail (Task 12) : une enchère d'une carte neuve, base 10, 1 h, mise en vente par `seller` (vérifié : M3-13).
+function sellOne(seller: string, t = title()): { card: string; id: string } {
+  const card = cardOf(t)
+  const id = sql(`select from wm.grant_copy(:'s', :'card', false) \\g /dev/null
+select wm.create_auction(:'s', :'card', 10, 60) ->> 'id'`, { s: seller, card })
+  return { card, id }
+}
+const toastOf = (page: Page, text: string) => page.getByRole('status').filter({ hasText: text })
+const amountField = (page: Page) => page.getByRole('spinbutton', { name: 'Montant de la mise' })
+const priceRow = (page: Page) => page.locator('main p').filter({ hasText: /^(Mise actuelle|Mise de départ)/ })
+const side = (l: ReturnType<Page['locator']>) => l.evaluate((e) => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height))
+
+test('détail : h1, mise préremplie à 10, « Miser » → toast, « Mise actuelle » 10, « En tête », pseudo dans l\'historique ; liste de souhaits ; cibles', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  const seller = makePlayer({ humanVerified: true })
+  trash.uids.push(me.uid, seller.uid)
+  const t = title()
+  const { id } = sellOne(seller.uid, t)
+  await page.goto(`/marketplace/${id}`)
+  await expect(page.locator('main h1')).toHaveText(t)
+  // M3-2 : la page de détail ne rend aucune tuile du contrat (une page /marketplace gardée par Activity resterait dans le document),
+  // ni aucun id d'élément (aria-label et data-* seulement).
+  await expect(page.locator('main').filter({ visible: true }).locator('[id^="marketplace-auction-"]')).toHaveCount(0)
+  await expect(page.locator('main [id]')).toHaveCount(0)
+  await expect(page.getByText(`Vendu par ${seller.username}`, { exact: true })).toBeVisible()
+  await expect(priceRow(page)).toHaveText(/^Mise de départ\s*10\b/)
+  await expect(amountField(page)).toHaveValue('10')
+  const bid = page.getByRole('button', { name: 'Miser' })
+  expect(await side(bid)).toBeGreaterThanOrEqual(44)
+  expect(await side(amountField(page))).toBeGreaterThanOrEqual(44)
+
+  await bid.click()
+  await expect(toastOf(page, 'Mise de 10 wikibidous placée.')).toBeVisible()
+  await expect(priceRow(page)).toHaveText(/^Mise actuelle\s*10\b/)
+  await expect(page.locator('main').getByText('En tête', { exact: true })).toBeVisible()
+  // Le champ reprend le minimum suivant de la réponse : max(ceil(10 × 1,1), 11).
+  await expect(amountField(page)).toHaveValue('11')
+  await expect(page.getByRole('list', { name: 'Historique des mises' }).getByRole('listitem'))
+    .toHaveText([new RegExp(`^${me.username} · 10 wikibidous · `)])
+
+  const add = page.getByRole('button', { name: 'Ajouter à ma liste de souhaits' })
+  await expect(add).toHaveAttribute('aria-pressed', 'false')
+  expect(await side(add)).toBeGreaterThanOrEqual(44)
+  await add.click()
+  const remove = page.getByRole('button', { name: 'Retirer de ma liste de souhaits' })
+  await expect(remove).toHaveAttribute('aria-pressed', 'true')
+  await page.reload()
+  await expect(remove).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('mise trop basse : un autre joueur a misé 10 entre-temps → « Mise trop basse (minimum 11 wikibidous) », le champ prend 11', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  const seller = makePlayer({ humanVerified: true })
+  const other = makePlayer({ balance: 100, humanVerified: true })
+  trash.uids.push(me.uid, seller.uid, other.uid)
+  const { id } = sellOne(seller.uid)
+  await page.goto(`/marketplace/${id}`)
+  await amountField(page).fill('10')
+  sql(`select from wm.place_bid(:'o', :'id', 10) \\g /dev/null`, { o: other.uid, id })
+  await page.getByRole('button', { name: 'Miser' }).click()
+  await expect(page.locator('main').getByRole('alert')).toHaveText('Mise trop basse (minimum 11 wikibidous)')
+  await expect(amountField(page)).toHaveValue('11')
+})
+
+test('clavier : focus sur « Montant de la mise », saisie, Entrée → mise placée, sans souris', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  const seller = makePlayer({ humanVerified: true })
+  trash.uids.push(me.uid, seller.uid)
+  const { id } = sellOne(seller.uid)
+  await page.goto(`/marketplace/${id}`)
+  await amountField(page).focus()
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.type('12')
+  await page.keyboard.press('Enter')
+  await expect(toastOf(page, 'Mise de 12 wikibidous placée.')).toBeVisible()
+  await expect(priceRow(page)).toHaveText(/^Mise actuelle\s*12\b/)
+})
+
+test('joueur non vérifié : « Miser » → 403 → /api/human-check → une seule relance, clé neuve (P27) → toast', async ({ page, login }) => {
+  const me = await login({ balance: 100 })
+  const seller = makePlayer({ humanVerified: true })
+  trash.uids.push(me.uid, seller.uid)
+  const { id } = sellOne(seller.uid)
+  await page.goto(`/marketplace/${id}`)
+  const seen: string[] = []
+  const keys: string[] = []
+  page.on('request', (r) => {
+    const path = new URL(r.url()).pathname
+    if (path !== `/api/marketplace/${id}/bid` && path !== '/api/human-check') return
+    seen.push(`${r.method()} ${path}`)
+    if (path.endsWith('/bid')) keys.push(r.headers()['idempotency-key'])
+  })
+  await page.getByRole('button', { name: 'Miser' }).click()
+  await expect(toastOf(page, 'Mise de 10 wikibidous placée.')).toBeVisible()
+  expect(seen).toEqual([`POST /api/marketplace/${id}/bid`, 'POST /api/human-check', `POST /api/marketplace/${id}/bid`])
+  expect(keys[0]).toBeTruthy()
+  expect(keys[1]).not.toBe(keys[0])
+})
+
+test('vendeur sans mise : pas de champ de mise ni de baisse avant la moitié ; « Retirer » → toast, puis /marketplace', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  trash.uids.push(me.uid)
+  const { id } = sellOne(me.uid)
+  await page.goto(`/marketplace/${id}`)
+  const cancel = page.getByRole('button', { name: 'Retirer', exact: true })
+  await expect(cancel).toBeVisible()
+  await expect(amountField(page)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Baisser le prix' })).toHaveCount(0)
+  await cancel.click()
+  await expect(toastOf(page, 'Enchère retirée : la carte est revenue dans ta collection.')).toBeVisible()
+  await expect(page).toHaveURL(/\/marketplace$/)
+})
+
+test('vendeur, moitié de la durée passée : « Baisser le prix », « Nouveau prix » 5, « Valider » → « Prix baissé à 5 wikibidous »', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  trash.uids.push(me.uid)
+  const { id } = sellOne(me.uid)
+  // L'UI compte la moitié sur end_at − created_at ; le serveur sur la durée du séquestre (60 min) : 31 min passées pour les deux.
+  sql(`update public.auctions set created_at = created_at - interval '31 minutes', end_at = end_at - interval '31 minutes' where id = :'id'`, { id })
+  await page.goto(`/marketplace/${id}`)
+  await page.getByRole('button', { name: 'Baisser le prix' }).click()
+  const price = page.getByRole('spinbutton', { name: 'Nouveau prix' })
+  await expect(price).toHaveValue('5')
+  await page.getByRole('button', { name: 'Valider' }).click()
+  await expect(toastOf(page, 'Prix baissé à 5 wikibidous')).toBeVisible()
+  await expect(priceRow(page)).toHaveText(/^Mise de départ\s*5\b/)
+  await expect(page.getByRole('button', { name: 'Baisser le prix' })).toHaveCount(0)
+  // Le bouton pressé disparaît : le focus passe à « Retirer », jamais sur body.
+  await expect(page.getByRole('button', { name: 'Retirer', exact: true })).toBeFocused()
+})
+
+test('« Finaliser la vente » à l\'échéance, sans règlement paresseux : POST /settle → « Remportée »', async ({ page, login }) => {
+  const me = await login({ balance: 100, humanVerified: true })
+  const seller = makePlayer({ humanVerified: true })
+  trash.uids.push(me.uid, seller.uid)
+  const { id } = sellOne(seller.uid)
+  // end_at posé après la mise : sinon l'anti-snipe le repousserait de 60 s (M3-15).
+  sql(`select from wm.place_bid(:'me', :'id', 10) \\g /dev/null
+update public.auctions set end_at = now() + interval '4 seconds' where id = :'id'`, { me: me.uid, id })
+  // Toute lecture rejoue la première réponse : aucune ne règle par la voie paresseuse. Corps seul, sans l'en-tête Date d'origine,
+  // qui ferait reculer serverNow() à chaque relecture (lib/clock.ts, noteServerDate).
+  let first: Promise<unknown> | undefined
+  await page.route(`**/api/marketplace/${id}`, async (route) => {
+    first ??= route.fetch().then((r) => r.json())
+    await route.fulfill({ json: await first })
+  })
+  await page.goto(`/marketplace/${id}`)
+  await expect(page.locator('main').getByText('En tête', { exact: true })).toBeVisible()
+  const settle = page.getByRole('button', { name: 'Finaliser la vente' })
+  await expect(settle).toBeVisible({ timeout: 10_000 })
+  const settled = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/marketplace/${id}/settle`)
+  await settle.click()
+  expect((await settled).status()).toBe(200)
+  await expect(page.locator('main').getByText('Remportée', { exact: true })).toBeVisible()
+  await expect(page.getByText('Vendue pour 10 wikibidous', { exact: true })).toBeVisible()
+  await expect(settle).toHaveCount(0)
+})
+
+test('enchère inconnue → « Auction not found » et « Retour au marché »', async ({ page, login }) => {
+  trash.uids.push((await login()).uid)
+  await page.goto(`/marketplace/${randomUUID()}`)
+  await expect(page.getByText('Auction not found', { exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'Retour au marché' }).click()
+  await expect(page).toHaveURL(/\/marketplace$/)
+})
+
+test('« Analyse du marché » : résumé pour tous ; joueur gratuit → « Fonction réservée aux membres Pro » ; un Pro voit les ventes', async ({ page, login }) => {
+  const free = await login()
+  const seller = makePlayer({ humanVerified: true })
+  trash.uids.push(free.uid, seller.uid)
+  const { card, id } = sellOne(seller.uid)
+  // Une vente réglée posée à la main avant toute lecture du résumé (caché 60 s) : ni séquestre ni argent (M3-26).
+  sql(`insert into public.auctions (seller_id, card_id, user_card_id, snapshot_rarity, base_amount, listing_base_amount, current_bid,
+  current_bidder_id, bids_count, final_price, status, end_at, created_at, settled_at, winner_id)
+values (:'s', :'card', gen_random_uuid(), 'C', 10, 10, 12, :'w', 1, 12, 'settled_sold', now() - interval '1 hour', now() - interval '2 hours',
+  now() - interval '1 hour', :'w')`, { s: seller.uid, card, w: free.uid })
+  const open = async () => {
+    await page.goto(`/marketplace/${id}`)
+    await page.getByRole('button', { name: 'Analyse du marché' }).click()
+    return page.getByRole('dialog', { name: 'Analyse du marché' })
+  }
+  let dialog = await open()
+  await expect(dialog.getByText('Marché · Commune : 12 wikibidous (1 vente)', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Fonction réservée aux membres Pro', { exact: true })).toBeVisible()
+
+  trash.uids.push((await login({ pro: true })).uid)
+  dialog = await open()
+  await expect(dialog.getByRole('list', { name: 'Ventes récentes' }).getByRole('listitem')).toHaveText([/^Commune · 12 wikibidous · /])
+  await expect(dialog.getByText('Fonction réservée aux membres Pro', { exact: true })).toHaveCount(0)
+})
+
+test('liste affichée : aucun GET /api/marketplace/<id> avant le clic (le prefetch des tuiles ne charge que la coquille)', async ({ page, login }) => {
+  trash.uids.push((await login()).uid)
+  const seller = makePlayer({ humanVerified: true })
+  trash.uids.push(seller.uid)
+  const t = title()
+  const { id } = sellOne(seller.uid, t)
+  // Lectures du détail de toute enchère (les tuiles des autres workers aussi) ; prefetchs de toute tuile : la coquille est la même pour
+  // toutes les enchères, et une fois la route apprise d'une tuile, Next ne prefetch plus forcément l'adresse des suivantes.
+  const reads: string[] = []
+  let prefetches = 0
+  page.on('request', (r) => {
+    const path = new URL(r.url()).pathname
+    if (/^\/api\/marketplace\/[0-9a-f-]{36}$/.test(path)) reads.push(`${r.method()} ${path}`)
+    if (path.startsWith('/marketplace/') && r.headers()['next-router-prefetch']) prefetches++
+  })
+  await page.goto('/marketplace')
+  await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).fill(t)
+  await page.getByRole('searchbox', { name: 'Rechercher une enchère' }).press('Enter')
+  await expect(tile(page, id)).toBeVisible()
+  // Un prefetch de tuile est parti (production seulement), et aucun n'a lu ni réglé d'enchère.
+  await expect.poll(() => prefetches).toBeGreaterThan(0)
+  await page.waitForLoadState('networkidle')
+  expect(reads).toEqual([])
+  await tile(page, id).locator('a').click()
+  // Activity garde /marketplace cachée, avec son h1 : seul le visible compte.
+  await expect(page.locator('main h1').filter({ visible: true })).toHaveText(t)
+  expect(reads).toEqual([`GET /api/marketplace/${id}`])
+  // /marketplace gardée par Activity reste dans le document, cachée : aucune tuile visible dans main (M3-2).
+  await expect(page.locator('main [id^="marketplace-auction-"]').filter({ visible: true })).toHaveCount(0)
+})
