@@ -198,3 +198,31 @@ Secrets posés par l'utilisateur vers 13:00Z ; migrations et contrôles de la ba
 | Idempotence | empreinte des ids (`md5(string_agg(card_id \|\| ':' \|\| page_id, ',' order by page_id))` de `wm.card_source`) et empreinte d'état (`public.cards`, `wm.card_media`, `wm.draw_pool`) avant et après une relance de `catalog.yml` avec `artifacts_run_id` = 39615766155 (job `load` seul) | Run 39633657505, `load` en 1 min 40 s : `stage : 117112 lignes dont 0 nouvelles` ; `unchanged` 117 112, `inserted` 0, `updated` 0, `pool_out` 0 ; revalidation `{"revalidated":true}`. Empreintes identiques avant et après : ids `2da03c08ca81ef9ccf7947064e6d610b` ; état `24a002b9c5214fef1a3d5f282871ac1a 7ff5a7829c1ba8117aaf7a859e192a38 7b21af271c8e57444fa4d49df8732386`. `wm.check_invariants()` = `[]` ; base 185 487 221 o | 2026-10-21 |
 | χ² sur la démo (M2-11) | contenu de `supabase/tests/chi2.sql` et `select * from chi2` dans un seul `execute_sql`, sans `setseed` | 100 000 tirages : `chi2_rarity` 1,823 (5 ddl, seuil 20,515) ; `chi2_seq` 34,366 (19 ddl, seuil 43,82), α = 0,001 | 2026-10-21 |
 | Vérification visuelle (Step 7) | humain, derrière la porte : `/global-collection`, modale d'une carte avec image, `/credits` | À faire par l'humain (étape humaine 7 de `HANDOFF.md`). Côté données : `cards_page_shared` sur la démo rend de vraies cartes (parcours page 0 en 46,5 ms, total 117 112 ; page 1 000 en 5,1 ms ; recherche « paris » en 106,5 ms ; filtre L et UR en 5,5 ms, 611 cartes) | … |
+
+## M3 — Task 15 : benchs du marché en tables journalisées
+
+Bac à sable, 2026-10-22, branche `claude/clever-cannon-59x0dj` (sur cf60a99). **Chiffres indicatifs (A5) ; le M8 mesure sur Pro.**
+
+Méthode (M3-4, P14) :
+
+- PG 16.15 local (`postgres` et `pgbench` 16.15 d'Ubuntu), 4 vCPU, 15 Go, ext4 sur `/dev/vda` (`pg_test_fsync` : `fdatasync` ≈ 270 µs par écriture de 8 ko) ;
+- cluster de `PG_FSYNC=on bash scripts/db-test.sh --setup-only` : `fsync=on` et `synchronous_commit=on`, relevés par `run.sh`, qui refuse sinon ; vraies migrations, tables journalisées, seed de 2 000 cartes ;
+- `pgbench -n -c 50 -j 4 -T 30`, 50 joueurs au solde de 10⁹ ; minimum de mise = mise + 1 (`bid_increment` à 1), rafales et limite d'enchères ouvertes ;
+- `bench.bid` verrouille l'enchère, puis mise le minimum suivant ; un refus P0001 compte comme une transaction sans mise (le seul possible ici est « Tu es déjà en tête ») ;
+- règlement : 500 vendeurs Pro × 10 enchères, chacune avec une mise, échues depuis une seconde, puis un seul `wm.settle_due_auctions(5000)` chronométré par `\timing`, pendant `pgbench -n -c 4 -T 5 -P 1` sur `wm.market_list()`, lancé 1,5 s avant le lot.
+
+```bash
+bash load/bench/run.sh
+```
+
+Deux runs, chacun sur un banc neuf. Trois runs de mise au point donnaient les mêmes ordres de grandeur (disputée 285 à 296 tps, réparties 1 232 à 1 306 tps, règlement 5 779 à 6 014 ms).
+
+| Élément | Méthode | Résultat | Date |
+|---|---|---|---|
+| Mises sur l'enchère disputée | `bid_hot.sql` : les 50 clients sur la même enchère | 281,0 et 282,8 tps ; latence moyenne 177,9 et 176,8 ms ; mises réussies (Δ `bids_count`) 8 376 sur 8 390 et 8 453 sur 8 467 (99,8 %). D§9.6 : 589 mises/s, en tables `UNLOGGED` | 2026-10-22 |
+| Mises réparties | `bid_spread.sql` : enchère tirée parmi 50 à chaque transaction | 1 236,0 et 1 264,8 tps ; 40,5 et 39,5 ms ; 36 102 sur 36 797 et 37 002 sur 37 648 (98,1 et 98,3 %) | 2026-10-22 |
+| Repère : une mise à la fois | même banc, un seul client sur l'enchère disputée (miseur tiré parmi les 50), 10 s | 519 tps (1,9 ms par mise, `commit` compris) : la file de 50 clients sur une ligne coûte près de la moitié. Aucune mise à jour de `auctions` n'est HOT (0 sur 5 076) : `current_bid` est dans l'index de prix, et chaque mise écrit dans les 9 index de la table, GIN trigramme compris | 2026-10-22 |
+| Règlement de 5 000 enchères | `settle.sql`, un seul lot | 6 145 et 5 969 ms, soit ≈ 1,2 ms par enchère. Contrôles verts : 5 000 `settled_sold`, 10 000 notifications `auction_won` + `auction_sold`, 5 000 copies neuves chez les gagnants. D§9.6 : 5 000 en 97 ms, en `UNLOGGED`, sans copie ni notification | 2026-10-22 |
+| Linéarité du règlement | même préparation, sans les benchs de mise, puis 10 `settle_due_auctions(500)` successifs (le lot du cron, C14) | 541 à 603 ms chacun : linéaire, et un lot du cron tient en ≈ 0,6 s sur ses 10 s. Temps propre par fonction (`track_functions = 'all'`, un lot de 1 000 en 1 014 ms) : `sync_rarity_counts` 225 ms, `notification_data` 207, `escrow_release` 125, `settle_auction` 124, `wallet_apply` 120, `notify_auction` 105, `lock_users` 88 ; aucun point chaud | 2026-10-22 |
+| Lectures pendant le règlement (P9) | `read.sql` (4 clients), latence seconde par seconde (`--progress-timestamp`) | Seconde d'avant le lot : 9,7 et 9,9 ms (390 et 384 lectures/s). Pendant : 10,9 → 15,2 → 20,5 → 24,8 ms et 10,5 → 15,4 → 18,4 → 25,2 ms (jusqu'à 161 et 158 lectures/s). Hausse progressive avec l'avancée du lot, attendue par P9 (au-delà de 64 sous-transactions, les instantanés des autres sessions passent en mode débordé), sans attente ni erreur. Les lectures (5 s) finissent avant le lot (6 s) | 2026-10-22 |
+| Interblocages et invariants | `pg_stat_database.deadlocks` avant et après ; `wm.check_invariants()` | 0 interblocage et `[]` aux deux runs ; aucune transaction en échec dans pgbench | 2026-10-22 |

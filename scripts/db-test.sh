@@ -3,6 +3,7 @@
 # stub Supabase, schéma auth de GoTrue, migrations, helpers, puis supabase/tests/*.test.{sql,sh}.
 # --setup-only : applique aussi supabase/seed.sql s'il existe, imprime une seule ligne DATABASE_URL=… et laisse la base en place.
 # --stop : arrête et supprime le cluster local laissé par --setup-only (rien à faire avec $DATABASE_URL).
+# PG_FSYNC=on : cluster local avec fsync (benchs de load/bench, P14) ; off par défaut.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +33,7 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   as_pg "$pgbin/initdb" -D "$dir" -U postgres --pwfile="$dir.pw" --auth=scram-sha-256 -E UTF8 --locale=C.UTF-8 -N >/dev/null
   rm "$dir.pw"
   as_pg "$pgbin/pg_ctl" -D "$dir" -l "$dir/log" -w \
-    -o "-p 54329 -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=off" start >/dev/null
+    -o "-p 54329 -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=${PG_FSYNC:-off}" start >/dev/null
   DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54329/postgres
 fi
 
