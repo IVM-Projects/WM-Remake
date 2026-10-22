@@ -838,3 +838,85 @@ do $$ declare a uuid := pg_temp.player('Faute1', 1000); b uuid := pg_temp.player
       and r -> 'tags' <> s -> 'tags' and r -> 'profiles' <> s -> 'profiles' and r -> 'invariants' = '[]', r::text;
   end loop;
 end $$;
+
+-- Lectures (1740, M4-16, P3), lignes posées à la main. A : trois pending, dont un échu (lu expired, P3), insérés du plus ancien au plus récent ;
+-- 201 clos aux statuts mêlés, insérés du plus ancien clos au plus récent, aux created_at dans l'ordre inverse des closed_at ; B–Carol à côté.
+-- Attendu : les pending par création décroissante, puis les 200 clos les plus récents par closed_at ; ni le 201e ni B–Carol.
+do $$ declare a uuid := pg_temp.player('ListeEch1'); b uuid := pg_temp.player('ListeEch2'); carol uuid := pg_temp.player('ListeEch3');
+  p uuid[]; c uuid[]; r jsonb; begin
+  insert into public.trades (initiator_id, recipient_id, created_at, expires_at)
+  select case when i = 2 then b else a end, case when i = 2 then a else b end, now() - make_interval(mins => 4 - i),
+    clock_timestamp() + case when i = 2 then interval '-1 second' else interval '1 day' end
+  from generate_series(1, 3) i order by i;
+  insert into public.trades (status, initiator_id, recipient_id, created_at, closed_at, expires_at)
+  select (array['accepted', 'declined', 'cancelled', 'expired', 'countered'])[1 + i % 5]::public.trade_status,
+    case when i % 2 = 0 then a else b end, case when i % 2 = 0 then b else a end,
+    now() - interval '1 day' - make_interval(mins => 202 - i), now() - make_interval(mins => i), now()
+  from generate_series(1, 201) i order by i desc;
+  insert into public.trades (initiator_id, recipient_id, expires_at) values (b, carol, clock_timestamp() + interval '1 day');
+  p := array(select id from public.trades where status = 'pending' and a in (initiator_id, recipient_id) order by created_at desc);
+  c := array(select id from public.trades where status <> 'pending' and a in (initiator_id, recipient_id) order by closed_at desc);
+  r := wm.trades_list(a);
+  assert cardinality(p) = 3 and cardinality(c) = 201 and r = jsonb_build_object('trades', (select jsonb_agg(wm.trade_json(t) order by x.o)
+    from unnest(p || c[1:200]) with ordinality x (id, o) join public.trades t on t.id = x.id)), jsonb_path_query_array(r, '$.trades[*].id')::text;
+  assert jsonb_path_query_array(r, '$.trades[0 to 2].status') = '["pending","expired","pending"]', jsonb_path_query_array(r, '$.trades[*].status')::text;
+end $$;
+
+-- Détail : chaque participant lit {trade} ; Carol ou un id inconnu → 404.
+do $$ declare a uuid := pg_temp.player('DetailEch1'); b uuid := pg_temp.player('DetailEch2'); carol uuid := pg_temp.player('DetailEch3');
+  t uuid; q text := 'select wm.trade_detail(%L, %L)';
+  d jsonb := '{"status":404,"error":"Échange introuvable","message":"Échange introuvable"}'; begin
+  insert into public.trades (initiator_id, recipient_id, expires_at) values (a, b, clock_timestamp() + interval '1 day') returning id into t;
+  assert wm.trade_detail(a, t) = jsonb_build_object('trade', (select wm.trade_json(tr) from public.trades tr where id = t))
+    and wm.trade_detail(b, t) = wm.trade_detail(a, t), wm.trade_detail(a, t)::text;
+  assert pg_temp.err(format(q, carol, t)) = d, coalesce(pg_temp.err(format(q, carol, t))::text, 'lu par Carol');
+  assert pg_temp.err(format(q, a, gen_random_uuid())) = d, 'id inconnu';
+end $$;
+
+-- Notifications (M4-13, M4-16, P10) : 55 pour A, une par seconde, insérées de la plus ancienne à la plus récente, dont une auction_outbid au
+-- data du M3 ; 3 pour B. Liste : les 50 plus récentes de A, dans l'ordre, chacune exactement {id, type, data, read, created_at}. Marquage :
+-- les ids de B ignorés, '{}' ne lit rien, null lit tout le reste ; rejeu à clé ; maintenance. Cloche : la requête de PostgREST, sous la RLS
+-- de A, passe par l'index partiel (PG réécrit read = false en NOT read, son prédicat).
+do $$ declare a uuid := pg_temp.player('Cloche1'); b uuid := pg_temp.player('Cloche2'); ids uuid[]; nb uuid[]; r jsonb; j jsonb;
+  m jsonb := '{"status":503,"code":"maintenance","error":"Maintenance en cours, reviens dans quelques minutes.","message":"Maintenance en cours, reviens dans quelques minutes."}';
+  begin
+  insert into public.notifications (user_id, type, data, created_at)
+  select a, case when i = 52 then 'auction_outbid' else 'trade_received' end,
+    case when i = 52 then jsonb_build_object('auction_id', gen_random_uuid(), 'card_id', gen_random_uuid(), 'card_title', 'Cloche X',
+      'wikipedia_title', 'Cloche X', 'amount', 11)
+    else jsonb_build_object('trade_id', gen_random_uuid(), 'user_id', b, 'username', 'Cloche2') end, now() - make_interval(secs => 55 - i)
+  from generate_series(1, 55) i order by i;
+  insert into public.notifications (user_id, type, data)
+  select b, 'friend_request', jsonb_build_object('friendship_id', gen_random_uuid(), 'user_id', a, 'username', 'Cloche1') from generate_series(1, 3);
+  ids := array(select id from public.notifications where user_id = a order by created_at desc);
+  nb := array(select id from public.notifications where user_id = b);
+  r := wm.notifications_list(a) -> 'notifications';
+  assert cardinality(ids) = 55 and r = (select jsonb_agg(to_jsonb(n) - 'user_id' order by x.o) from unnest(ids[1:50]) with ordinality x (id, o)
+    join public.notifications n on n.id = x.id), jsonb_path_query_array(r, '$[*].id')::text;
+  assert not exists (select from jsonb_array_elements(r) e where array(select k from jsonb_object_keys(e) k order by k) <> '{created_at,data,id,read,type}'),
+    'clés d''une notification';
+  assert wm.notifications_read(a, array[ids[1], ids[2], nb[1]]) = '{"ok":true,"updated":2}', 'par ids';
+  assert not exists (select from public.notifications where id = any (nb) and read), 'notification de B lue';
+  assert wm.notifications_read(a, '{}') = '{"ok":true,"updated":0}', 'liste vide';
+  assert wm.notifications_read(a) = '{"ok":true,"updated":53}', 'toutes';
+  assert wm.notifications_read(a) = '{"ok":true,"updated":0}', 'second appel';
+  insert into public.notifications (user_id, type) select a, 'trade_received' from generate_series(1, 3);
+  assert wm.notifications_read(a, null, 'k-read') = '{"ok":true,"updated":3}' and wm.notifications_read(a, null, 'k-read') = '{"ok":true,"updated":3}',
+    'rejeu à clé';
+  update wm.config set value = 'true' where key = 'maintenance';
+  assert pg_temp.err(format('select wm.notifications_read(%L)', a)) = m, coalesce(pg_temp.err(format('select wm.notifications_read(%L)', a))::text, 'lu');
+  update wm.config set value = 'false' where key = 'maintenance';
+  perform tests.login(a);
+  set local enable_seqscan = off;
+  execute 'explain (format json) select id from public.notifications where read = false limit 10' into j;
+  reset enable_seqscan;
+  perform tests.reset_role();
+  assert strpos(j::text, '"notifications_unread_idx"') > 0, j::text;
+end $$;
+
+-- Volatilité des lectures (M3-R5) ; le marquage écrit.
+do $$ begin
+  assert (select jsonb_object_agg(proname, provolatile::text) from pg_proc where pronamespace = 'wm'::regnamespace
+    and proname in ('trades_list', 'trade_detail', 'notifications_list', 'notifications_read'))
+    = '{"trades_list":"s","trade_detail":"s","notifications_list":"s","notifications_read":"v"}', 'volatilité des lectures d''échange';
+end $$;
