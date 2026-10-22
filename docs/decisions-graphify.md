@@ -174,6 +174,166 @@ Format : ce qui a été tranché — coût si c'est faux.
 - M1 → M2 : une carte hors pool n'apparaît plus en recherche, en liste de souhaits (ni dans son total) ni en « manquantes » (M2-13).
 - C24 : une partie des migrations passe par le SQL Editor, pas par le MCP (M2-18) ; au déploiement, `1500`, `1510` et `1520` sont passées ensemble par le SQL Editor.
 
+## Décisions du plan M3
+
+- M3-1 — pg_cron sur la démo, seulement s'il est préchargé : `9000_wm_cron.sql` fait `create extension if not exists pg_cron with schema pg_catalog` (+ `grant usage on schema cron to postgres`) si `shared_preload_libraries` contient `pg_cron` et que `pg_available_extensions` le propose, sinon rien, sans erreur. Jobs idempotents par nom : `wm-settle` `'10 seconds'` → `wm.settle_due_auctions(500)`, `wm-wishlist-alerts` `'10 seconds'` → `wm.wishlist_alerts_fanout(5000)`, `wm-purge` `'7 * * * *'` → `wm.purge_expired()`, `wm-cron-history` `'17 * * * *'` → `cron.job_run_details` de plus de 24 h supprimé (≈ 17 000 lignes par jour). Pas de pg_net au M3. Banc et CI sans pg_cron : `db-test.sh` saute `9000_*`. « Règlement en moins de 15 s » mesuré par `cron.job_run_details` et par `settled_at − end_at` — coût si faux : `/settle` et le règlement paresseux restent, le critère des 15 s ne vaut qu'au M8.
+- M3-2 — Activity et ids dupliqués : `div#marketplace-auction-<uuid>` rendu seulement dans la liste de l'onglet visible de `/marketplace` (un onglet monté à la fois), aucune autre route ne rend ce motif, détail sans `id` d'élément (aria-label, `data-*`) ; Activity garde au plus une instance de `/marketplace`, l'id reste unique ; E2E filtrés sur `visible` — coût si faux : un outil tiers qui lit `document.getElementById` verrait une tuile cachée ; correctif local au composant.
+- M3-2 (pour le M7) — `selectors.spec.ts` doit vérifier que `#marketplace-auction-*` reste unique dans le document avec Activity.
+- M3-3 — Pas de helper `wm` sans HTTP : coquilles statiques et composants client qui appellent les routes du contrat (M1-2 confirmé) ; lectures partagées par les fonctions `'use cache: remote'` de `lib/market-cache.ts`, qui appellent PostgREST (C3) — coût si faux : un aller-retour HTTP de plus par lecture non cachée (quelques ms en `dub1`).
+- M3-4 — Benchs en tables journalisées sur le banc local, jamais sur la démo : `load/bench/` (enchère très disputée, 50 enchères, règlement de 5 000 enchères), `load/bench/run.sh` avec `fsync=on` et `synchronous_commit=on`, vraies migrations, `wm.check_invariants()` = `[]` à la fin ; chiffres indicatifs (A5) dans `docs/verifications.md`, refaits sur Pro au M8 — coût si faux : chiffres du sandbox non représentatifs du PG17 hébergé ; c'est dit.
+- M3-5 — Tables miroir du marché dans `0004_mirror_market.sql` (MIRROR) : `public.auctions`, `public.auction_bids`, `public.notifications`, type `public.auction_status` (`active`, `settled_sold`, `settled_unsold`, `cancelled`). `auctions.seller_id` et `auction_bids.bidder_id` en `on delete cascade`, `current_bidder_id` et `winner_id` en `set null`, `user_card_id` sans clé étrangère. Index du D§9.4 (partiels `where status = 'active'`, GIN trigramme). RLS : `authenticated` lit toutes les enchères et toutes les mises, ses seules notifications, aucune écriture client ; `revoke all` puis `select` à `authenticated` et `all` à `service_role` ; test des droits exacts sur toutes les tables de `public` — coût si faux : une colonne absente du miroir se voit au DUMP-S (M7) et s'ajoute sans casser.
+- M3-6 — `effective_bid = coalesce(current_bid, base_amount)`, `buyer_id = winner_id`, `bid_count = bids_count`, calculés dans le JSON, jamais stockés — coût si faux : la sémantique d'`effective_bid` est inconnue (R inc.) ; la valeur choisie est celle de l'index de tri.
+- M3-7 — Séquestre (C12) : `wm.auction_escrow(auction_id pk → public.auctions on delete cascade, user_card jsonb, duration_minutes int)`. Copie `count = 1` : `delete` de `user_cards`, `to_jsonb(ligne)` au séquestre ; `count > 1` (hérité) : `count - 1`, et au séquestre une ligne `count = 1` à id neuf (aucun id du séquestre dans `user_cards`). Retour : `jsonb_populate_record` avec id neuf, `starred = false`, `count = 1`, `obtained_at` d'origine, sans étiquette ; gain : `user_id = winner_id`, `obtained_at = settled_at`.
+- M3-8 — Notifications insérées au M3, lues au M4 : `auction_outbid`, `auction_won`, `auction_sold`, `auction_unsold`, `wishlist_listed`, dans la transaction qui les cause ; `data` en snake_case (`auction_id`, `card_id`, `card_title`, `wikipedia_title`, `amount`, plus `end_at` pour `wishlist_listed`) ; cloche, `PATCH /api/notifications`, `push_outbox` et Web Push au M4 — coût si faux : renommage de clés `data` au M4 (aucun lecteur au M3).
+- M3-9 — Hors M3 : score de guilde du vendeur (`score_wb += final_price`) et statistiques du marché (`auctions_sold`…) → M5 ; verrou d'échange (409 « Cette carte est déjà engagée dans un échange en attente ») → M4, dans `create_auction`, `discard` et `bulk_discard` ; retrait de carte et enchères actives → M6 ; `rollback-escrow.sql` → M7 — coût si faux : aucun, les données nécessaires sont gardées.
+- M3-10 — Constantes dans `wm.config`, toutes avec `note` : `auction_durations` `[10, 30, 60, 180, 360, 720, 1440]` (1440 accepté par l'API, jamais proposé par l'UI) ; `max_concurrent_auctions` `{"free": 5, "pro": 10}` (Pro = `is_pro or is_vip`) ; `antisnipe` `{"window_s": 10, "extend_s": 60}` ; `market_bid_burst` `{"count": 10, "window_s": 60}`, `market_list_burst` `{"count": 5, "window_s": 60}` ; `bid_increment` `{"ratio": 1.1}` (minimum suivant `max(ceil(cur × 1,1), cur + 1)`) ; `sales_summary_window` `200` ; `sales_detail_window` `{"days": 30, "max_rows": 2000}`. Mise de départ entière ≥ 1, défaut UI 10, aucune commission.
+- M3-11 — Temps sous verrou = `clock_timestamp()` pour toute comparaison à `end_at` après le verrou de l'enchère (mise, règlement, anti-snipe, retrait, baisse) ; `end_at` d'une nouvelle enchère = `clock_timestamp() + durée`.
+- M3-12 — Ordre des verrous (C4) : `auctions` `for update`, profils triés par id, `wm.user_state` dans le même ordre, puis `user_cards` ; `wm.lock_users(p_uids uuid[])` dédoublonne, ignore les null et trie ; `lock_timeout` 2 s par `set_config('lock_timeout', '2s', true)` en tête de `create_auction`, `place_bid`, `cancel_auction`, `reprice_auction` et `settle_auction` (55P03 → 503 `BUSY` + `Retry-After: 1`) ; aucun `proconfig` en plus.
+- M3-13 — Vérification humaine et rafales : mises et mises en vente exigent `human_verified_until > now()` (même verrou que les paquets) ; rafale pleine (10 mises ou 5 mises en vente en 60 s) → même 403 `human_verification_required` et `human_verified_until` remis à null ; `wm.set_human_verified` remet les fenêtres à zéro ; garde sur l'état stocké, compteurs écrits après le succès ; pas de limiteur HTTP.
+- M3-14 — Mise en vente (`wm.create_auction`) : id de copie, sinon id catalogue → copie la plus ancienne (`obtained_at`, puis `id`), sinon 403 `42501` ; limite = enchères `active` du vendeur, échues non réglées comprises ; écrit séquestre, `auctions` (`snapshot_*`, `snapshot_search_document` = titre, catégorie et 300 premiers caractères du résumé), file d'alertes et rafale ; réponse 201 `{auction_id, id, end_at}`.
+- M3-15 — Mise (`wm.place_bid`) : refus dans l'ordre 404, terminée, propre vente, déjà en tête, `bid_too_low` + `{min}`, puis vérification humaine et rafale ; débit `bid:<bid_id>`, remboursement `refund:<prev_bid_id>` ; anti-snipe `end_at - clock_timestamp() < 10 s` → `+ 60 s`, répétable ; `auction_outbid` à l'ancien meneur ; réponse `{current_bid, bidder_balance, balance, end_at, min_next_bid}`.
+- M3-16 — Retrait (`wm.cancel_auction`, `DELETE /api/marketplace/{id}`) : vendeur seul, sans aucune mise ; une échue sans mise non réglée peut être retirée ; statut `cancelled`, copie rendue, réponse `{ok: true, user_card_id}` ; le détail répond ensuite 404, l'enchère reste dans l'historique du vendeur.
+- M3-17 — Baisse de prix (`wm.reprice_auction`) : sans mise, une seule fois, pas avant la moitié de la durée (`created_at + duration_minutes / 2`, durée lue au séquestre), nouveau prix dans `[1, floor(listing_base_amount / 2)]` ; écrit `base_amount` et `base_repriced_at = clock_timestamp()`.
+- M3-18 — Règlement unique et idempotent (`wm.settle_auction`, appelé par le cron, `POST /settle` et le détail paresseux) : non `active` ou pas échue → rien ; sans mise → `settled_unsold`, copie au vendeur ; avec mise → `settled_sold`, copie au gagnant, `settle:<auction_id>` au vendeur ; `wm.settle_due_auctions(p_limit default 500)` en `for update skip locked` par `end_at` ; `POST /settle` ouvert à tout joueur connecté.
+- M3-19 — Lectures : `wm.market_list` sans joueur (page à partir de 1, `limit` 1 à 50, tris `ending_soon`, `recent`, `price_asc`, `price_desc`, `q` ≥ 2 caractères, enchères `active` seulement), cache partagé 2 s servi au plus 3 s, puis overlay `owned` ; `?mine=1` → `wm.market_mine_lists`, non caché ; détail → `wm.auction_detail`, cache 1 s, règlement paresseux, 404 pour inconnue ou `cancelled` ; ventes : `scope=summary` partagé 60 s (200 dernières ventes par rareté), sans `scope` réservé au Pro (30 jours, 2 000 lignes).
+- M3-20 — Alertes de liste de souhaits : `wm.wishlist_alert_queue` remplie par `create_auction`, `wm.wishlist_alerts_fanout(p_batch default 5000)` par `user_id` croissant après `cursor_user`, vendeur exclu ; `wm.purge_expired()` purge les clés d'idempotence de plus de 24 h et la file terminée depuis plus d'une heure.
+- M3-21 — Santé : `wm.health()` gagne `settle_lag_s` (`null` sans pg_cron) ; `health.yml` échoue au-delà de 60 ; `/api/health` reste 200.
+- M3-22 — Cache Next : profils `cacheLife` nommés dans `next.config.ts` (`market` 2 s / 3 s, `auction` 1 s / 2 s, `sales` 60 s / 120 s), `cacheTag('market')` ; pas de `revalidateTag` à chaque mise (C16).
+- M3-23 — `route()` : option `status` de succès (201), `PGRST003` et `PGRST000` → 503 `BUSY` + `Retry-After: 1`, tests unitaires ; une route de 1 à 3 lignes par dossier sous `app/api/marketplace/` ; `Idempotency-Key` accepté sur toutes les écritures.
+- M3-24 — Pages : `/marketplace` (onglets « Parcourir », « Mes ventes (n/max) », « Mes enchères (n) », « Gagnées », « Historique (n) », tuiles du contrat, « Charger la suite ») ; `/marketplace/[auctionId]` (« Miser » prérempli par `min_next_bid`, « Retirer », « Baisser le prix », « Finaliser la vente », « Auction not found » en anglais) ; « Mettre aux enchères » dans la modale (défaut 10 et 1 h) ; polling seulement onglet visible (détail 2 s sous 2 min restantes, sinon 10 s ; liste 15 s) ; comptes à rebours corrigés par `serverNow()`.
+- M3-25 — Tests : `27_market.test.sql`, `16_market_concurrency.test.sh` (0 interblocage, M conservé, invariants vides), une `RouteSpec` par route du R§3.5 (onze), `e2e/marketplace.spec.ts` et `e2e/market-journey.spec.ts` (critère du jalon en un test, seule écriture SQL : `end_at` ramené à maintenant).
+- M3-26 — Invariants étendus : `market_money` (Σ grand livre `bid`, `refund`, `settle` + Σ `current_bid` des enchères `active` avec meneur = 0), `reservation` (une mise débitée non remboursée égale à `current_bid`), `escrow` (une ligne de séquestre par enchère `active`, aucune ailleurs, aucun id dans `user_cards`).
+- M3-27 — Déploiement : un seul `deploy-m3.sql` (`0004`, `1600`… et `9000` en une transaction, historique `created_by = 'sql-editor'`, `notify pgrst, 'reload schema'`), répété sur une base du banc d'avant le M3, lancé par l'utilisateur dans le SQL Editor avant la fusion dans `develop` (R32) ; contrôles MCP ensuite.
+
+## Écarts au design (M3)
+
+- M3-1 : `9000` crée pg_cron seulement s'il est déjà préchargé, sans pg_net au M3 ; le banc et la CI n'ont aucun job.
+- M3-3 : composants client et lectures partagées par PostgREST, au lieu de Server Components qui appellent `wm.*` (D§5.3) ; reconduit M1-2.
+- M3-4 : benchs sur PG16 local journalisé, chiffres indicatifs ; la mesure hébergée reste au M8 (D§9.6).
+- M3-8 : notifications insérées sans cloche ni push jusqu'au M4 (D§7.9).
+- M3-9 : score de guilde, statistiques et verrou d'échange hors du M3, alors que D§7.5 les place dans la mise en vente et le règlement.
+- M3-13 : la vérification humaine vaut aussi pour les mises (D§7.0 et D§8.2, absente de la ligne « Mise » de D§7.5).
+- M3-21 : `settle_lag_s` et un seuil de 60 s dans `health.yml`, au lieu du « dernier règlement de moins de 30 s » de `/api/health` (D§12.3).
+- M3-22 : la liste est revalidée toutes les 2 s au lieu des 3 s de D§9.5, pour ne jamais être servie au-delà des « 1 à 3 s » de D§8.4.
+- M3-27 : migrations par le SQL Editor, pas par le MCP (C24).
+- P1 : index du marché dans `1600` (ADDITIVE), pas dans le miroir `0004`.
+- P3 : le `human_verified_until` d'une rafale est remis à null par le succès qui atteint le plafond, pas par la garde qui refuse.
+- P8 : `POST /settle` passe par `wm.settle_request`, et non par une traduction dans le handler.
+- P17 : lots de 50 tuiles, contre environ 40 observées sur l'original.
+- P22 : les joueurs du parcours sont créés par `makePlayer`, une écriture SQL de préparation.
+- P27 : après la vérification humaine, la relance part avec une clé neuve, et non « avec la même clé ».
+
+## Décisions ajoutées par le plan M3
+
+- P1 — Index du marché dans `1600_wm_market_core.sql` : `0004` passe avant `1300` (`wm_index.search_text`) et `1400` (`pg_trgm`) ; en option A, le runbook les crée `CONCURRENTLY`.
+- P2 — Droits exacts sur tout `public` : `02_mirror_rls.test.sql` sans filtre de noms, trié `collate "C"` ; `02_mirror_rls_legacy_grants.test.sh` rejoue aussi `0004`.
+- P3 — Rafale écrite au succès : `wm.market_tick` remet `human_verified_until` à null au plafond (la 10e mise et la 5e mise en vente passent, l'appel suivant reçoit le 403) ; `wm.market_guard` refuse aussi quand `open_burst` est plein (R§5.5).
+- P4 — Une aide interne par règle : `escrow_put`/`escrow_release`, `notification_data`/`notify_auction`, `market_guard`/`market_tick`, `min_next_bid`/`auction_json`.
+- P5 — Un seul constructeur de l'objet `Auction`, `wm.auction_json`, avec `min_next_bid` (`null` hors `active`).
+- P6 — Minimum en `numeric` : en `float8`, 100 × 1,1 donne 111 après `ceil`.
+- P7 — `placed_at` et `settled_at` = `clock_timestamp()` : ordre des mises, mise remboursée et mesure `settled_at − end_at` justes.
+- P8 — `wm.settle_request(p_uid, p_auction_id, p_idem)` pour `POST /settle` : le 409 « L'enchère n'est pas encore terminée » est une règle SQL ; inconnue ou retirée → 404 ; réponse avec `owned`, par `idem_store`.
+- P9 — Lot du cron : `lock_timeout` 2 s, un seul `wm.lock_users` (vendeurs et meneurs du lot) avant la boucle, sinon cycle 40P01 avec une mise ; une sous-transaction par enchère (`raise warning` avec l'id et le SQLSTATE, l'enchère en erreur reste `active`, vue par `overdue_s`) ; un 55P03 fait échouer le lot, rejoué 10 s plus tard ; au-delà de 64 sous-transactions, instantanés débordés : noté au M8.
+- P10 — Erreurs « occupé » (`55P03`, `57014`, `40P01`, `PGRST000`, `PGRST003`) rendues comme données par `lib/market-cache.ts` sous `cacheLife('auction')`, pour garder le 503 `BUSY` et `Retry-After` ; les autres restent levées.
+- P11 — `owned` calculé par le SQL dans `market_mine_lists` et `settle_request` ; seuls la liste et le détail partagés passent par `market_overlay`.
+- P12 — `9000_wm_cron.sql` tout ou rien (un `begin … exception when others then raise warning`), sans `delete` ni fonction `wm` ; `wm-cron-history` appelle `wm.purge_cron_history()` (`coalesce(end_time, start_time) < now() - interval '24 hours'`) ; `db-test.sh` saute tout `9[0-9][0-9][0-9]_*` sans pg_cron.
+- P13 — `wm.health()` : `settle_lag_s` nul seulement sans tables `cron` ou sans job `wm-settle`, `86400` sans run réussi ; clé `overdue_s` (enchères `active` échues depuis plus de 60 s) ; erreur de lecture de `cron.*` captée ; `health.yml` exige `settle_lag_s` non nul et ≤ 60 et `overdue_s` nul.
+- P14 — Banc journalisé par `PG_FSYNC` (défaut `off`) ; `load/bench/run.sh` lance `PG_FSYNC=on bash scripts/db-test.sh --setup-only` (même port 54329 que contrat et E2E : jamais en même temps) ; schéma `bench` hors migrations ; `bid_increment` `{"ratio": 1}` au bench, échec si Δ `bids_count` < 90 % des transactions.
+- P15 — `subscribeClock` dans `lib/clock.ts` ; `lib/poll.ts` exporte `createPoller` (pur, testé) et `usePoll`.
+- P16 — `formatRemaining(ms)` → « 3m 18s », « 3m 05s », « 45s », « 1h 02m 05s », secondes arrondies au-dessus ; échue → « Terminée ».
+- P17 — Lots de 50 tuiles ; le polling relit toutes les pages chargées, fusion dédoublonnée par `id`.
+- P18 — « En tête », « Remportée » et les boutons du vendeur comparent à l'id de la session du navigateur, la réponse du détail étant partagée.
+- P19 — `lib/wishlist.ts` : `readWished(cardId)` (`null` si la lecture échoue) et `saveWished(cardId, on)` (`23505` compris), pour la modale et le bouton rond du détail.
+- P20 — `onListed` sur `CardModal` : `/collection` ferme sa modale et relit sa grille avant la navigation, sinon Activity montrerait la copie partie au séquestre.
+- P21 — Textes ajoutés (absents du R§) :
+  - « Mes enchères » : « En tête », « Surenchéri », « Gagnée », « Perdue » ;
+  - tuile : « Possédée » (P30) ; issue d'une vente terminée : « Vendue pour {n} wikibidous », « Invendue », et « Retirée » pour une vente retirée (revue finale) ;
+  - détail : « Vendue pour {n} wikibidous », « Invendue » ; `aria-label` « Montant de la mise » et « Nouveau prix » ; bouton rond à libellé fixe « Liste de souhaits » avec `aria-pressed`, à la place du libellé changeant de la Task 12 du plan (revue finale) ;
+  - toasts : « Mise de {n} wikibidous placée. », « Enchère retirée : la carte est revenue dans ta collection. », « Prix baissé à {n} wikibidous » ;
+  - états vides : « Aucune enchère en cours. », « Aucune enchère ne correspond à ta recherche. », « Tu n'as aucune vente en cours. », « Tu n'as encore misé sur aucune enchère. », « Tu n'as encore remporté aucune enchère. », « Aucune vente terminée. » ;
+  - boîte de vente : « Marché · <rareté> : aucune vente récente » ; « (1 vente) » au singulier dans « Marché · <rareté> : {n} wikibidous ({k} ventes) » ;
+  - montants : « 1 wikibidou » et « 0 wikibidou » au singulier par `wikibidous(n)` (`lib/format.ts`).
+- P22 — Joueurs des E2E par `makePlayer` ou `login` (solde et vérification humaine posés à la création) ; le parcours du jalon donne à chacun son contexte par `cookieFor(user)`, la copie du vendeur vient d'un paquet de `/pulls`.
+- P23 — `rest/v1/auctions` et `rest/v1/auction_bids` dans `restSpecs` (`contract/spec/rest.ts`) ; les neuf routes `/api/marketplace*` dans `contract/spec/market.ts`.
+- P24 — Page et limite gardées deux fois : zod `min(1, 'La page commence à 1')` pour la clé du cache, et la même garde en SQL ; `limit` ramené dans 1..50.
+- P25 — Baisse impossible quand `floor(listing_base_amount / 2) < 1` : l'API garde le 400 (n = 0), l'UI n'affiche pas « Baisser le prix ».
+- P26 — Ordre de « Historique » : `coalesce(settled_at, created_at) desc, id` (une enchère retirée n'a pas de `settled_at`).
+- P27 — Relance anti-bot avec une clé neuve par `apiOnce`, comme `/pulls` (le 403 a tout annulé, ligne d'idempotence comprise) ; côté serveur, rejouer la clé refusée reste sûr, le contrat le vérifie.
+- P28 — Notifications en une instruction `insert … select … order by user_id` (`notify_auction` et la diffusion) : les `FOR KEY SHARE` des clés étrangères sur `profiles` suivent l'ordre C4 ; `wm.notification_data(p_type, p_auction_id, p_amount)` construit `data`.
+- P29 — 40P01 → 503 `BUSY` dans `route()` et dans les erreurs rendues du cache : un filet, les tests de concurrence exigent toujours 0 `40P01`.
+- P30 — Face des enchères figée : `auctionFace(a)` (`components/market/types.ts`) passe `snapshot_rarity`, `snapshot_atk` et `snapshot_def` à `<Card>` avec `isShiny={a.is_shiny}` ; `<Card>` ne reçoit jamais `owned` (étoile des favoris dans le lien, axe `nested-interactive`), `owned` s'affiche en « Possédée » hors de `Card`.
+
+## Rulings du M3
+
+Format : ce qui a été tranché — pourquoi — coût si c'est faux.
+
+### Task 1
+
+- M3-R1 — Au M6, `auth.users` n'est supprimé que si le joueur n'a plus d'enchère `active`, ni comme vendeur ni comme meneur — la cascade des profils vers les enchères du vendeur et les mises du miseur détruirait des réservations (D§7.1 l'exige déjà pour le vendeur) — des WB perdus à la suppression d'un compte, vus par `market_money`.
+
+### Task 2
+
+- M3-R2 — `reservation` lit le montant dans le grand livre (−delta du `bid:<id>` du miseur, `refund` filtré sur le même `user_id`, mise non remboursée du meneur courant), pas dans `auction_bids` — M3-26 dit « d'après le grand livre » — un débit du mauvais joueur passerait les invariants.
+
+### Task 4
+
+- M3-R3 — Le test fait miser C 13 au lieu de 12 — après 11, le minimum vaut 13 et 12 serait refusé en `bid_too_low` avant le débit ; 13 éprouve `insufficient_balance`, ce que le plan voulait — aucun, `bid_too_low` est testé ailleurs.
+
+### Task 6
+
+- M3-R4 — `stable` sur `market_list`, `market_mine_lists` et `market_mine`, avec départage par id des ventes, `max(amount)` pour la dernière mise et `%` et `\` testés — en `volatile`, trois instructions lisent trois instantanés et la liste pouvait rendre une enchère retirée ou réglée — une tuile morte pendant 2 à 3 s dans la liste partagée.
+- M3-R5 — Assertion sur `pg_proc.provolatile` confiée à la Task 7 — aucun test ne figeait la volatilité — un `create or replace` sans le mot-clé rouvrirait la fuite d'instantané sans test rouge.
+
+### Task 7
+
+- M3-R6 — `grant all privileges on all tables in schema cron to postgres` dans le bloc tout-ou-rien de `9000` — sans lui, `wm.health` (`end_time`) et la purge de `job_run_details` échouent faute de droits, et l'installation Supabase le documente — un droit trop large de `postgres` sur les tables cron, dont il est de fait propriétaire.
+- M3-R7 — Une enchère sans séquestre est sautée par jointure sur `wm.auction_escrow` dans la diffusion — une levée ferait échouer toute la diffusion, et l'invariant `escrow` la signale déjà — l'enchère cassée ne notifie personne tant que `check_invariants` ne la fait pas corriger.
+- M3-R8 — Scénario 1 de `16_market_concurrency` à 4 × 15 = 60 mises en file, `max_connections` inchangé — 100 mises, le bloqueur et GoTrue dépassaient le défaut de 100, et le service `postgres:17` de la CI ne prend pas d'argument — une contention moindre (60 attentes au lieu de 100).
+
+### Task 9
+
+- M3-R9 — Trois manques de test (rejeu de la même clé sur la mise et `DELETE`, `/settle` par le vendeur → `owned` false, `abc` → 400 sur `DELETE`, `settle` et `reprice`) passés au lot de la Task 10 — même `contract/spec/market.ts`, et chacun laissait passer une vraie régression — six assertions de plus à la Task 10.
+
+### Task 10
+
+- M3-R10 — NUL refusé en 400 par `MarketQuery` (`q` et `sort`), même défaut de `/api/cards` porté en revue finale — validation à la frontière, deux lignes, au lieu d'un 22P05 → 500 — aucun, un 400 au lieu d'un 500.
+- M3-R11 — Pas d'assertion « la liste montre encore l'ancien prix juste après la mise », délais mesurés consignés (≈ 2,0 s et ≈ 1,14 s) — elle dépend d'une mise en moins de 2 s, instable en CI — un retrait de `'use cache: remote'` passerait sans test rouge, rattrapé par les benchs de la Task 15.
+
+### Task 11
+
+- M3-R12 — Une tuile par ligne sous ≈ 420 px acceptée, densité mobile au M7 — `p-3` du DOM du contrat et largeur de la carte fixées, aucun défilement horizontal — une liste longue au téléphone jusqu'au M7.
+- M3-R13 — Onglets sur une ligne qui défile horizontalement au téléphone, au lieu de 2 à 3 lignes — un onglet hors champ à atteindre par glissement ou clavier.
+- M3-R14 — Compteurs des onglets relus à chaque affichage seulement, plus de poll de `?mine=1` toutes les 15 s sur « Parcourir » — une lecture par joueur non cachée de ≈ 155 objets pour trois nombres — des compteurs en retard tant que l'onglet reste affiché.
+- M3-R15 — Prefetch des liens des tuiles tranché à la Task 12, qui crée le détail (gardé : coquille seule, aucun appel `/api/marketplace`, assertion E2E) — rien avant la Task 12.
+
+### Task 12
+
+- M3-R16 — Intention `apiOnce` par montant (`${auction.id}:${amount}`) : le même montant rejoue, un autre part avec une clé neuve — `wm.idem_claim` sans empreinte du corps rejouait l'ancienne mise (toast « Mise de 10 », « En tête » à tort) ; défaut serveur porté en revue finale — rien, une clé de plus par montant.
+- M3-R17 — « (1 vente) » au singulier accepté — français correct, le gabarit ne visait que le pluriel — un test et un mot à changer.
+- M3-R18 — BidBox reste visible entre l'échéance et le règlement — le serveur refuse « Cette enchère est terminée » et « Finaliser la vente » est à côté — un refus lisible de plus.
+- M3-R19 — Tour 2 pour l'erreur d'action qui attendait `read()` sans délai, la relecture non réarmée à 2,1 s, l'E2E du prefetch et la clé de l'erreur — le premier régressait sur le chemin même de la surcharge, les autres coûtaient une ligne — un tour de plus.
+
+### Task 13
+
+- M3-R20 — Tour 1 : grille relue après un échec incertain, pile de 2 dont la seconde vente rejouait le 1er 201, boîte refermée pendant la requête — la pile donnait une issue fausse au joueur, le reste suit `/pulls` et la défausse — un tour.
+- M3-R21 — Tour 2 sur le motif de la défausse : ref `mounted` (boîte démontée → issue en toast), `onListed` ne ferme que la modale de la vente et ne navigue que si la boîte est montée, rang du focus gardé avant la relecture — fermer la modale pendant une vente rendait refus et `BUSY` muets — un tour.
+- M3-R22 — Tour 3 : focus jamais sur `body` après une issue inconnue (modale fermée, seconde issue de suite, relance réussie) et consigne « Relance-la telle quelle » gardée par la boîte cachée par Activity ; le reste parqué — c'est la règle du dépôt — un tour de plus.
+
+### Task 14
+
+- M3-R23 — Tour 1 de deux lignes : A lit 90 après sa mise, contextes créés dans le `try` ; pas de nettoyage — le remboursement du critère du jalon doit se voir dans l'UI ; le banc est recréé à chaque passe (`harness.ts:138`) et l'étape 6 interdit toute autre écriture — un tour.
+
+### Task 15
+
+- M3-R24 — `e2e/collection.spec.ts:426` (3 échecs sur 4 passes) confié à une enquête de cause racine, sans contourner le test, fusion seulement après une CI verte — corrigé en `3e03dc9` : la route `{ times: 1 }` expirait au moment de la requête et Chromium la perdait parfois — du temps d'enquête.
+- M3-R25 — Même défaut sur les 18 autres `page.route(…, { times: 1 })` : `routeOnce` dans `e2e/fixtures.ts` (route gardée, suivantes par `route.fallback()`), appliqué partout — une seule correction pour toute la classe — un diff de tests plus large, sans code applicatif.
+- M3-R26 — Tour 1 du bench sur tout ce qui le fait passer à vide ou le rend dangereux (`LC_ALL=C`, gardes `n` et `regle`, `wait` du lecteur, garde `current_database() = 'wm_test'` et `ON_ERROR_STOP` dans `setup.sql`, comptage par type), doc en observations, risque M8 consigné — un bench vert à vide ne prouve rien, et `setup.sql` lancé à la main sur la démo y écrirait `wm.config` — un tour.
+
+### Revue finale
+
+- M3-R27 — Une seule vague de corrections (F1–F12, NUL sur `/api/cards`, alerte de la défausse sous Activity, deux formulations de `verifications.md`) ; F11 (contrôle des 25 h) corrigé par le contrôleur à la Task 16 ; `wm.idem_claim` sans empreinte du corps porté au M4, atténué côté client par une intention par corps complet — une vague plus large.
+- M3-R28 — r1 (relecture des tests du marché bornée à 10 s, pour une liste servie jusqu'à 3 s) et r2 (en-tête de page en `flex-wrap`) corrigés par le contrôleur (`c6467b7`) ; r3–r6 (focus) parqués au M7 ; P21 complété ici — r1 pèse sur la CI, r2 se voit sur la page d'accueil du jeu au téléphone — un saut de focus ou de lecteur d'écran dans des cas rares jusqu'au M7.
+
 ## Résultats des vérifications du M0
 
 - Vérifications M0 (2026-10-19) : Next 16.4.2 (`proxy` en runtime Node, `cacheComponents` actif, `'use cache: remote'` via une fonction auxiliaire dans les route handlers, `revalidateTag(tag, profile)` à deux arguments) ; Vercel Hobby : 1 règle de rate limit WAF par projet, `checkRateLimit` disponible mais consomme cette règle, Runtime Cache partagé par toute l'équipe et purges limitées à 50/s ; image `diegosouzapw/omniroute:3.8.51` active sur Docker Hub (tirage à confirmer en CI au M5) ; PostgREST v12.2.3 épinglé `9f71269e…7c` ; GRANT explicites et exposition de `wm` vérifiés à la Task 12 ; clés JWT asymétriques reportées au M1 ; TypeScript 5.9.3 builde, et TS 7 est pris en charge par `next build` via le `tsc` local (contrairement à la note du plan). Détail : `docs/verifications.md`.

@@ -2,7 +2,29 @@
 
 > À lire en premier par toute nouvelle session Claude sur ce dépôt.
 
-## Où on en est (2026-10-21)
+## Où on en est (2026-10-22)
+
+- **M3 livré sur la démo** (2026-10-22) : le marché, tâches 1 à 15 du plan `docs/superpowers/plans/2026-10-21-m3-marche.md` sur la branche `claude/clever-cannon-59x0dj` (base ff6ac58). Chaque tâche a eu une revue de conformité, une revue adverse et ses tours de correction. La revue finale de la branche (7 lentilles, puis un sceptique par lentille et un critique) n'a trouvé aucun Critical. Sa vague de corrections (fd17911, ca4e91a, be36e86, 8d66a5d, c6467b7) traite 1 Important et 14 Minor. Décisions M3-1 à M3-27, P1 à P30 et rulings M3-R1… : `docs/decisions-graphify.md` ; reportés : `docs/suivi.md`.
+  - Livré :
+    - migrations `0004` (miroir `auctions`, `auction_bids`, `notifications`), `1600` (socle : séquestre, file, verrous, garde anti-rafale, invariants `market_money`, `reservation` et `escrow`), `1610` (vente, retrait, baisse), `1620` (mise), `1630` (règlement unique : cron, `/settle`, paresseux), `1640` (lectures), `1650` (alertes de liste de souhaits, purges, `health`) et `9000` (pg_cron, quatre jobs) ;
+    - routes `/api/marketplace…` (201 à la création, 503 `BUSY` sur les codes occupés, idempotence sur chaque écriture) ;
+    - cache partagé de la liste, du détail et du résumé des ventes (`lib/market-cache.ts`, profils `market` 2/3 s, `auction` 1/2 s, `sales` 60/120 s), avec l'overlay `owned` par joueur ;
+    - pages `/marketplace` (onglets, recherche, tri, raretés, « Charger la suite », polling visible) et `/marketplace/[auctionId]` (miser, historique, retrait, baisse, « Finaliser la vente », liste de souhaits, analyse Pro) ;
+    - boîte de vente et onglet « Marché » dans la modale de carte ;
+    - benchs journalisés `load/bench/run.sh`.
+  - Critères du D§13 et leurs preuves :
+    - contrat §3.5 complet (`coverage:recap` : 39 routes sur 90, plus aucune du §3.5 manquante) ;
+    - guerre d'enchères qui conserve M : `supabase/tests/16_market_concurrency.test.sh` (60 mises croisées, invariants vides) ;
+    - règlement en moins de 15 s : sur 1 h 19 d'historique de `wm-settle` sur la démo, 475 runs sans échec, p99 de l'écart 10,305 s + p99 de la durée 0,071 s, soit une borne de 10,38 s ; les deux ventes réelles du joueur de démo ont été réglées par le cron en 4,50 s et 2,60 s (« M3 — livraison » de `docs/verifications.md`) ;
+    - retrait et invendu rendent une nouvelle ligne sans étiquettes : `supabase/tests/27_market.test.sql` ;
+    - parcours mise en vente → mise → remboursement → règlement : `e2e/market-journey.spec.ts` (A débité à 90, remboursé à 100, B gagnant à 89, vendeur à 11, règlement par la seule lecture du détail).
+  - Suite locale (tête c6467b7) : `npm test` 44 fichiers, 429 tests ; `test:db` 19 fichiers ; contrat 136 cas ; E2E 166 tests ; `coverage:recap` 39/90. CI verte sur postgres:17 (run 39744063469).
+  - Démo, dans l'ordre R32 et M3-27 :
+    - `deploy-m3.sql` (concaténation de `0004`, `1600`…`1650`, `9000`, de l'historique et du `notify`) lancé par l'utilisateur dans le SQL Editor, après une répétition sur une base d'avant le M3 (deux passes, `27_market` vert, même empreinte des fonctions `wm` que la branche) ;
+    - pg_cron 1.6.4 créé et quatre jobs actifs ; contrôles du MCP verts ;
+    - fusion `--no-ff` 36646a5 dans `develop`, production `dpl_AtktHPnjNy6pUfUjQFcMG2h4cdzW` READY, `/api/health` 200, `health.yml` vert.
+  - M2-12 fait le même jour : les 2 000 cartes d'essai et leurs copies sont supprimées (117 112 cartes, toutes sourcées, invariants vides).
+  - Benchs (PG 16.15 local, fsync on, chiffres indicatifs) : ≈ 280 mises/s sur une enchère disputée, ≈ 1 250 mises/s réparties, 5 000 règlements en ≈ 6 s (500 en ≈ 0,6 s). Le M8 refait la mesure sur Pro.
 
 - **M0 livré** (2026-10-19) : fondations, CI, migrations `0001`, `0002`, `1000` sur la démo, production Vercel derrière la porte. Détail : `docs/verifications.md`.
 - **M1 implémenté et relu** sur la branche `claude/clever-cannon-59x0dj` : les 16 tâches du plan `docs/superpowers/plans/2026-10-19-m1-comptes-paquets-collection.md` (plan 4a087d0 sur `develop` cb510d3). Chaque tâche a eu une revue de conformité et une revue adverse, suivies de passes de correction. Le commit de passation 96dd8c7 ajoute aussi l'E2E du parcours (`e2e/journey.spec.ts`) et une correction de lint (dépendances d'effet de `global-client.tsx`). La revue finale de la branche (R31) a été suivie de trois vagues de correction (R32) : A auth et navigation (b691c33), B interface de jeu (8691e1d), C base, tests, CI et documentation (18c4b68), puis un dernier tour de code (R33 : d1f8474, 9139851, 3b2be6a). Les arbitrages R1 à R33 (R30 non attribué) sont dans `docs/decisions-graphify.md`.
@@ -59,19 +81,37 @@
 5. **Après ces réglages** : un étudiant joue le parcours complet sur la démo (inscription avec le vrai widget Turnstile, code reçu par e-mail, premier paquet, collection, étiquette, défausse) et le résultat est consigné dans `docs/verifications.md`. Vérifier aussi, sur le projet hébergé, le changement de mot de passe et la déconnexion de `/settings` (« Secure password change » désactivé à l'étape 4.2).
 6. **Pause Supabase Free** (7 jours sans activité) : écartée tant que `health.yml` interroge la production chaque jour ; s'il échoue, il ouvre une issue. Sur un dépôt public, GitHub désactive les workflows planifiés après 60 jours sans activité du dépôt : `health.yml` et le `schedule` de `catalog.yml` s'arrêteraient alors sans bruit, et la base serait mise en pause 7 jours plus tard. Un commit, ou « Enable workflow » dans l'onglet Actions, les relance.
 7. **Vérification visuelle du M2** (Task 17, Step 7), si elle n'est pas faite : derrière la porte, `/global-collection` montre de vraies cartes et les vrais totaux ; la modale d'une carte avec image affiche « Image : <auteur>, <licence> », avec un lien de licence et un lien vers la page du fichier qui marchent ; `/credits` s'affiche. Résultat consigné dans `docs/verifications.md`.
-8. **Suppression des 2 000 cartes d'essai et de leurs copies** (M2-12) : destructive en production, donc différée et faite seulement sur accord de l'utilisateur. Après le premier chargement, ces cartes sont hors du pool, du catalogue et de la recherche, mais restent dans `public.cards` (80 copies d'un joueur et 1 ligne de liste de souhaits les référencent au 2026-10-21, clés étrangères NO ACTION).
+8. **Faite (2026-10-22)** : suppression des 2 000 cartes d'essai et de leurs copies (M2-12), lancée par l'utilisateur dans le SQL Editor après le déploiement du M3. Le script réglait d'abord les enchères éventuelles sur ces cartes, puis supprimait enchères, notifications, copies et cartes. Résultat : 117 112 cartes, toutes sourcées, invariants vides.
 9. **Retirer `SUPABASE_DB_URL` des variables Vercel** (Production) : l'app ne la lit pas, seul `catalog.yml` s'en sert comme secret GitHub (moindre privilège).
+10. **Facultatif, vérification visuelle du M3** (Task 16, Step 6) : derrière la porte, mettre une carte en vente depuis la modale de `/collection`, voir sa tuile dans `/marketplace` et son détail, miser depuis un second compte si l'on en a un. Pour mesurer le cron seul, fermer l'onglet avant l'échéance : un détail ouvert réglerait par la voie paresseuse.
 
-## Étape suivante : écrire le plan M3 (marché)
+## Exploitation du marché
 
-Périmètre du D§13 : tout le R§3.5 (séquestre, mises avec débit et remboursement, anti-snipe, règlement par cron, `/settle` et paresseux, baisse de prix, `mine`, ventes en résumé et détail Pro, alertes de liste de souhaits, cache), et les benchs refaits en tables journalisées (D§9.6). Terminé quand : contrat §3.5 vert ; test SQL de guerre d'enchères qui conserve M ; règlement en moins de 15 s ; retrait et invendu rendent une nouvelle ligne sans étiquettes ; E2E mise en vente → mise → remboursement → règlement vert. Reprendre la section M3 de `docs/suivi.md`, dont les points du M0 hérités et non traités (chemins d'argent, purge horaire de l'idempotence, `PGRST003` → 503).
+- **Arrêt d'urgence du cron**, par le MCP : `select cron.alter_job(jobid, active := false) from cron.job where jobname like 'wm-%'`. Reprise avec `active := true`.
+- `maintenance = true` (`wm.config`) bloque les mises et les ventes, mais pas le règlement (cron, `/settle` et détail paresseux).
+- **À relire après 25 h** :
+  - aucune ligne de `cron.job_run_details` de plus de 25 h (purge horaire à :17, rétention 24 h) ;
+  - taille de la base stable (relevés du déploiement dans `docs/verifications.md`).
+- `health.yml` échoue si `settle_lag_s` dépasse 60 s ou si une enchère échue reste non réglée (`overdue_s`).
 
-Trancher d'abord :
+## Étape suivante : écrire le plan M4 (échanges et social)
 
-- le règlement toutes les 10 s par pg_cron (C14) alors que pg_cron n'est pas activé sur la démo : l'activer, ou s'en tenir à `/settle` et au règlement paresseux sur Free ;
-- les pages cachées par Activity (`cacheComponents`) qui dupliquent les ids et sélecteurs de `#marketplace-auction-*` (risque A3 du M0) ;
-- un helper `wm` sans HTTP pour les pages publiques mises en cache (décision 2 du plan M1) ;
-- où tournent les benchs en tables journalisées (`load/bench/*.sql`) sans approcher les 500 Mo de la démo Free.
+Périmètre du D§13 :
+- échanges : création, contre-offre, acceptation, refus, annulation, expiration ;
+- amis, profil, vitrine, messages privés ;
+- notifications et cloche, signalements ;
+- Web Push.
+
+Terminé quand :
+- l'acceptation 100 ↔ 100 prend moins de 500 ms et reste atomique (une erreur injectée annule tout) ;
+- le rejeu d'`Idempotency-Key` renvoie le résultat stocké ;
+- un push est reçu sur un point d'entrée de test en CI ;
+- le contrat §3.6 et §3.7 est vert.
+
+Reprendre la section M4 de `docs/suivi.md` :
+- le verrou d'échange à ajouter en même temps dans `create_auction`, `discard` et `bulk_discard` ;
+- les notifications déjà insérées par le marché, sans lecteur ;
+- `wm.idem_claim` sans empreinte du corps.
 
 ## Points différés
 
