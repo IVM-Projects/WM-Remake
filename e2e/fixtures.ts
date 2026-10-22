@@ -15,6 +15,9 @@ export const makePlayer = (opts?: Parameters<typeof makeUser>[1]): User => makeU
 // psql sur la base du banc (variables :'nom', jamais de concaténation).
 export const sql = (query: string, vars?: Record<string, string>): string => psql(backend().databaseUrl, query, vars)
 
+// Cookie de session d'un joueur de makePlayer, pour son propre contexte de navigateur (P22).
+export const cookieFor = (u: User) => authCookie(backend(), u.uid)
+
 // login() crée un joueur neuf (makeUser) et pose son cookie de session : aucun état partagé entre tests ni workers.
 export const test = base.extend<{ login: (opts?: Parameters<typeof makeUser>[1]) => Promise<User> }>({
   login: async ({ context, baseURL }, provide) => {
