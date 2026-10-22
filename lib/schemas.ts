@@ -8,10 +8,10 @@ const intParam = z.coerce.number().int().min(0).max(2_147_483_647)
 export const pageParam = intParam.default(0)
 export const CollectionSort = z.enum(['rarity', 'obtained_at', 'added', 'name', 'atk', 'def', 'starred'])
 export const boolParam = z.enum(['1', 'true', '0', 'false']).optional().transform((v) => v === '1' || v === 'true')
-export const Username = z.string().min(1).max(64)
+// Postgres refuse \0 dans un texte (22P05) : sans ce refus, un 500 au lieu d'un 400. Tout texte libre qui atteint le SQL passe par lui.
+export const pgText = z.string().refine((s) => !s.includes('\0'), 'Caractère invalide')
+export const Username = pgText.min(1).max(64)
 export const AuctionParams = z.object({ auctionId: z.uuid() })
-// Postgres refuse \0 dans un texte (22P05) : sans ce refus, un 500 au lieu d'un 400.
-const pgText = z.string().refine((s) => !s.includes('\0'), 'Caractère invalide')
 // GET /api/marketplace : page à partir de 1, gardée ici pour la clé du cache et en SQL (P24) ; tri validé en SQL (« Tri inconnu »).
 export const MarketQuery = z.object({ page: z.coerce.number().int().min(1, 'La page commence à 1').max(2_147_483_647).default(1),
   limit: z.coerce.number().int().optional(), sort: pgText.optional(), q: pgText.optional(), rarity: rarityList.optional(), mine: boolParam,
@@ -19,8 +19,8 @@ export const MarketQuery = z.object({ page: z.coerce.number().int().min(1, 'La p
 
 // Filtres de /api/my-collection et de /stats ; une clé inconnue (pending, stats, sort pour /stats) est ignorée.
 export const CollectionFilters = z.object({
-  q: z.string().optional(),
-  search: z.string().optional(),
+  q: pgText.optional(),
+  search: pgText.optional(),
   rarity: rarityList.optional(),
   tag_id: z.uuid().optional(),
   untagged: boolParam,

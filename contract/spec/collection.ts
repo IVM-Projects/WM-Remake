@@ -101,6 +101,15 @@ export const myCollection: RouteSpec = {
         assert.equal((await ok(await api(env, '/api/my-collection?pending=1&stats=0', { uid }), Collection)).total, 10)
       },
     },
+    {
+      name: '\\0 dans q ou search → 400 « Caractère invalide » (zod : sinon 22P05, donc un 500)',
+      run: async (env) => {
+        const { uid } = makeUser(env.backend.databaseUrl)
+        for (const path of ['?q=%00ab', '?search=%00ab']) {
+          assert.equal((await failed(await api(env, `/api/my-collection${path}`, { uid }), 400, 'invalid_request')).error, 'Caractère invalide', path)
+        }
+      },
+    },
   ],
 }
 
@@ -119,6 +128,13 @@ export const myCollectionStats: RouteSpec = {
         assert.equal(total, 10)
         assert.deepEqual(Object.fromEntries(rarities.map((r) => [r.rarity, r.count])), { L: 2, UR: 3, SR: 0, R: 0, PC: 0, C: 5 })
         assert.equal((await ok(await api(env, '/api/my-collection/stats?rarity=L&sort=name', { uid }), Stats)).total, 2)
+      },
+    },
+    {
+      name: 'q=%00ab → 400 « Caractère invalide »',
+      run: async (env) => {
+        const { uid } = makeUser(env.backend.databaseUrl)
+        assert.equal((await failed(await api(env, '/api/my-collection/stats?q=%00ab', { uid }), 400, 'invalid_request')).error, 'Caractère invalide')
       },
     },
   ],
@@ -159,6 +175,15 @@ export const profileCollection: RouteSpec = {
         assert.deepEqual([plain.collection.length, plain.total, plain.rarityCounts], [5, 5, undefined])
         const stats = await ok(await api(env, `/api/profile/${owner.username.toUpperCase()}/collection?stats=1&page=0`, { uid }), ProfileCollection)
         assert.deepEqual(stats.rarityCounts, { C: 3, PC: 0, R: 0, SR: 0, UR: 0, L: 2 })
+      },
+    },
+    {
+      name: 'q=%00ab → 400 « Caractère invalide »',
+      run: async (env) => {
+        const owner = makeUser(env.backend.databaseUrl)
+        const { uid } = makeUser(env.backend.databaseUrl)
+        const res = await api(env, `/api/profile/${owner.username}/collection?q=%00ab`, { uid })
+        assert.equal((await failed(res, 400, 'invalid_request')).error, 'Caractère invalide')
       },
     },
   ],

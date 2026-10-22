@@ -28,8 +28,11 @@ export const usernameAvailable: RouteSpec = {
       },
     },
     {
-      name: 'u absent → 400 invalid_request',
-      run: async (env) => void (await failed(await api(env, '/api/username-available'), 400, 'invalid_request')),
+      name: 'u absent → 400 invalid_request ; u=%00ab → 400 « Caractère invalide »',
+      run: async (env) => {
+        await failed(await api(env, '/api/username-available'), 400, 'invalid_request')
+        assert.equal((await failed(await api(env, '/api/username-available?u=%00ab'), 400, 'invalid_request')).error, 'Caractère invalide')
+      },
     },
   ],
 }
