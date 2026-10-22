@@ -624,6 +624,69 @@ test('vente à la réponse perdue : un autre montant part avec une clé neuve (r
   expect(listed(page, me.uid)).toBe('10 60')
 })
 
+test('pile de 2, réponse de la vente perdue : grille relue derrière la modale ; rouverte sur ×1, la même vente part avec une clé neuve', async ({ page, login }) => {
+  const me = await login({ humanVerified: true })
+  trash.uids.push(me.uid)
+  const { t, card } = copyOf(me.uid)
+  sql(`update public.user_cards set count = 2 where user_id = :'u' and card_id = :'card'`, { u: me.uid, card })
+  const keys: string[] = []
+  await page.route('**/api/marketplace', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    keys.push(route.request().headers()['idempotency-key'])
+    if (keys.length > 1) return route.fallback()
+    // La vente du premier exemplaire atteint le serveur et y est validée ; sa réponse est perdue.
+    await route.fetch()
+    await route.abort()
+  })
+  let dialog = await openCopy(page, t)
+  await expect(dialog.getByText('Exemplaires : 2', { exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: 'Mettre aux enchères' }).click()
+  await dialog.getByRole('button', { name: 'Lancer l\'enchère' }).click()
+  await expect(dialog.getByRole('alert'))
+    .toHaveText('La mise aux enchères n\'a pas été confirmée : la carte est peut-être déjà en vente. Relance-la telle quelle pour le savoir.')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  // Grille relue à l'issue inconnue : la tuile n'a plus que l'exemplaire restant.
+  await expect(page.getByText('x2', { exact: true }).filter({ visible: true })).toHaveCount(0)
+  await page.getByRole('button', { name: t, exact: true }).click()
+  dialog = page.getByRole('dialog', { name: t })
+  await expect(dialog.getByText('Exemplaires : 1', { exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: 'Mettre aux enchères' }).click()
+  await dialog.getByRole('button', { name: 'Lancer l\'enchère' }).click()
+  await expect(toastText(page, `${t} a bien été mise aux enchères pour 10 wikibidous`)).toBeVisible()
+  await expect(page).toHaveURL(AUCTION_URL)
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).not.toBe(keys[0])
+  expect(sql(`select count(*) from public.auctions where card_id = :'card' and status = 'active'`, { card })).toBe('2')
+})
+
+test('vente en cours : « Mettre aux enchères » inactif, la boîte reste ouverte ; le refus BUSY s\'y affiche', async ({ page, login }) => {
+  const me = await login({ humanVerified: true })
+  trash.uids.push(me.uid)
+  const { t } = copyOf(me.uid)
+  const BUSY = 'Le site est très sollicité, réessaie dans un instant.'
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route('**/api/marketplace', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    await held
+    await route.fulfill({ status: 503, headers: { 'Retry-After': '1' }, json: { status: 503, code: 'BUSY', error: BUSY, message: BUSY } })
+  })
+  const dialog = await openCopy(page, t)
+  const toggle = dialog.getByRole('button', { name: 'Mettre aux enchères' })
+  await toggle.click()
+  await dialog.getByRole('button', { name: 'Lancer l\'enchère' }).click()
+  await expect(toggle).toHaveAttribute('aria-disabled', 'true')
+  // Inactif mais focalisable : Entrée ne replie pas la boîte.
+  await toggle.focus()
+  await page.keyboard.press('Enter')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  release()
+  await expect(dialog.getByRole('alert')).toHaveText(BUSY)
+  await expect(toggle).not.toHaveAttribute('aria-disabled')
+  await expect(toggle).toBeFocused()
+})
+
 test('boîte de vente : « Marché · Rare : 12 wikibidous », moyenne arrondie des ventes de la carte en R (11 et 12)', async ({ page, login }) => {
   const me = await login({ humanVerified: true })
   const seller = makePlayer()

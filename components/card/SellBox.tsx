@@ -18,11 +18,21 @@ const UNSURE = 'La mise aux enchères n\'a pas été confirmée : la carte est p
 
 type Sale = { base: number; duration: number }
 
-// Clé par corps entier (le serveur rejoue par joueur et clé sans lire le corps), hors du composant pour survivre à la boîte repliée (P27).
+// Le serveur rejoue par (joueur, clé) sans lire le corps : une clé par corps entier et par taille de la pile (escrow_put garde l'id de la pile).
+// Hors du composant : après une issue inconnue, la relance à l'identique rejoue la réponse même si la boîte ou la modale a été fermée.
 const keys = new Map<string, string>()
 
+type Props = {
+  copy: OwnedItem
+  onListed: () => void
+  // Issue inconnue : la copie est peut-être partie au séquestre, la grille se relit (comme la défausse).
+  onUnsure?: () => void
+  // Requête en cours : la modale garde la boîte ouverte, pour que son issue reste affichée.
+  onBusy?: (busy: boolean) => void
+}
+
 // Boîte de vente de la modale (M3-24) : un formulaire, donc Entrée envoie ; vérification anti-bot comme /pulls (pulls-client.tsx:103-142).
-export function SellBox({ copy, onListed }: { copy: OwnedItem; onListed: () => void }) {
+export function SellBox({ copy, onListed, onUnsure, onBusy }: Props) {
   const router = useRouter()
   const face = faceOf(copy)
   const label = rarityOf(face.rarity).label
@@ -52,6 +62,7 @@ export function SellBox({ copy, onListed }: { copy: OwnedItem; onListed: () => v
     if (inflight.current) return
     inflight.current = true
     setBusy(true)
+    onBusy?.(true)
     setError(null)
     setVerify(null)
     // Échec de /api/human-check : la vente n'est pas partie.
@@ -59,7 +70,7 @@ export function SellBox({ copy, onListed }: { copy: OwnedItem; onListed: () => v
     try {
       if (token) await api('/api/human-check', { method: 'POST', idem: true, body: JSON.stringify({ token }) })
       sent = true
-      const { id } = await apiOnce<{ id: string }>(keys, `sell:${copy.id}:${base}:${duration}`, '/api/marketplace', {
+      const { id } = await apiOnce<{ id: string }>(keys, `sell:${copy.id}:${copy.count ?? 1}:${base}:${duration}`, '/api/marketplace', {
         method: 'POST',
         body: JSON.stringify({ card_id: copy.id, base_amount: base, duration_minutes: duration }),
       })
@@ -70,10 +81,13 @@ export function SellBox({ copy, onListed }: { copy: OwnedItem; onListed: () => v
       const body = (e instanceof ApiError ? e.body : null) as { code?: string } | null
       // Une seule relance après la vérification : un second refus s'affiche, sans boucle.
       if (body?.code === 'human_verification_required' && !token) setVerify({ base, duration })
-      setError(userMessage(e, sent && unsure(e) ? UNSURE : 'La carte n\'a pas pu être mise aux enchères.'))
+      const maybe = sent && unsure(e)
+      setError(userMessage(e, maybe ? UNSURE : 'La carte n\'a pas pu être mise aux enchères.'))
+      if (maybe) onUnsure?.()
     } finally {
       inflight.current = false
       setBusy(false)
+      onBusy?.(false)
     }
   }
 

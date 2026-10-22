@@ -434,6 +434,8 @@ function CollectionBody({ readBalance, freshBalance }: Balance) {
           onChanged={(change) => onChanged(open.id, change)}
           // Partie au séquestre : la grille gardée par Activity ne doit plus la montrer au retour (P20).
           onListed={() => { setOpen(null); refresh() }}
+          // Vente à l'issue inconnue : la grille se relit derrière la modale, qui reste ouverte pour la relance.
+          onUnsure={refresh}
         />
       )}
     </>

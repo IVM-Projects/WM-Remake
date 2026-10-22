@@ -63,14 +63,15 @@ type Props = {
   // balance null : issue inconnue, solde à relire. closed : la modale était déjà fermée, la grille se relit tout de suite.
   onDiscarded?: (balance: number | null, closed: boolean) => void
   onChanged?: (change: CardChange) => void
-  // Copie mise aux enchères, juste avant la navigation vers son enchère (P20).
+  // Copie mise aux enchères, juste avant la navigation vers son enchère (P20) ; onUnsure : issue inconnue, la grille se relit.
   onListed?: () => void
+  onUnsure?: () => void
 }
 
 type Meta = Pick<CatalogCard, 'summary' | 'q_score' | 'pageviews'>
 
 // Modale de carte (R§6.5). Copie possédée : étiquettes, favori, mise aux enchères et défausse ; catalogue : liste de souhaits.
-export function CardModal({ item, onClose, onDiscarded, onChanged, onListed }: Props) {
+export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onUnsure }: Props) {
   const owned = 'card' in item ? item : null
   const card = owned ? owned.card : (item as CatalogCard)
   const face = owned ? faceOf(owned) : card
@@ -82,6 +83,8 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed }: P
   const [meta, setMeta] = useState<Meta>({ summary: card.summary, q_score: card.q_score, pageviews: card.pageviews })
   const [wished, setWished] = useState<boolean | null>(null)
   const [selling, setSelling] = useState(false)
+  // Vente en cours : la boîte reste ouverte jusqu'à son issue.
+  const [listing, setListing] = useState(false)
   // Jamais disabled sur un bouton qu'on vient de presser : le navigateur poserait le focus sur body (aria-disabled et garde à la place).
   const [busy, setBusy] = useState(false)
   const starring = useRef(false)
@@ -296,14 +299,15 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed }: P
             )}
           </div>
           {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
-          {owned && selling && <SellBox copy={owned} onListed={() => onListed?.()} />}
+          {owned && selling && <SellBox copy={owned} onListed={() => onListed?.()} onUnsure={onUnsure} onBusy={setListing} />}
           {owned && (
             <div className="mt-auto flex flex-wrap gap-3 border-t border-[var(--color-border)] pt-4">
               <button
                 type="button"
                 aria-expanded={selling}
-                onClick={() => setSelling(!selling)}
-                className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-medium transition-colors bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/15"
+                aria-disabled={listing || undefined}
+                onClick={() => { if (!listing) setSelling(!selling) }}
+                className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-medium transition-colors bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/15 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
               >
                 <Gavel className="size-4" />
                 Mettre aux enchères
