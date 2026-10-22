@@ -12,6 +12,7 @@ export const boolParam = z.enum(['1', 'true', '0', 'false']).optional().transfor
 export const pgText = z.string().refine((s) => !s.includes('\0'), 'Caractère invalide')
 export const Username = pgText.min(1).max(64)
 export const AuctionParams = z.object({ auctionId: z.uuid() })
+export const FriendshipParams = z.object({ friendshipId: z.uuid() })
 // GET /api/marketplace : page à partir de 1, gardée ici pour la clé du cache et en SQL (P24) ; tri validé en SQL (« Tri inconnu »).
 export const MarketQuery = z.object({ page: z.coerce.number().int().min(1, 'La page commence à 1').max(2_147_483_647).default(1),
   limit: z.coerce.number().int().optional(), sort: pgText.optional(), q: pgText.optional(), rarity: rarityList.optional(), mine: boolParam,
