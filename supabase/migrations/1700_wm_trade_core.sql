@@ -152,8 +152,8 @@ begin
   return wm.idem_store(p_uid, p_idem, jsonb_build_object('auction_id', a.id, 'id', a.id, 'end_at', a.end_at));
 end $$;
 
--- 1 à 50 copies uniques, une unité chacune, en une passe ensembliste (D§7.3) ; dans failed, dans l'ordre reçu : mes copies d'une carte promise
--- dans un échange en attente (M4-10), puis les ids d'un autre ou inconnus.
+-- 1 à 50 copies uniques, une unité chacune, en une passe ensembliste (D§7.3) ; failed : chaque id refusé dans l'ordre reçu, avec le message
+-- du verrou d'échange si la copie est à moi (M4-10), sinon 403.
 create or replace function wm.bulk_discard(p_uid uuid, p_ids uuid[], p_idem text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare

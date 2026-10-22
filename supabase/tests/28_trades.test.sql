@@ -106,11 +106,11 @@ do $$ declare a uuid := pg_temp.player('Verrou1'); b uuid := pg_temp.player('Ver
   assert wm.my_collection(a) -> 'pendingTradeCardIds' = '[]', 'échange échu dans pendingTradeCardIds';
 end $$;
 
--- create_auction (M4-10) : copie verrouillée, autre copie de la même carte (par id de copie ou id catalogue) → 409 ; copie d'un autre,
--- même verrouillée, → 403 d'abord ; copie libre → mise en vente.
+-- create_auction (M4-10) : copie verrouillée, autre copie de la même carte (par id de copie ou id catalogue) → 409 ; copie d'un autre
+-- d'une carte verrouillée pour moi → 403 d'abord ; copie libre → mise en vente.
 do $$ declare a uuid := pg_temp.player('Vente1'); b uuid := pg_temp.player('Vente2');
   x uuid := pg_temp.card('Vente X'); y uuid := pg_temp.card('Vente Y'); z uuid := pg_temp.card('Vente Z');
-  ka uuid := pg_temp.copy(a, x); kb uuid := pg_temp.copy(b, y); q text := 'select wm.create_auction(%L, %L, 10, 60)'; r jsonb;
+  ka uuid := pg_temp.copy(a, x); kb uuid := pg_temp.copy(b, y); kbx uuid := pg_temp.copy(b, x); q text := 'select wm.create_auction(%L, %L, 10, 60)'; r jsonb;
   d jsonb := '{"status":409,"error":"Cette carte est déjà engagée dans un échange en attente","message":"Cette carte est déjà engagée dans un échange en attente"}';
   begin
   perform pg_temp.friends(a, b);
@@ -118,23 +118,23 @@ do $$ declare a uuid := pg_temp.player('Vente1'); b uuid := pg_temp.player('Vent
   assert pg_temp.err(format(q, a, ka)) = d, coalesce(pg_temp.err(format(q, a, ka))::text, 'accepté');
   assert pg_temp.err(format(q, a, pg_temp.copy(a, x))) = d, 'seconde copie libre de X';
   assert pg_temp.err(format(q, a, x)) = d, 'id catalogue de X';
-  assert pg_temp.err(format(q, a, kb)) = '{"status":403,"code":"42501","error":"Vous ne possédez pas cette carte","message":"Vous ne possédez pas cette carte"}',
-    'copie d''un autre';
+  assert pg_temp.err(format(q, a, kbx)) = '{"status":403,"code":"42501","error":"Vous ne possédez pas cette carte","message":"Vous ne possédez pas cette carte"}',
+    'copie d''un autre, carte X verrouillée pour moi';
   r := wm.create_auction(a, pg_temp.copy(a, z), 10, 60);
   assert (select array_agg(k order by k) from jsonb_object_keys(r) k) = '{auction_id,end_at,id}', r::text;
   assert (select count(*) from public.auctions where seller_id = a) = 1, 'une seule vente';
 end $$;
 
--- bulk_discard (M4-10, P25) : la copie verrouillée va dans failed avec le message du verrou, la copie d'un autre avec le 403, dans l'ordre
--- reçu ; le reste passe ; la copie verrouillée garde son count.
+-- bulk_discard (M4-10, P25) : chaque id de failed dans l'ordre reçu (copie d'un autre avant la copie verrouillée), avec le message du verrou
+-- si la copie est à moi, sinon 403 ; le reste passe ; la copie verrouillée garde son count.
 do $$ declare a uuid := pg_temp.player('Defausse1'); b uuid := pg_temp.player('Defausse2');
   ka uuid := pg_temp.copy(a, pg_temp.card('Défausse X'), 2); kw uuid := pg_temp.copy(a, pg_temp.card('Défausse W'));
   kb uuid := pg_temp.copy(b, pg_temp.card('Défausse Y')); r jsonb; begin
   perform pg_temp.trade(a, b, array[ka]);
-  r := wm.bulk_discard(a, array[ka, kw, kb]);
+  r := wm.bulk_discard(a, array[kb, kw, ka]);
   assert r = jsonb_build_object('discarded_count', 1, 'failed', jsonb_build_array(
-    jsonb_build_object('id', ka, 'reason', 'Cette carte est déjà engagée dans un échange en attente'),
-    jsonb_build_object('id', kb, 'reason', 'Vous ne possédez pas cette carte'))), r::text;
+    jsonb_build_object('id', kb, 'reason', 'Vous ne possédez pas cette carte'),
+    jsonb_build_object('id', ka, 'reason', 'Cette carte est déjà engagée dans un échange en attente'))), r::text;
   assert (select count from public.user_cards where id = ka) = 2, 'copie verrouillée entamée';
   assert not exists (select from public.user_cards where id = kw), 'copie libre restée';
   assert (select wikibidous_balance from public.profiles where id = a) = 1, 'gain de défausse';
