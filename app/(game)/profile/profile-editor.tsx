@@ -110,15 +110,16 @@ export function ProfileEditor() {
   })
 
   // Écriture d'une section par apiOnce. Lève le texte de l'échec, avec l'erreur en cause : refus du serveur, ou issue incertaine (5xx, réseau,
-  // 2xx au corps illisible) dont apiOnce garde la clé.
-  async function send<T>(part: Part, intent: string, path: string, init: RequestInit): Promise<T> {
+  // 2xx au corps illisible ou sans sa clé, `valid`) dont apiOnce garde la clé.
+  async function send<T>(part: Part, intent: string, path: string, init: RequestInit, valid: (r: T) => boolean): Promise<T> {
+    // Seule la clé de cette intention vaut encore : une autre, gardée, rejouerait sa réponse stockée (X incertain, puis Y, puis X : le X
+    // stocké, la base à Y). Chaque écriture pose une valeur : la refaire sous une clé neuve est sans danger.
+    for (const k of keys.current[part].keys()) if (k !== intent) keys.current[part].delete(k)
     gens.current[part]++
     writing.current.add(part)
     try {
       const r = await apiOnce<T | null>(keys.current[part], intent, path, init)
-      if (!r) throw new Error('Réponse illisible')
-      // Réponse lue : les autres clés gardées de la section ne valent plus (choix X incertain, puis Y, puis X : le X stocké, la base à Y).
-      keys.current[part].clear()
+      if (!r || !valid(r)) throw new Error('Réponse illisible')
       return r
     } catch (e) {
       throw new Error(userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'), { cause: e })
@@ -148,7 +149,8 @@ export function ProfileEditor() {
 
   // username lu en clair dans sa ligne : encodé dans l'URL de l'API (pseudo hérité).
   const patch = (part: RowPart, intent: string, body: object) =>
-    send<ProfileView>(part, intent, `/api/profile/${encodeURIComponent((row as Row).username)}`, { method: 'PATCH', body: JSON.stringify(body) })
+    send<ProfileView>(part, intent, `/api/profile/${encodeURIComponent((row as Row).username)}`, { method: 'PATCH', body: JSON.stringify(body) },
+      (r) => !!r.profile)
   const apply = (field: (typeof FIELD)[RowPart], r: ProfileView) => setRow((old) => old && { ...old, [field]: r.profile[field] ?? null })
 
   // Section seule : son échec en alerte, attaché à son état au départ.
@@ -204,10 +206,9 @@ export function ProfileEditor() {
     setSending(null)
   })
 
+  const showcaseWrite = (intent: string, init: RequestInit) => send<Mine>('showcase', intent, '/api/showcase', init, (r) => Array.isArray(r.showcase))
   const putSlot = (position: number, userCardId: string) => guard('showcase', async () => {
-    const r = await send<Mine>('showcase', `showcase:${position}:${userCardId}`, '/api/showcase', {
-      method: 'PUT', body: JSON.stringify({ position, user_card_id: userCardId }),
-    })
+    const r = await showcaseWrite(`showcase:${position}:${userCardId}`, { method: 'PUT', body: JSON.stringify({ position, user_card_id: userCardId }) })
     setSlots(r.showcase)
     toast('Vitrine mise à jour.')
     // L'ajout disparaît avec le sélecteur : le focus va à « Changer » du même emplacement (son premier bouton).
@@ -215,7 +216,7 @@ export function ProfileEditor() {
     setPicker(null)
   })
   const removeSlot = (position: number) => act('showcase', async () => {
-    const r = await send<Mine>('showcase', `unshowcase:${position}`, '/api/showcase', { method: 'DELETE', body: JSON.stringify({ position }) })
+    const r = await showcaseWrite(`unshowcase:${position}`, { method: 'DELETE', body: JSON.stringify({ position }) })
     setSlots(r.showcase)
     toast('Carte retirée de la vitrine.')
     refocus.current = () => root.current?.querySelector<HTMLElement>(`[data-slot="${position}"] button`)

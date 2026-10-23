@@ -564,31 +564,36 @@ test('/profile, avatar au clavier : la copie à image et une copie du seed « Sa
   expect(column(me, 'avatar_url')).toBe('<null>')
 })
 
-test('/profile, avatar : X à la réponse perdue (l\'alerte dans la modale), puis Y, puis X → X part sous une clé neuve et tient en base', async ({ page, login }) => {
+// Deux réponses perdues de suite, X puis Y : la clé gardée de X rejouerait sa réponse stockée (« Avatar changé. », la base restée à Y).
+test('/profile, avatar : X puis Y à la réponse perdue (l\'alerte dans la modale), puis X → X part sous une clé neuve et tient en base', async ({ page, login }) => {
   const me = await viewer(login)
   const [x, y] = [imageCopy(me), imageCopy(me)]
   const keys: string[] = []
   page.on('request', (r) => { if (r.method() === 'PATCH' && profileApi(new URL(r.url()))) keys.push(r.headers()['idempotency-key'] ?? '') })
   const avatarOf = () => sql(`select coalesce(avatar_user_card_id::text, '<null>') from public.profiles where id = :'uid'`, { uid: me.uid })
-  await edit(page)
-  const change = region(page, 'Avatar').getByRole('button', { name: 'Changer l\'avatar', exact: true })
-  const dialog = page.getByRole('dialog', { name: 'Choisir ton avatar' })
-  // Le serveur pose X, la réponse se perd : issue inconnue, apiOnce garde la clé.
-  await routeOnce(page, profileApi, async (r) => {
+  // Le serveur écrit, la réponse se perd : issue inconnue, apiOnce garde la clé.
+  const lose = () => routeOnce(page, profileApi, async (r) => {
     await r.fetch()
     await r.abort()
   }, isPatch)
-  await change.click()
+  await edit(page)
+  await region(page, 'Avatar').getByRole('button', { name: 'Changer l\'avatar', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Choisir ton avatar' })
+  // « Annuler » sans aria-disabled : le choix précédent est fini.
+  const idle = () => expect(dialog.getByRole('button', { name: 'Annuler' })).not.toHaveAttribute('aria-disabled')
+  await lose()
   await dialog.getByRole('button', { name: titleOf(x), exact: true }).click()
   await expect(dialog.getByRole('alert')).toHaveText(UNSURE)
+  await idle()
   expect(avatarOf()).toBe(x)
+  await lose()
   await dialog.getByRole('button', { name: titleOf(y), exact: true }).click()
-  await expect(dialog).toHaveCount(0)
-  expect(avatarOf()).toBe(y)
-  // La clé de X, gardée, rejouerait la réponse stockée sans rien écrire : la réponse de Y l'a oubliée.
-  await change.click()
+  await expect.poll(avatarOf).toBe(y)
+  await idle()
+  await expect(dialog.getByRole('alert')).toHaveText(UNSURE)
   await dialog.getByRole('button', { name: titleOf(x), exact: true }).click()
   await expect(dialog).toHaveCount(0)
+  await expect(toasts(page)).toContainText('Avatar changé.')
   expect(avatarOf()).toBe(x)
   expect(keys).toHaveLength(3)
   expect(new Set(keys).size).toBe(3)
@@ -655,6 +660,47 @@ test('/profile, sélecteur : 50 copies par page, « Charger la suite », « Filt
   await dialog.getByRole('button', { name: 'Annuler' }).click()
   await expect(dialog).toHaveCount(0)
   await expect(add).toBeFocused()
+})
+
+test('/profile, sélecteur : la lecture filtrée en échec, « Réessayer » relit sous le même filtre', async ({ page, login }) => {
+  const me = await viewer(login)
+  const copy = imageCopy(me)
+  giveCopies(me, 'C')
+  await edit(page)
+  await addAt(page, 1).click()
+  const dialog = page.getByRole('dialog', { name: 'Choisir une carte pour la vitrine' })
+  const cards = dialog.locator('div[class*="glow-"]')
+  await expect(cards).toHaveCount(2)
+  await routeOnce(page, (u) => u.pathname === '/api/my-collection' && u.searchParams.has('q'), (r) => r.fulfill({ status: 500 }))
+  const filter = dialog.getByRole('searchbox', { name: 'Filtrer mes cartes' })
+  await filter.fill('Zz image e2e')
+  await filter.press('Enter')
+  await expect(dialog.getByRole('alert')).toHaveText(LOAD_FAILED)
+  await dialog.getByRole('button', { name: 'Réessayer' }).click()
+  await expect(dialog.getByRole('button', { name: titleOf(copy), exact: true })).toBeVisible()
+  await expect(cards).toHaveCount(1)
+  await expect(filter).toHaveValue('Zz image e2e')
+})
+
+// Corps JSON d'un 2xx sans sa clé (jamais rendu par nos routes) : une issue incertaine, jamais une page qui plante.
+test('/profile, écriture à 2xx sans sa clé ({}) : vitrine et bio → l\'alerte d\'issue incertaine, la page reste', async ({ page, login }) => {
+  const me = await viewer(login)
+  const copy = imageCopy(me)
+  await edit(page)
+  await routeOnce(page, '**/api/showcase', (r) => r.fulfill({ json: {} }), (r) => r.request().method() === 'PUT')
+  await addAt(page, 1).click()
+  const dialog = page.getByRole('dialog', { name: 'Choisir une carte pour la vitrine' })
+  await dialog.getByRole('button', { name: titleOf(copy), exact: true }).click()
+  await expect(dialog.getByRole('alert')).toHaveText(UNSURE)
+  await dialog.getByRole('button', { name: 'Annuler' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(region(page, 'Vitrine (0/4)')).toBeVisible()
+  await routeOnce(page, profileApi, (r) => r.fulfill({ json: {} }), isPatch)
+  const about = region(page, 'À propos')
+  await about.getByRole('textbox', { name: 'À propos' }).fill('Bonjour')
+  await about.getByRole('button', { name: 'Enregistrer' }).click()
+  await expect(about.getByRole('alert')).toHaveText(UNSURE)
+  await expect(h1(page)).toHaveText('Profil')
 })
 
 // PF17 : la page gardée par Activity relit sa ligne et sa vitrine à chaque affichage.

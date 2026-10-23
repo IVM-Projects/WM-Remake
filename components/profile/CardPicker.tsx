@@ -11,7 +11,7 @@ import { api } from '@/lib/api'
 
 const PAGE = 50
 const field = 'min-h-11 w-full rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm'
-type List = { q: string; page: number; items: OwnedItem[]; total: number }
+type List = { page: number; items: OwnedItem[]; total: number }
 
 // Choix d'une de ses copies (/profile), lues par pages de 50 dans /api/my-collection. Avatar : une copie sans image utilisable (M4b-6) reste
 // visible, sans clic, légendée « Sans image ». onPick lève le texte d'un refus ou d'une issue incertaine : la modale le montre et reste ouverte.
@@ -26,29 +26,33 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
   const inflight = useRef(false)
   // Génération : la réponse d'un filtre ou d'une page quittés est jetée.
   const gen = useRef(0)
+  // Filtre appliqué (envoyé sur Entrée) : relu par « Réessayer », « Charger la suite » et chaque affichage, même quand sa lecture a échoué.
+  const q = useRef('')
   const title = useRef<HTMLHeadingElement>(null)
 
   // Page 0 : la liste remplacée ; suivante : ajoutée, sans reprendre une copie déjà listée (pages par décalage). Échec ou 2xx sans
   // `collection` (corps illisible : api() rend null) : l'alerte et « Réessayer » à la place de la grille.
-  const read = (q: string, page: number) => {
+  const read = (page: number) => {
     const g = ++gen.current
-    void api<{ collection: OwnedItem[]; total: number } | null>(`/api/my-collection?${new URLSearchParams({ ...(q ? { q } : {}), page: String(page) })}`)
+    const text = q.current
+    void api<{ collection: OwnedItem[]; total: number } | null>(`/api/my-collection?${new URLSearchParams({ ...(text ? { q: text } : {}), page: String(page) })}`)
       .then((r) => (Array.isArray(r?.collection) ? r : null), () => null)
       .then((r) => {
         if (g !== gen.current) return
         setLoading(false)
         setFailed(!r)
-        if (r) setList((l) => ({ q, page, total: r.total, items: page && l ? [...l.items, ...r.collection.filter((c) => !l.items.some((x) => x.id === c.id))] : r.collection }))
+        if (r) setList((l) => ({ page, total: r.total, items: page && l ? [...l.items, ...r.collection.filter((c) => !l.items.some((x) => x.id === c.id))] : r.collection }))
       })
   }
   // Lue à l'ouverture et à chaque affichage (Activity compris), sous le filtre appliqué.
-  const onShow = useEffectEvent(() => read(list?.q ?? '', 0))
+  const onShow = useEffectEvent(() => read(0))
   useEffect(() => onShow(), [])
 
   function filter(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    q.current = String(new FormData(e.currentTarget).get('q') ?? '').trim()
     setList(null)
-    read(String(new FormData(e.currentTarget).get('q') ?? '').trim(), 0)
+    read(0)
   }
 
   async function pick(userCardId: string) {
@@ -88,7 +92,7 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
         <LoadError onRetry={() => {
           title.current?.focus()
           setFailed(false)
-          read(list?.q ?? '', 0)
+          read(0)
         }} />
       ) : !list ? (
         <Loading label="Chargement de la collection" />
@@ -109,7 +113,7 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
             <button type="button" aria-disabled={loading || undefined} onClick={() => {
               if (loading) return
               setLoading(true)
-              read(list.q, list.page + 1)
+              read(list.page + 1)
             }} className={`${ghost} justify-center`}>
               Charger la suite
             </button>
