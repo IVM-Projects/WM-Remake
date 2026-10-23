@@ -1,6 +1,6 @@
 # Suivi des points différés
 
-Relevés par les revues des tâches et des branches du M0 au M3, triés par jalon : chaque point est à traiter au plus tard au jalon indiqué. Les points du M0 gardent leur libellé d'origine (anglais) ; ceux du M1 au M3 sont résumés en français. « Dette » regroupe ce qui n'a pas de jalon naturel : à prendre quand on retouche le fichier concerné.
+Relevés par les revues des tâches et des branches du M0 au M4a, triés par jalon : chaque point est à traiter au plus tard au jalon indiqué. Les points du M0 gardent leur libellé d'origine (anglais) ; ceux du M1 au M4a sont résumés en français. « Dette » regroupe ce qui n'a pas de jalon naturel : à prendre quand on retouche le fichier concerné.
 
 ## Réglés au M1
 
@@ -13,7 +13,7 @@ La section M2 est soldée (2026-10-21) ; ses points non traités sont rangés ci
 - **Cache partagé de `/api/cards`** (D§9.5, M2-14, Task 15) : `wm.cards_page_shared` en `'use cache: remote'` (tag `catalog`), overlay par joueur non caché, revalidé par `POST /api/cron/revalidate` à la fin de chaque chargement.
 - **Pool de tirage par *swap-with-last*** (C8, M2-10, Task 10) : `wm.pool_add` et `wm.pool_remove` dans le merge et la finalisation ; `wm.rebuild_draw_pool` ne sert plus qu'au seed du banc.
 - Tirage : branche « pool manqué » (503 `catalog_empty`) et cartes `hide_image`/`nsfw_image` tirables testées ; χ² sur 100 000 tirages de `wm.pick_card` dans `test:db` (M2-11, Task 10).
-- **Cartes d'essai** : elles sortent du pool au premier vrai `catalog_finalize` de la démo, donc du catalogue et de la recherche (M2-12, M2-13) ; le banc garde le seed comme catalogue de développement. Leur suppression reste une étape humaine (voir « En attente d'étapes humaines »).
+- **Cartes d'essai** : elles sortent du pool au premier vrai `catalog_finalize` de la démo, donc du catalogue et de la recherche (M2-12, M2-13) ; le banc garde le seed comme catalogue de développement. Leur suppression, étape humaine, est faite sur la démo depuis le 2026-10-22 (`docs/superpowers/HANDOFF.md`).
 - « Comment ça marche ? » : seuils de rareté lus dans `lib/rarity.ts`, la constante du pipeline (M2-20) ; périodes et stock reportés au M6.
 - Du M0 : `persist-credentials: false` sur chaque `actions/checkout` (M2-20).
 - Dette (R33) : garde contre un `DELETE`/`UPDATE` sans `WHERE` dans `supabase/migrations/*.sql` (`scripts/check-dml.ts`, en tête de `test:db`, M2-20).
@@ -28,13 +28,20 @@ La section M3 est soldée (2026-10-22) ; ses points non pris sont rangés ci-des
 - NUL dans un texte de requête qui atteint le SQL (`/api/cards`, `/api/my-collection`, collection d'un profil, pseudo) → 400 « Caractère invalide » au lieu d'un 22P05 → 500 (revue finale).
 - E2E : `collection.spec.ts:426` et `:538` instables → `routeOnce` (`e2e/fixtures.ts`) à la place de tous les `page.route(…, { times: 1 })` (Task 15).
 
-## M4 — Échanges et social
+## Réglés au M4a
 
-- **Verrou d'échange** (C13, M3-9) : une copie engagée dans un échange ne doit pas pouvoir être défaussée, unitairement ou en masse, ni mise en vente : 409 « Cette carte est déjà engagée dans un échange en attente » ajouté en même temps dans `create_auction`, `discard` et `bulk_discard` (`shortcut:` en commentaire) (M3).
-- **Notifications** (M3-8) : insérées depuis le M3 (`auction_outbid`, `auction_won`, `auction_sold`, `auction_unsold`, `wishlist_listed`, `data` en snake_case), sans lecteur : cloche, `PATCH /api/notifications`, `push_outbox` et Web Push (M3).
-- `wm.idem_claim` garde la clé par (joueur, clé), sans empreinte du corps ni de la route : la même clé avec un autre corps rejoue la première réponse ; atténué côté client par une intention par corps complet (M3, revue finale).
-- **Amitié pour `wishlisted_by` et `owned_by`** : au M1, ces filtres ne servent que pour soi-même ou un profil public (`shortcut:`).
-- Hérités du M0 : owner change must clear avatar_user_card_id and the old owner's tag links; discard term in check_invariants.
+La section M4 est soldée pour les amis et les échanges (2026-10-23) ; le reste passe au M4b ci-dessous, et les reports du M4a sont marqués « (M4a) ». Décisions M4-1 à M4-18, P1 à P26 et rulings : `docs/decisions-graphify.md`.
+
+- **Verrou d'échange** (C13, M3-9, M4-2) : une copie engagée dans un échange en attente ne peut plus être défaussée, unitairement ou en masse, ni mise en vente (409 « Cette carte est déjà engagée dans un échange en attente », `wm.card_locked` dans `create_auction`, `discard` et `bulk_discard`).
+- **Lecteur des notifications** (M3-8, M4-13) : cloche par PostgREST toutes les 30 s (store partagé), panneau `GET /api/notifications` (50) et `PATCH {ids}` ou `{}` ; le marché et les échanges y écrivent dans leur transaction. `push_outbox` et Web Push restent au M4b.
+- **Amitié pour `wishlisted_by` et `owned_by`** (`wm.collection_filter`, 1710) : la collection d'un autre se lit si son profil est public ou s'il est ami, sa liste de souhaits si ami.
+- Hérités du M0 : un changement de propriétaire (acceptation d'un échange, `wm.trade_move`) efface les liens d'étiquettes de l'ancien propriétaire et `avatar_user_card_id` ; le terme de défausse de `check_invariants` (`discard_wb`) est en place, et le terme `trade_money` s'y ajoute (P8).
+
+## M4b — Profil, vitrine, messages, signalements, Web Push
+
+- **Profil et vitrine** (M4-1) : `0006_mirror_social.sql`, `18xx` ; le M4b redéfinit `wm.trade_move` pour vider aussi les emplacements de vitrine des copies déplacées (P13) (M4a).
+- **Messages privés, signalements, Web Push** : `push_outbox`, job `9020_*`, un push reçu sur un point d'entrée de test en CI (D§13) (M3, M4a).
+- **P21** : `friendOwners` de `/api/cards`, lien de la pastille « ami possède » et collection d'un profil privé pour ses amis, avec le profil (M4a).
 
 ## M5 — Batailles, guildes, progression
 
@@ -76,6 +83,8 @@ La section M3 est soldée (2026-10-22) ; ses points non pris sont rangés ci-des
 - **`e2e/selectors.spec.ts`** : vérifier que `#marketplace-auction-*` reste unique dans le document avec Activity (M3-2) (M3).
 - Densité du marché au téléphone : une tuile par ligne sous ≈ 420 px (M3-R12) (M3).
 - Focus du marché (revue finale du M3, parqués) : l'effet de focus du détail déplace le focus quand rien ne l'avait perdu (1re mise reçue au poll) ; un 404 au poll met le focus sur `body` ; rang de focus périmé de la liste ; double focus au succès d'une baisse de prix.
+- **Seconde cloche** du R:138 (P14) : la disposition n'en rend qu'une (`app/(game)/layout.tsx`) ; le store en sert N ; à poser avec `e2e/selectors.spec.ts` (M4a).
+- Amis et échanges, ergonomie (rulings du M4a, parqués) : garde `hold` de la relecture après un refus non testée (`/trades/[id]`) ; axe sans l'état bloqué ni l'état d'erreur du composer ; `/trades/new` tapé à la main sans `with` garde le dernier ami (aucun lien n'y mène) ; marque « Déjà dans un échange » sur liste plate (une autre pile de la même carte reste marquée) ; effacement de l'alerte d'incertitude par un bornage sans E2E ; au-delà de 200 unités, message zod au lieu du « Au plus 100 cartes par côté » du SQL ; décision de garder la liste prise au départ d'une lecture de `/friends` (≈ 1 s à froid sur un 5xx passager) ; cible de focus par rang qui peut tomber sur le « Retirer » d'une autre demande envoyée ; filtre du composer non contrôlé pendant l'envoi ; chaque marquage du panneau relit `/friends` ; `open()` des E2E sans délai borné ; clés oubliées par une relecture de fond pendant un « Ajouter » perdu (refus serveur au lieu d'un rejeu) ; nettoyage de `e2e/trade-journey.spec.ts` sur un timeout (base recréée à chaque passe) (M4a).
 
 ## M8 — Charge et démo
 
@@ -91,6 +100,9 @@ La section M3 est soldée (2026-10-22) ; ses points non pris sont rangés ci-des
 - **Disque de la démo** (M2) : 0,85 Go sur 2 Go le 2026-10-21, dont ≈ 0,52 Go de WAL après les deux chargements (l'offre Free en inclut 1 Go). À relire au premier run planifié : le WAL d'un passage mensuel s'ajoute avant d'être recyclé. Depuis le M3, `cron.job_run_details` reçoit ≈ 17 000 lignes par jour, purgées par `wm-cron-history` : à relire, aucune ligne de `cron.job_run_details` de plus de 25 h (purge horaire à :17, rétention 24 h).
 - **Marché sur Pro** (M3-4) : refaire les benchs de `load/bench/` sur le PG17 hébergé ; ceux du M3 sont indicatifs (PG16 local, 4 vCPU, journalisé, `fsync` activé ; `docs/verifications.md`) (M3).
 - **Acceptation sous statistiques vides** (M4-6) : contrôle de disponibilité de `wm.trade_action` et première requête de `wm.trade_move` fragiles sous statistiques vides (`reltuples = 0` → boucle imbriquée qui parcourt toute `user_cards` pour chaque élément, 2,4 s observé au bench ; `docs/verifications.md`, M4a — Task 15) : `analyze` après un gros chargement, ou vérifier les plans au M8 (M4).
+- **Échanges sur Pro** (A5, M4-6) : refaire `load/bench/run.sh` (acceptation 100 ↔ 100, expiration de 5 000) sur le PG17 hébergé (S5) ; au M4a, bench local (p95 ≈ 100–113 ms) et une mesure sur la démo Free (190 ms de route, `docs/verifications.md`) (M4a).
+- `wm.profile_collection` calcule `pendingTradeCardIds` pour le profil d'un autre, qui le reçoit vide : une lecture pour rien par page (revue finale du M4a) (M4a).
+- Index `notifications (user_id, read)` si la cloche coûte : au M4a, la requête prend `notifications_user_idx` en plan générique, 0,09 ms pour 500 lignes (M4-13) (M4a).
 - **Plus de 64 sous-transactions par lot du cron** (P9) : au bench, la lecture de `wm.market_list()` passe de ≈ 10 ms avant un lot de 5 000 règlements à ≈ 25 ms à sa fin (8,6 → 17,8 ms au run du tour de correction), sans attente ni erreur ; cause non isolée (instantanés débordés, ou concurrence CPU sur 4 vCPU). Deux pistes : aucune mise à jour de `auctions` n'est HOT (0 sur 5 076 : `current_bid` est dans l'index de prix, chaque mise écrit dans les 9 index de la table) ; un lot de rattrapage de 5 000 (appel manuel, ou limite du cron relevée) tient les verrous des joueurs ≈ 6 s, plus que les 2 s de `lock_timeout` d'une mise (503 `BUSY`), quand le lot du cron (500) tient en ≈ 0,6 s (M3).
 - **Gonflement mensuel du tas sur Free** (M2) : ≈ 750 o par carte et par passage complet (776 et 744 o mesurés à la Task 13), que le `vacuum` rend sans réduire les fichiers ; `guardBeforeCopy` ne le compte pas. À surveiller au premier run planifié (le 3 du mois), puis à chaque passage, tant que la démo reste sur Free.
 - Formats d'image paginés ou sans miniature (TIFF, PDF, DjVu) → pas d'image (P5, `shortcut:`) (M2).
@@ -104,6 +116,7 @@ La section M3 est soldée (2026-10-22) ; ses points non pris sont rangés ci-des
 - Prérequis de `1400` sur le projet de l'exploitant : `pg_trgm` et `unaccent` dans `extensions`, schéma `wm_index` avant l'index, `CONCURRENTLY` depuis le runbook (commentaire d'en-tête présent).
 - Revérifier qu'aucun trigger étranger n'existe sur `auth.users` avant d'ajouter `wm_on_auth_user_created` (aucun sur la démo, Task 3).
 - Index hérités `user_cards_user_id_idx` et `user_cards_card_id_idx` devenus redondants.
+- Tout script qui supprime des cartes (comme celui des cartes d'essai, M2-12) : `trade_items.card_id` n'a pas de cascade ; supprimer d'abord les éléments d'échange de ces cartes (et leurs échanges en attente), sinon la suppression échoue (M4a).
 - Un nouveau compte démarre son horloge de régénération à la première synchronisation, pas à l'inscription (R8).
 - Hérités du M0 : `supabase migration repair` before any CLI db push (MCP stored timestamp versions); never replay 0002 alone (header comment added to 0002; add a runbook line); check_invariants at scale; confirm 40 waiters in the concurrency test; npm audit when eslint-config-next is patched; DUMP-S confirmations; main not a direct child of div.flex.h-dvh (restore or list in parity/allowed-diffs.yaml); classList[1] icon assertion; @theme regex and missing contrast pairs; contract type import layering; .test.sql COMMIT convention; redundant tags_user_id_idx; dispatch health.yml twice after merge to exercise the issue path; robots.txt Disallow vs noindex (consider allowing crawl + noindex).
 
@@ -131,6 +144,9 @@ La section M3 est soldée (2026-10-22) ; ses points non pris sont rangés ci-des
 - Marché, interface (M3, Tasks 11–13) : chemin « Réessayer » sans test ; `toBeInViewport` sans `ratio: 1` ; instantané client de `Countdown` (échue) gardé par l'E2E seulement ; un refus certain (409 dû à l'écriture récente d'un autre) ne réarme pas la relecture à 2,1 s, la page se corrige au poll suivant (≤ 10 s) ; re-clé de l'erreur, clé de l'erreur prise sur l'état affiché et relecture réarmée à 2,1 s après une issue inconnue sans test propre ; `prefetched` relevé à l'envoi, pas à la réponse ; écart étroit ref/effet où un refus peut être masqué par un poll qui en montre la cause ; clé de vente restante rejouée si le compte de la pile revient à la même valeur dans la même page ; course étroite (deux ventes de copies différentes, grille périmée au clic, issue inconnue) → focus sur `body` ; `onListed` sur grille périmée → tuile 0 ; rang gardé après une seconde issue inconnue et après une relance réussie sans test propre ; `maybeSold` périmé (sans effet).
 - Marché, parcours et bench (M3, Tasks 14–15) : Σ du parcours avec un 2e terme toujours 0 ; helper `timed` ; `cookieFor` sans la garde de longueur de `login` ; `getByText('Remportée')` non exact ; sortie de la copie du vendeur non vérifiée ; `settle.sql` sans `regle` sort en 0 avec un avertissement ; échecs du lecteur non comptés ; chemins d'erreur des gardes du bench jamais exercés.
 
+- **Empreinte serveur de l'`Idempotency-Key`** (M4-8), à faire seule : `wm.idem_claim` garde la clé par (joueur, clé), sans empreinte du corps ni de la route ; la même clé avec un autre corps rejoue la première réponse. Atténué côté client par une intention par corps complet (`apiOnce`) (M3, M4a).
+- Échanges, tests (M4a) : limite d'amis (`friend_limit`, désactivée) dépassable de N − 1 par N acceptations simultanées (`shortcut:`, `lock_users` à prendre avant de l'activer) ; lien d'étiquette posé par l'ancien propriétaire pendant une acceptation, qui survit invisible sur la copie déplacée (`shortcut:` dans `wm.trade_move`) ; `p_items` mal formé par SQL direct → 500 (22023, 22P02), filtré par zod sur HTTP.
+
 - Ops : le MCP Supabase demande une confirmation pour tout SQL contenant `DELETE`, même dans le corps d'une fonction ; sans elle, l'appel expire à 60 s. Les migrations concernées passent par le SQL Editor, avec la ligne d'historique ajoutée à la main (M1, `1200` à `1400` ; M2, `1500` à `1520` en un seul fichier ; M3, `0004`, `1600` à `1650` et `9000` en un seul `deploy-m3.sql`, M3-27).
 
 - Ops : un compte Auth sans profil (créé avant le trigger, ou par un outil qui contourne `/signup`) reste bloqué, `wm.lock_user` ne crée jamais un profil manquant. Rattrapage utilisé au M1 :
@@ -142,5 +158,5 @@ La section M3 est soldée (2026-10-22) ; ses points non pris sont rangés ci-des
 - **Démo** : script Turnstile réel avec la clé de site de test, changement de mot de passe (« Secure password change » désactivé) et déconnexion sur le Supabase hébergé, en-tête `alg` d'une vraie session : après les réglages Auth de `docs/superpowers/HANDOFF.md`.
 - **Auth de la démo** (ouverts depuis le M1) : vraies clés Turnstile à la place des clés de test (avec les deux variables Vercel), SMTP Brevo (étapes 4.3 et 4.4 de `docs/superpowers/HANDOFF.md`).
 - **Vérification visuelle du M2** (Task 17, Step 7) : derrière la porte, `/global-collection` montre de vraies cartes et les vrais totaux, la modale d'une carte avec image affiche « Image : <auteur>, <licence> » avec des liens qui marchent, `/credits` s'affiche ; résultat à consigner dans `docs/verifications.md`.
-- **Suppression des 2 000 cartes d'essai et de leurs copies** (M2-12) : destructive en production, différée, seulement avec l'accord de l'utilisateur. Elles sont hors du pool après le premier chargement ; 80 copies d'un joueur et 1 ligne de liste de souhaits les référencent (relevé du 2026-10-21 ; 18 copies le 2026-10-20, 64 obtenues depuis). Le script (`.superpowers/sdd/2026-10-21-m3-marche/m2-12-delete-seed.sql` jusqu'à la passation) traite d'abord le marché : les enchères `active` sur une carte d'essai sont réglées (`end_at` ramené à maintenant, puis `wm.settle_auction`), puis les enchères de ces cartes sont supprimées avec leurs mises, leur séquestre et leur file (cascade), ainsi que les notifications dont `data ->> 'card_id'` est une de ces cartes ; `wm.check_invariants()` = `[]` avant le `commit`. Répété sur des copies du banc d'avant et d'après le M3 (2 000 → 0 cartes, relance sans effet).
+- **Préversions Vercel** : rétention du projet `wmr` réglée le 2026-10-23 (1 jour pour les annulés, les erreurs et la pré-production, 30 jours pour la production) ; depuis b51d6a5, `vercel.json` ne crée plus de préversion pour `claude/*`. À relire : « Functions Storage » de l'onglet Usage sous les 10 Go du plan Hobby (M4a).
 - **Retirer `SUPABASE_DB_URL` des variables Vercel** (Production) : posée en plus par l'utilisateur, l'app ne la lit pas (seul `catalog.yml` en a besoin, comme secret GitHub) ; conseillé pour le moindre privilège.
