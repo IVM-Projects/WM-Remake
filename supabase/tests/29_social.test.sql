@@ -1,5 +1,5 @@
 -- Social (1800_wm_social_core.sql, puis 1810…1850) : config, index, avatar_url, vitrine hors échange et dans trade_move ; profil, vitrine et
--- collection d'un profil privé (1810) ; messages privés, débit, notification chat_message et synchronisation « lu » (1820).
+-- collection d'un profil privé (1810) ; messages privés, débit, notification chat_message et synchronisation « lu » (1820) ; signalements (1830).
 -- Une seule transaction pour tout le fichier (now() figé) : chaque bloc crée ses joueurs et ses cartes, et ne filtre que sur eux.
 
 -- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune) ; l'effet de p_sql n'est annulé que si p_sql lève.
@@ -477,14 +477,52 @@ do $$ declare a uuid := pg_temp.player('Sync1'); b uuid := pg_temp.player('Sync2
   assert (select not read from public.notifications where user_id = b and data ->> 'user_id' = d::text), 'ligne déjà lue comptée';
 end $$;
 
--- Volatilité des lectures (1810, 1820) : un create or replace sans le mot-clé repasserait en volatile. lock_timeout (P5, M4b-2) avant le
+-- Signalements (M4b-8, M4b-10, R:258) : un par couple, modifiable, '' efface les détails ; report_get rend toujours celui de p_uid, null pour une
+-- cible inconnue. Refus exacts sans écriture ; rejeu par la clé. Ni amitié exigée (A et B ne sont pas amis), ni notification.
+do $$ declare a uuid := pg_temp.player('Signal1'); b uuid := pg_temp.player('Signal2'); carol uuid := pg_temp.player('Signal3');
+  q text := 'select wm.report_upsert(%L, %L, %L, %L)'; r jsonb; d jsonb; begin
+  assert wm.report_get(a, b) = '{"report": null}', 'avant le signalement : ' || wm.report_get(a, b)::text;
+  r := wm.report_upsert(a, b, 'spam', 'pub');
+  assert r = '{"report":{"reason":"spam","details":"pub"}}' and wm.report_get(a, b) = r, r::text;
+  r := wm.report_upsert(a, b, 'cheating', '');
+  assert r = '{"report":{"reason":"cheating","details":null}}' and wm.report_get(a, b) = r, r::text;
+  assert (select count(*) from public.reports where reporter_id = a and reported_user_id = b) = 1, 'une seule ligne A → B';
+  assert wm.report_get(carol, b) = '{"report": null}' and wm.report_get(a, gen_random_uuid()) = '{"report": null}', 'signalement d''un autre';
+  r := wm.report_upsert(a, b, 'inappropriate_content', repeat('é', 500));
+  assert r -> 'report' ->> 'details' = repeat('é', 500), '500 caractères';
+  d := pg_temp.err(format(q, a, a, 'spam', null));
+  assert d = '{"status":400,"code":"invalid_request","error":"Tu ne peux pas te signaler toi-même",
+    "message":"Tu ne peux pas te signaler toi-même"}', coalesce(d::text, 'accepté');
+  d := pg_temp.err(format(q, a, b, 'abuse', null));
+  assert d = '{"status":400,"code":"invalid_request","error":"Motif de signalement inconnu","message":"Motif de signalement inconnu"}',
+    coalesce(d::text, 'accepté');
+  assert pg_temp.err(format(q, a, b, null, null)) = d, 'motif nul';
+  d := pg_temp.err(format(q, a, b, 'spam', repeat('é', 501)));
+  assert d = '{"status":400,"code":"invalid_request","error":"Les détails font au plus 500 caractères",
+    "message":"Les détails font au plus 500 caractères"}', coalesce(d::text, 'accepté');
+  d := pg_temp.err(format(q, a, gen_random_uuid(), 'spam', null));
+  assert d = '{"status":404,"error":"Joueur introuvable","message":"Joueur introuvable"}', coalesce(d::text, 'accepté');
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format(q, a, b, 'spam', null));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = '{"status":503,"code":"maintenance","error":"Maintenance en cours, reviens dans quelques minutes.",
+    "message":"Maintenance en cours, reviens dans quelques minutes."}', coalesce(d::text, 'accepté');
+  assert wm.report_get(a, b) = r and (select count(*) from public.reports where reporter_id = a) = 1, 'signalement écrit par un refus';
+  r := wm.report_upsert(a, carol, 'spam', 'k1', 'k-rep');
+  assert wm.report_upsert(a, carol, 'cheating', 'k2', 'k-rep') = r and wm.report_get(a, carol) = r
+    and r = '{"report":{"reason":"spam","details":"k1"}}', 'rejeu de la clé';
+  assert not exists (select from public.notifications where user_id in (a, b, carol)), 'notification d''un signalement';
+end $$;
+
+-- Volatilité des lectures (1810, 1820, 1830) : un create or replace sans le mot-clé repasserait en volatile. lock_timeout (P5, M4b-2) avant le
 -- premier verrou, la copie relue sous le verrou du profil, et les deux profils tenus avant le message ; chaque tâche ajoute ses fonctions.
 do $$ declare bad text; begin
   assert (select jsonb_object_agg(proname, provolatile::text) from pg_proc where pronamespace = 'wm'::regnamespace
-    and proname in ('profile_json', 'profile_get', 'showcase_json', 'my_showcase', 'profile_showcase', 'chat_conversations', 'chat_thread'))
+    and proname in ('profile_json', 'profile_get', 'showcase_json', 'my_showcase', 'profile_showcase', 'chat_conversations', 'chat_thread',
+      'report_get'))
     = '{"profile_json":"s","profile_get":"s","showcase_json":"s","my_showcase":"s","profile_showcase":"s","chat_conversations":"s",
-      "chat_thread":"s"}', 'volatilité des lectures';
-  bad := tests.lock_timeout_violations(array['profile_update', 'showcase_put', 'showcase_delete', 'chat_send']);
+      "chat_thread":"s","report_get":"s"}', 'volatilité des lectures';
+  bad := tests.lock_timeout_violations(array['profile_update', 'showcase_put', 'showcase_delete', 'chat_send', 'report_upsert']);
   assert bad is null, 'lock_timeout absent ou posé après un verrou : ' || bad;
   select string_agg(f, ', ') into bad from unnest(array['profile_update', 'showcase_put']) f,
     lateral (select prosrc s from pg_proc where oid = to_regproc('wm.' || f)) p

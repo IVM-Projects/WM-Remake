@@ -10,7 +10,8 @@
 # 2 b. Même clé, deux sessions (M4-8) : la seconde attend au moins 0,5 s, puis rejoue la réponse de la première ; un seul message, une
 #    seule chat_message non lue, un seul envoi compté.
 # 2 c. Envoi et marquage lu (B20), dans les deux ordres → une seule chat_message non lue, un seul message non lu.
-# 3. Signalement contre les deux profils pris dans l'ordre des id (Task 5, M4b-31), dans les deux sens → aucun 40P01.
+# 3. Signalement contre deux profils pris dans l'ordre des id (M4b-31) : un bloqueur prend L puis R for update, comme lock_users ; R signale
+#    L, puis L signale R → aucun 40P01, le signalement écrit après le bloqueur, entre 0,5 et 2 s.
 # 4. Réservation de l'outbox (Task 6) : deux push_claim(500) sur 1 000 lignes, la seconde servie sans attendre (skip locked), ensembles
 #    disjoints.
 set -euo pipefail
@@ -168,4 +169,27 @@ for pass in a b; do
   got="$(q -c "select (select count(*) from public.notifications where user_id = '$b' and type = 'chat_message' and not read
     and data ->> 'user_id' = '$a') || ' ' || (select count(*) from public.chat_messages where sender_id = '$a' and recipient_id = '$b' and not read)")"
   [[ $got == "1 1" ]] || fail "envoi et marquage lu, passe $pass : chat_message non lues, messages non lus : $got"
+done
+
+# 3. Signalement contre une acceptation : l'insertion vérifie ses deux clés étrangères dans l'ordre de leurs triggers, pas dans celui des id.
+# Sans le for key share order by id, dans l'un des deux sens elle tient R et attend L, que le bloqueur tient en attendant R : 40P01.
+x="$(player r1)"; y="$(player r2)"
+L="$(q -c "select least('$x'::uuid, '$y')")"; R="$(q -c "select greatest('$x'::uuid, '$y')")"
+for pass in 1 2; do
+  if [[ $pass == 1 ]]; then by=$R; on=$L; else by=$L; on=$R; fi
+  q -v VERBOSITY=verbose -c "begin; select from public.profiles where id = '$L' for update; select pg_sleep(1);
+    select from public.profiles where id = '$R' for update; commit;" >/dev/null 2>"$tmp/3b$pass" &
+  blocker=$!
+  sleeping "$tmp/3b$pass"
+  t0=$EPOCHREALTIME
+  # Échecs lus dans les sorties d'erreur, pour montrer un 40P01 de l'un ou de l'autre.
+  q -v VERBOSITY=verbose -c "set role service_role; select wm.report_upsert('$by', '$on', 'spam')" >/dev/null 2>"$tmp/3r$pass" || true
+  d="$(ms)"
+  wait "$blocker" || true
+  echo "18_social_concurrency : signalement, passe $pass : servi en $d ms" >&2
+  refusals . "$tmp/3b$pass" "$tmp/3r$pass"  # aucun 40P01 ni 55P03, puis aucune erreur du tout
+  quiet "$tmp/3b$pass" "$tmp/3r$pass"
+  (( d >= 500 && d <= 2000 )) || fail "signalement, passe $pass : servi en $d ms (0,5 à 2 s)"
+  got="$(q -c "select reason from public.reports where reporter_id = '$by' and reported_user_id = '$on'")"
+  [[ $got == spam ]] || fail "signalement, passe $pass : motif « $got »"
 done
