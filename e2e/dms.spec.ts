@@ -105,10 +105,22 @@ test('fil au clavier : « Aucun message pour l\'instant. », « Salut » puis En
   await page.keyboard.press('Shift+Enter')
   await page.keyboard.type('b')
   await expect(field(page)).toHaveValue('a\nb')
-  // Entrée pendant une composition IME : elle valide la composition, sans envoyer.
+  // Entrée qui valide une composition IME (Chrome : isComposing ; Safari : keyCode 229 après compositionend) et touche maintenue
+  // (repeat) : rien n'est envoyé.
   await field(page).dispatchEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true })
+  await field(page).evaluate((el) => {
+    const e = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    Object.defineProperty(e, 'keyCode', { value: 229 })
+    el.dispatchEvent(e)
+  })
+  await field(page).dispatchEvent('keydown', { key: 'Enter', repeat: true, bubbles: true })
   await expect(field(page)).toHaveValue('a\nb')
-  expect(keys).toHaveLength(1)
+  // Un envoi réel ensuite : un POST parti avant lui serait compté.
+  await field(page).fill('fin')
+  await page.keyboard.press('Enter')
+  await expect(bubble(page, friend, 'fin')).toHaveCount(1)
+  await expect(field(page)).toHaveValue('')
+  expect(keys).toHaveLength(2)
   expect(sent(me, 'a\nb')).toBe('0')
 })
 
@@ -186,9 +198,10 @@ test('liste : deux conversations, l\'une à 2 non lus → la pastille « 2 » et
   await expect(entry(page, a).getByText('2', { exact: true })).toHaveCount(0)
 })
 
-test('pair inconnu (404) ou adresse invalide (400) : « Joueur introuvable », focalisé, et « Retour aux messages »', async ({ page, login }) => {
+test('pair inconnu (404) ou adresse qui n\'est pas un UUID (abc, .) : « Joueur introuvable », focalisé, et « Retour aux messages »', async ({ page, login }) => {
   await viewer(login)
-  for (const peer of [randomUUID(), 'abc']) {
+  // `.` : /api/chat/. se réduirait à /api/chat/, qui mène à la liste (lecture en échec sans fin) ; refusé avant toute requête.
+  for (const peer of [randomUUID(), 'abc', '.']) {
     await page.goto(`/dms?with=${peer}`)
     await page.locator('main [data-ready]').waitFor()
     await expect(page.getByRole('heading', { level: 2, name: 'Joueur introuvable' })).toBeFocused()
@@ -308,6 +321,86 @@ test('issue incertaine (B15) : le poll montre la bulle et efface l\'alerte, Entr
   expect(keys).toHaveLength(7)
   expect(keys[6]).not.toBe(keys[5])
   expect(sent(me, 'Encore')).toBe('2')
+})
+
+test('2xx lisible sans « message » : envoyé (champ vidé, sans alerte, la bulle au poll) ; 2xx illisible : incertain, Entrée rejoue la même clé', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const keys = postKeys(page, friend)
+  await page.clock.install()
+  await open(page, friend)
+  const answer = (reply: { status: number; json?: object; body?: string }) => routeOnce(page, '**/api/chat/*', async (r) => {
+    await r.fetch()
+    await r.fulfill(reply)
+  }, (r) => r.request().method() === 'POST')
+
+  // apiOnce a oublié la clé d'un 2xx lisible : le renvoyer doublerait le message.
+  await answer({ status: 201, json: {} })
+  await field(page).fill('Salut')
+  await field(page).press('Enter')
+  await expect(field(page)).toHaveValue('')
+  await expect(alert(page)).toHaveCount(0)
+  const polled = threadRead(page, friend)
+  await page.clock.runFor(5_000)
+  await polled
+  await expect(bubble(page, friend, 'Salut')).toHaveCount(1)
+  expect(sent(me, 'Salut')).toBe('1')
+
+  // Corps illisible : la clé est gardée, la relance rejoue.
+  await answer({ status: 201, body: 'x' })
+  await field(page).fill('Bonjour')
+  await field(page).press('Enter')
+  await expect(alert(page)).toHaveText(UNSURE)
+  await expect(field(page)).toHaveValue('Bonjour')
+  await field(page).press('Enter')
+  await expect(field(page)).toHaveValue('')
+  await expect(bubble(page, friend, 'Bonjour')).toHaveCount(1)
+  expect(keys).toHaveLength(3)
+  expect(keys[2]).toBe(keys[1])
+  expect(sent(me, 'Bonjour')).toBe('1')
+})
+
+test('Activity : une lecture encore en vol quand le fil est caché ne marque rien lu ; réaffiché, il est relu puis marqué', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  // Lectures du fil et marquages, dans l'ordre.
+  const events: string[] = []
+  page.on('request', (r) => {
+    if (r.method() === 'PATCH' && new URL(r.url()).pathname === '/rest/v1/chat_messages') events.push('PATCH')
+    else if (isThread(r, friend)) events.push('GET')
+  })
+  await page.clock.install()
+  await open(page, friend)
+  await expect(log(page, friend)).toHaveText('Aucun message pour l\'instant.')
+  const id = say(friend, me, 'Coucou')
+  // Le passage suivant du poll retenu jusqu'à ce que la page soit cachée.
+  const { release, held } = hold()
+  await routeOnce(page, '**/api/chat/*', async (r) => {
+    await held
+    await r.fallback()
+  }, (r) => r.request().method() === 'GET')
+  const polled = page.waitForRequest((r) => isThread(r, friend))
+  await page.clock.runFor(5_000)
+  await polled
+  const nav = page.locator('nav a[href="/friends"]').first()
+  await hydrated(nav)
+  await page.evaluate(() => void Object.assign(window, { __spa: true }))
+  await nav.click()
+  await expect(page).toHaveURL('/friends')
+  await expect(page.locator('main h1').filter({ visible: true })).toHaveText('Amis')
+  const mark = events.length
+  const answered = threadRead(page, friend)
+  release()
+  await answered
+  await page.goBack()
+  await expect(page).toHaveURL(`/dms?with=${friend.uid}`)
+  expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
+  await expect(bubble(page, friend, 'Coucou')).toBeVisible()
+  await expect.poll(() => sql(`select read from public.chat_messages where id = :'id'`, { id })).toBe('t')
+  // La lecture cachée n'a rien marqué : le marquage suit la relecture du réaffichage.
+  expect(events.slice(mark, mark + 2)).toEqual(['GET', 'PATCH'])
 })
 
 test('Review Focus, contenu : 2 000 « 😀 » collés → 1 000 gardés (unités UTF-16), « 2 000 / 2 000 », envoi accepté ; des espaces seuls → « Envoyer » inactif', async ({ page, login }) => {
@@ -443,24 +536,45 @@ for (const [label, reply] of FAILS) {
     expect(await onBody(page)).toBe(false)
   })
 
+  test(`liste en échec (${label}), « Réessayer » focalisé sans être pressé : une relecture de fond réussie le retire, le focus va au h1`, async ({ page, login }) => {
+    await viewer(login)
+    let failed = 0
+    const { release: mounted, held } = hold()
+    await routeOnce(page, '**/rest/v1/notifications*', async (r) => {
+      await held
+      await r.fallback()
+    })
+    for (let i = 0; i < 2; i++) {
+      await routeOnce(page, '**/api/chat', (r) => {
+        failed++
+        mounted()
+        return r.fulfill(reply)
+      })
+    }
+    await page.clock.install()
+    await open(page)
+    await expect(alert(page)).toHaveText(LOAD_FAILED)
+    await expect.poll(() => failed).toBe(2)
+    await page.getByRole('button', { name: 'Réessayer' }).focus()
+    // Passage de 30 s de la cloche : sa version relit la liste, qui réussit.
+    await page.clock.runFor(30_000)
+    await expect(page.locator('main').getByText('Aucune conversation.', { exact: true })).toBeVisible()
+    await expect(page.locator('main h1')).toBeFocused()
+  })
+
   test(`fil en échec (${label}) : l'alerte et « Réessayer » à la place du fil, la liste lue ; « Réessayer » → « Aucun message pour l'instant. » et le champ`, async ({ page, login }) => {
     const me = await viewer(login)
     const friend = player()
     befriend(me, friend)
-    // La lecture suivante retenue jusqu'au clic : un passage du poll parti avant « Réessayer » ne rend pas le fil sous le curseur (et,
-    // plus ancien, il est jeté) ; sinon c'est celle de « Réessayer », lâchée juste après.
-    const { release, held } = hold()
-    await routeOnce(page, '**/api/chat/*', async (r) => {
-      await held
-      await r.fallback()
-    })
     await routeOnce(page, '**/api/chat/*', (r) => r.fulfill(reply))
+    // Horloge arrêtée avant le premier passage du poll (mount + 5 s), sur le temps de la page : « Réessayer » est le seul lecteur.
+    await page.clock.install()
     await open(page, friend)
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000))
     await expect(alert(page)).toHaveText(LOAD_FAILED)
     await expect(page.getByRole('log')).toHaveCount(0)
     await expect(page.locator('main').getByText('Aucune conversation.', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Réessayer' }).click()
-    release()
     await expect(log(page, friend)).toHaveText('Aucun message pour l\'instant.')
     await expect(field(page)).toBeVisible()
     await expect(page.getByRole('heading', { level: 2, name: friend.username })).toBeFocused()

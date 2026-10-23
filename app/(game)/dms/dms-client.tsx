@@ -59,16 +59,21 @@ export function DmsClient() {
   const onShow = useEffectEvent(() => void read(list !== null))
   useEffect(() => onShow(), [version])
   useEffect(() => {
-    void createBrowserSupabase().auth.getSession().then(({ data }) => setMe(data.session?.user.id ?? null))
+    void createBrowserSupabase().auth.getSession().then(({ data }) => setMe(data.session?.user.id ?? null), () => setMe(null))
   }, [])
 
-  // « Réessayer » disparu sous le focus : la première conversation, sinon le h1, ou le « Réessayer » revenu (PF15).
+  // « Réessayer » disparu sous le focus (pressé, ou retiré par une relecture de fond réussie) : la première conversation, sinon le h1,
+  // ou le « Réessayer » revenu (PF15). Rien si le joueur a mis le focus ailleurs.
+  const state = failed ? 'failed' : list ? 'list' : null
+  const shown = useRef<typeof state>(null)
   useEffect(() => {
-    if (!retried.current || (!list && !failed)) return
+    if (!state || (state === shown.current && !retried.current)) return
+    const want = retried.current || shown.current === 'failed'
+    shown.current = state
     retried.current = false
-    if (document.activeElement !== document.body) return
-    ;(failed ? retryButton.current : conversations.current?.querySelector('a') ?? title.current)?.focus()
-  }, [list, failed])
+    if (!want || document.activeElement !== document.body) return
+    ;(state === 'failed' ? retryButton.current : conversations.current?.querySelector('a') ?? title.current)?.focus()
+  }, [state])
   // Fil quitté (« ← Conversations ») : le focus tombé sur body va à l'entrée du pair, sinon au h1.
   const left = useRef(peerId)
   useEffect(() => {
@@ -85,7 +90,8 @@ export function DmsClient() {
     void read(false)
   }
 
-  const ready = (list !== null || failed) && (!peerId || settled === peerId)
+  // Sans session lue (me === null), aucun fil ne se monte : la page est rendue telle quelle.
+  const ready = (list !== null || failed) && (!peerId || settled === peerId || me === null)
   return (
     <div data-ready={ready ? '' : undefined} className="space-y-6">
       <PageHeader ref={title} title={entry.title} icon={entry.icon} />

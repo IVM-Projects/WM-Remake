@@ -9,6 +9,7 @@ import { api, ApiError, apiOnce, unsure, userMessage } from '@/lib/api'
 import { formatInt, formatLongDate, formatTime } from '@/lib/format'
 import { unreadStore } from '@/lib/notifications'
 import { usePoll } from '@/lib/poll'
+import { PeerParams } from '@/lib/schemas'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 import type { Message, Thread as Data } from './types'
 
@@ -24,13 +25,16 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
   const [head, setHead] = useState<Omit<Data, 'messages'> | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [failed, setFailed] = useState(false)
-  const [missing, setMissing] = useState(false)
+  // Adresse qui n'est pas un UUID (règle de la route) : introuvable d'emblée, sans requête (`/api/chat/.` mènerait à la liste).
+  const [missing, setMissing] = useState(() => !PeerParams.safeParse({ peerId }).success)
   const [value, setValue] = useState('')
   // Un envoi à la fois : aria-disabled et garde, jamais disabled ; le champ en readOnly.
   const [sending, setSending] = useState(false)
   // Échec du dernier envoi (role=alert) : un refus reste jusqu'à l'envoi suivant, une issue incertaine jusqu'au premier message nouveau lu.
   const [error, setError] = useState<{ text: string; unsure: boolean } | null>(null)
   const inflight = useRef(false)
+  // Faux une fois le fil caché (Activity) ou démonté (autre pair) : une lecture encore en vol ne marque plus rien lu.
+  const live = useRef(false)
   // Clés des envois (B15) : aucune relecture ne les oublie, seulement apiOnce (réponse lue) et toute modification du champ.
   const keys = useRef(new Map<string, string>())
   // Lectures ordonnées : seule la dernière partie s'applique ; celles parties avant la réponse d'un envoi sont jetées (hold).
@@ -81,7 +85,7 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
       if (show(r.messages)) setError((e) => (e?.unsure ? null : e))
       setFailed(false)
       // Onglet caché : rien de lu ; au retour en visible, le poll relit tout de suite (lib/poll.ts) et marque alors.
-      if (document.visibilityState === 'visible' && r.messages.some((m) => m.sender_id === peerId && !m.read)) markRead()
+      if (live.current && document.visibilityState === 'visible' && r.messages.some((m) => m.sender_id === peerId && !m.read)) markRead()
     }, (e) => {
       if (g !== gen.current || started < hold.current) return
       // Inconnu (404) ou adresse invalide (400) : « Joueur introuvable », plus interrogé. Autre échec : le fil affiché reste.
@@ -89,7 +93,11 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
       else setFailed(true)
     })
   }
-  const onShow = useEffectEvent(() => void read())
+  useEffect(() => {
+    live.current = true
+    return () => { live.current = false }
+  }, [])
+  const onShow = useEffectEvent(() => { if (!missing) void read() })
   useEffect(() => onShow(), [])
   usePoll(read, 5_000, !missing)
 
@@ -130,7 +138,8 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
   async function send(e?: FormEvent) {
     e?.preventDefault()
     const content = value
-    if (inflight.current || !content.trim()) return
+    // sending : entre la fin de l'envoi et le rendu qui vide le champ, un gestionnaire encore périmé tient le texte envoyé.
+    if (inflight.current || sending || !content.trim()) return
     inflight.current = true
     setSending(true)
     setError(null)
@@ -138,16 +147,18 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
     // Seule la clé de cette intention vaut encore : une autre, gardée, rejouerait sa réponse stockée (leçon de la Task 12).
     for (const k of keys.current.keys()) if (k !== intent) keys.current.delete(k)
     try {
-      const r = await apiOnce<{ message: Message } | null>(keys.current, intent, `/api/chat/${encodeURIComponent(peerId)}`, {
+      const r = await apiOnce<{ message?: Message } | null>(keys.current, intent, `/api/chat/${encodeURIComponent(peerId)}`, {
         method: 'POST',
         body: JSON.stringify({ content }),
       })
-      // 2xx au corps illisible (apiOnce garde la clé) ou sans `message` : issue incertaine.
-      if (!r?.message?.id) throw new Error('Réponse illisible')
+      // 2xx au corps illisible : apiOnce garde la clé, issue incertaine.
+      if (r === null) throw new Error('Réponse illisible')
       // Posé à la réponse, jamais au départ : un poll parti pendant le POST déferait le message.
       hold.current = performance.now()
-      // Succès ou rejeu : fusionné par id, sans seconde bulle si un poll l'a déjà montré. Le focus reste dans le champ.
-      if (!shown.current.some((m) => m.id === r.message.id)) show([...shown.current, r.message])
+      // Succès ou rejeu : fusionné par id, sans seconde bulle si un poll l'a déjà montré. Un 2xx lisible sans `message` est envoyé aussi
+      // (apiOnce a oublié sa clé : le renvoyer le doublerait) ; la lecture suivante le montre. Le focus reste dans le champ.
+      const m = r.message
+      if (m?.id && !shown.current.some((x) => x.id === m.id)) show([...shown.current, m])
       setValue('')
       onSent()
     } catch (err) {
@@ -225,11 +236,12 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
                 keys.current.clear()
                 setValue(e.target.value)
               }}
-              // U9 : Entrée envoie ; Maj+Entrée va à la ligne ; Entrée qui valide une composition IME n'envoie rien.
+              // U9 : Entrée envoie ; Maj+Entrée va à la ligne ; Entrée qui valide une composition IME n'envoie rien (Safari la signale par
+              // keyCode 229 après compositionend) ; une touche maintenue (repeat) n'envoie qu'une fois.
               onKeyDown={(e) => {
-                if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+                if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.keyCode === 229) return
                 e.preventDefault()
-                void send()
+                if (!e.repeat) void send()
               }}
               className="block w-full resize-y rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm"
             />
