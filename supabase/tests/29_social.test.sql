@@ -1,5 +1,5 @@
 -- Social (1800_wm_social_core.sql, puis 1810…1850) : config, index, avatar_url, vitrine hors échange et dans trade_move ; profil, vitrine et
--- collection d'un profil privé (1810).
+-- collection d'un profil privé (1810) ; messages privés, débit, notification chat_message et synchronisation « lu » (1820).
 -- Une seule transaction pour tout le fichier (now() figé) : chaque bloc crée ses joueurs et ses cartes, et ne filtre que sur eux.
 
 -- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune) ; l'effet de p_sql n'est annulé que si p_sql lève.
@@ -326,16 +326,170 @@ do $$ declare a uuid := pg_temp.player('Vit1'); b uuid := pg_temp.player('Vit2')
   assert d = '{"status":404,"error":"Joueur introuvable","message":"Joueur introuvable"}', coalesce(d::text, 'accepté');
 end $$;
 
--- Volatilité des lectures (1810) : un create or replace sans le mot-clé repasserait en volatile. lock_timeout (P5, M4b-2) avant le premier
--- verrou, et la copie relue sous le verrou du profil ; chaque tâche ajoute ses fonctions.
+-- Envoi (M4b-2, M4b-4, M4b-8, B2) : {message} aux six clés du B2, non lu ; une seule chat_message non lue par couple, de data exactement
+-- {user_id, username} de l'expéditeur ; lue, l'envoi suivant en pose une neuve. Refus : non-ami 403, soi-même 400, pair inconnu 404,
+-- maintenance 503, sans aucun message.
+do $$ declare a uuid := pg_temp.player('Chat1'); b uuid := pg_temp.player('Chat2'); carol uuid := pg_temp.player('Chat3');
+  q text := 'select wm.chat_send(%L, %L, %L)'; r jsonb; d jsonb; begin
+  perform pg_temp.friends(a, b);
+  r := wm.chat_send(a, b, 'Salut');
+  assert pg_temp.keys(r) = array['message']
+    and pg_temp.keys(r -> 'message') = array['content', 'created_at', 'id', 'read', 'recipient_id', 'sender_id']
+    and r -> 'message' = (select to_jsonb(m) from public.chat_messages m where m.sender_id = a)
+    and r -> 'message' @> jsonb_build_object('sender_id', a, 'recipient_id', b, 'content', 'Salut', 'read', false), r::text;
+  assert (select jsonb_agg(data) from public.notifications where user_id = b and type = 'chat_message' and not read)
+    = jsonb_build_array(jsonb_build_object('user_id', a, 'username', 'Chat1')), 'notification du premier envoi';
+  perform wm.chat_send(a, b, 'Encore');
+  assert (select count(*) from public.notifications where user_id = b and type = 'chat_message') = 1, 'second envoi : seconde notification';
+  perform wm.notifications_read(b);
+  perform wm.chat_send(a, b, 'Trois');
+  assert (select array_agg(read order by read) from public.notifications where user_id = b and type = 'chat_message') = array[false, true],
+    'envoi après lecture';
+  d := pg_temp.err(format(q, a, carol, 'x'));
+  assert d = '{"status":403,"code":"FORBIDDEN","error":"Vous devez être amis pour vous écrire","message":"Vous devez être amis pour vous écrire"}',
+    coalesce(d::text, 'accepté');
+  d := pg_temp.err(format(q, a, a, 'x'));
+  assert d = '{"status":400,"code":"invalid_request","error":"Tu ne peux pas t''écrire à toi-même","message":"Tu ne peux pas t''écrire à toi-même"}',
+    coalesce(d::text, 'accepté');
+  d := pg_temp.err(format(q, a, gen_random_uuid(), 'x'));
+  assert d = '{"status":404,"error":"Joueur introuvable","message":"Joueur introuvable"}', coalesce(d::text, 'accepté');
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format(q, a, b, 'x'));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = '{"status":503,"code":"maintenance","error":"Maintenance en cours, reviens dans quelques minutes.",
+    "message":"Maintenance en cours, reviens dans quelques minutes."}', coalesce(d::text, 'accepté');
+  assert (select count(*) from public.chat_messages where sender_id = a) = 3, 'message écrit par un refus';
+end $$;
+
+-- Contenu aux bornes (Review Focus) : blancs seuls ou rien → 400 ; 2 000 émojis (points de code) passent, 2 001 é → 400 ; stocké tel quel.
+do $$ declare a uuid := pg_temp.player('Contenu1'); b uuid := pg_temp.player('Contenu2'); q text := 'select wm.chat_send(%L, %L, %L)';
+  empty jsonb := '{"status":400,"code":"invalid_request","error":"Le message est vide","message":"Le message est vide"}'; r jsonb; d jsonb; begin
+  perform pg_temp.friends(a, b);
+  d := pg_temp.err(format(q, a, b, E'  \n\t '));
+  assert d = empty, coalesce(d::text, 'accepté');
+  assert pg_temp.err(format(q, a, b, null)) = empty, 'contenu nul';
+  r := wm.chat_send(a, b, repeat('😀', 2000));
+  assert r -> 'message' ->> 'content' = repeat('😀', 2000), '2 000 émojis';
+  d := pg_temp.err(format(q, a, b, repeat('é', 2001)));
+  assert d = '{"status":400,"code":"invalid_request","error":"Un message fait au plus 2 000 caractères",
+    "message":"Un message fait au plus 2 000 caractères"}', coalesce(d::text, 'accepté');
+  r := wm.chat_send(a, b, '  hé  ');
+  assert r -> 'message' ->> 'content' = '  hé  ' and (select content from public.chat_messages where id = (r -> 'message' ->> 'id')::uuid) = '  hé  ',
+    r::text;
+end $$;
+
+-- Débit aux bornes (M4b-3, M4b-29, Review Focus) : chat_burst à 3 le temps du bloc (PF7). Compté par expéditeur, tous pairs confondus ;
+-- un refus ou un rejeu ne compte pas ; le 4ᵉ → 429 (now() figé : retry_after = 60), sans message ; une fenêtre échue repart à 1.
+update wm.config set value = '{"count": 3, "window_s": 60}' where key = 'chat_burst';
+do $$ declare a uuid := pg_temp.player('Debit1'); b uuid := pg_temp.player('Debit2'); c uuid := pg_temp.player('Debit3');
+  carol uuid := pg_temp.player('Debit4'); q text := 'select wm.chat_send(%L, %L, %L)'; r jsonb; d jsonb; begin
+  perform pg_temp.friends(a, b);
+  perform pg_temp.friends(c, a);
+  perform wm.chat_send(a, b, 'd1');
+  perform wm.chat_send(a, b, 'd2');
+  assert pg_temp.err(format(q, a, b, ' ')) ->> 'status' = '400' and pg_temp.err(format(q, a, carol, 'x')) ->> 'status' = '403', 'refus';
+  assert (select chat_window_count from wm.user_state where user_id = a) = 2, 'refus comptés';
+  r := wm.chat_send(a, c, 'd3', 'k-chat');
+  d := pg_temp.err(format(q, a, b, 'd4'));
+  assert d = '{"status":429,"error":"Le site demande de ralentir","message":"Le site demande de ralentir","retry_after":60}',
+    coalesce(d::text, 'accepté');
+  assert (select count(*) from public.chat_messages where sender_id = a) = 3, 'message écrit par le 429';
+  assert wm.chat_send(a, c, 'autre', 'k-chat') = r and (select count(*) from public.chat_messages where sender_id = a) = 3
+    and (select chat_window_count from wm.user_state where user_id = a) = 3, 'rejeu de la clé';
+  update wm.user_state set chat_window_start = chat_window_start - interval '61 seconds' where user_id = a;
+  perform wm.chat_send(a, b, 'd5');
+  assert (select chat_window_count from wm.user_state where user_id = a) = 1
+    and (select count(*) from public.chat_messages where sender_id = a) = 4, 'fenêtre échue';
+end $$;
+update wm.config set value = '{"count": 30, "window_s": 60}' where key = 'chat_burst';
+
+-- Fil (M4b-9, B2) : les 100 plus récents du couple, en ordre croissant, sans ceux d'un autre couple ; peer et isFriend ; un ancien ami garde
+-- l'historique ; un tiers lit un fil vide ; soi-même → 400, pair inconnu → 404.
+do $$ declare a uuid := pg_temp.player('Fil1'); b uuid := pg_temp.player('Fil2'); carol uuid := pg_temp.player('Fil3'); r jsonb; d jsonb;
+  want jsonb; begin
+  perform pg_temp.friends(a, b);
+  insert into public.chat_messages (sender_id, recipient_id, content, created_at)
+  select case i % 2 when 0 then a else b end, case i % 2 when 0 then b else a end, 'f' || i, now() - make_interval(secs => 200 - i)
+  from generate_series(1, 105) i;
+  insert into public.chat_messages (sender_id, recipient_id, content) values (carol, b, 'ailleurs');
+  want := (select jsonb_agg(to_jsonb(m) order by m.created_at) from public.chat_messages m
+    where m.content in (select 'f' || i from generate_series(6, 105) i) and m.sender_id in (a, b));
+  r := wm.chat_thread(b, a);
+  assert r = jsonb_build_object('messages', want, 'peer', jsonb_build_object('id', a, 'username', 'Fil1', 'avatar_url', null), 'isFriend', true),
+    r::text;
+  assert jsonb_array_length(r -> 'messages') = 100 and r -> 'messages' -> 0 ->> 'content' = 'f6'
+    and r -> 'messages' -> 99 ->> 'content' = 'f105', 'bornes du fil';
+  delete from public.friendships where requester_id = a and addressee_id = b;
+  r := wm.chat_thread(b, a);
+  assert r -> 'messages' = want and r -> 'isFriend' = 'false', r::text;
+  assert wm.chat_thread(carol, a) -> 'messages' = '[]', 'fil d''un tiers';
+  d := pg_temp.err(format('select wm.chat_thread(%L, %L)', a, a));
+  assert d = '{"status":400,"code":"invalid_request","error":"Tu ne peux pas t''écrire à toi-même","message":"Tu ne peux pas t''écrire à toi-même"}',
+    coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.chat_thread(%L, %L)', a, gen_random_uuid()));
+  assert d = '{"status":404,"error":"Joueur introuvable","message":"Joueur introuvable"}', coalesce(d::text, 'accepté');
+end $$;
+
+-- Conversations (M4b-9, B2) : une par pair, la plus récente d'abord, puis par peer_id ; unread_count = messages du pair non lus ; un ami sans
+-- message et les fils des autres absents ; 50 au plus.
+do $$ declare a uuid := pg_temp.player('Conv1'); b uuid := pg_temp.player('Conv2'); c uuid := pg_temp.player('Conv3');
+  d uuid := pg_temp.player('Conv4'); e uuid := pg_temp.player('Conv5'); r jsonb; begin
+  perform pg_temp.friends(a, d);
+  insert into public.chat_messages (sender_id, recipient_id, content, read, created_at) values
+    (a, b, 'b1', false, now() - interval '50 seconds'), (b, a, 'b2', true, now() - interval '40 seconds'),
+    (a, b, 'b3', false, now() - interval '30 seconds'), (c, a, 'c0', true, now() - interval '20 seconds'),
+    (c, a, 'c1', false, now() - interval '10 seconds'), (b, c, 'ailleurs', false, now());
+  r := wm.chat_conversations(a);
+  assert r = jsonb_build_object('conversations', jsonb_build_array(
+    jsonb_build_object('peer_id', c, 'peer_username', 'Conv3', 'peer_avatar_url', null, 'last_message', 'c1',
+      'last_message_at', now() - interval '10 seconds', 'unread_count', 1),
+    jsonb_build_object('peer_id', b, 'peer_username', 'Conv2', 'peer_avatar_url', null, 'last_message', 'b3',
+      'last_message_at', now() - interval '30 seconds', 'unread_count', 0))), r::text;
+  insert into public.chat_messages (sender_id, recipient_id, content) select e, tests.make_user('ConvP' || i), 'p' from generate_series(1, 51) i;
+  r := wm.chat_conversations(e);
+  assert (select array_agg(x ->> 'peer_id' order by o) from jsonb_array_elements(r -> 'conversations') with ordinality t (x, o))
+    = (select array_agg(id::text order by id) from (select recipient_id id from public.chat_messages where sender_id = e order by 1 limit 50) s),
+    '50 conversations par peer_id : ' || r::text;
+end $$;
+
+-- Synchronisation « lu » (M4b-4) : le marquage direct du destinataire, sous RLS, marque lue la chat_message du couple, pas celle d'un autre
+-- expéditeur ; rejoué, il ne lève rien ; une ligne déjà lue, réécrite, ne compte pas (D : message lu et chat_message non lue, posés à la main).
+do $$ declare a uuid := pg_temp.player('Sync1'); b uuid := pg_temp.player('Sync2'); c uuid := pg_temp.player('Sync3');
+  d uuid := pg_temp.player('Sync4'); n int; begin
+  perform pg_temp.friends(a, b);
+  perform pg_temp.friends(c, b);
+  perform wm.chat_send(a, b, 's1');
+  perform wm.chat_send(a, b, 's2');
+  perform wm.chat_send(c, b, 's3');
+  perform tests.login(b);
+  update public.chat_messages set read = true where sender_id = a and recipient_id = b and not read;
+  get diagnostics n = row_count;
+  perform tests.reset_role();
+  assert n = 2, 'messages marqués : ' || n;
+  assert (select jsonb_object_agg(data ->> 'username', read) from public.notifications where user_id = b and type = 'chat_message')
+    = '{"Sync1": true, "Sync3": false}', 'notifications après le marquage';
+  insert into public.chat_messages (sender_id, recipient_id, content, read) values (d, b, 's4', true);
+  insert into public.notifications (user_id, type, data) values (b, 'chat_message', jsonb_build_object('user_id', d, 'username', 'Sync4'));
+  perform tests.login(b);
+  update public.chat_messages set read = true where sender_id = a and recipient_id = b and not read;
+  update public.chat_messages set read = true where sender_id = d and recipient_id = b;
+  perform tests.reset_role();
+  assert (select not read from public.notifications where user_id = b and data ->> 'user_id' = d::text), 'ligne déjà lue comptée';
+end $$;
+
+-- Volatilité des lectures (1810, 1820) : un create or replace sans le mot-clé repasserait en volatile. lock_timeout (P5, M4b-2) avant le
+-- premier verrou, la copie relue sous le verrou du profil, et les deux profils tenus avant le message ; chaque tâche ajoute ses fonctions.
 do $$ declare bad text; begin
   assert (select jsonb_object_agg(proname, provolatile::text) from pg_proc where pronamespace = 'wm'::regnamespace
-    and proname in ('profile_json', 'profile_get', 'showcase_json', 'my_showcase', 'profile_showcase'))
-    = '{"profile_json":"s","profile_get":"s","showcase_json":"s","my_showcase":"s","profile_showcase":"s"}', 'volatilité des lectures';
-  bad := tests.lock_timeout_violations(array['profile_update', 'showcase_put', 'showcase_delete']);
+    and proname in ('profile_json', 'profile_get', 'showcase_json', 'my_showcase', 'profile_showcase', 'chat_conversations', 'chat_thread'))
+    = '{"profile_json":"s","profile_get":"s","showcase_json":"s","my_showcase":"s","profile_showcase":"s","chat_conversations":"s",
+      "chat_thread":"s"}', 'volatilité des lectures';
+  bad := tests.lock_timeout_violations(array['profile_update', 'showcase_put', 'showcase_delete', 'chat_send']);
   assert bad is null, 'lock_timeout absent ou posé après un verrou : ' || bad;
   select string_agg(f, ', ') into bad from unnest(array['profile_update', 'showcase_put']) f,
     lateral (select prosrc s from pg_proc where oid = to_regproc('wm.' || f)) p
   where not strpos(s, 'wm.lock_user(') between 1 and strpos(s, 'public.user_cards');
   assert bad is null, 'copie lue avant wm.lock_user : ' || bad;
+  assert (select strpos(prosrc, 'wm.lock_users(') between 1 and strpos(prosrc, 'insert into public.chat_messages') from pg_proc
+    where oid = to_regproc('wm.chat_send')), 'message inséré avant wm.lock_users';
 end $$;
