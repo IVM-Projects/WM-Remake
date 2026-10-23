@@ -1,7 +1,9 @@
--- RLS et droits de la surface PostgREST d'origine (0002_mirror_rls.sql, 0004_mirror_market.sql, 0005_mirror_trades.sql).
+-- RLS et droits de la surface PostgREST d'origine (0002_mirror_rls.sql, 0004_mirror_market.sql, 0005_mirror_trades.sql,
+-- 0006_mirror_social.sql).
 -- Fixtures communes posées en superutilisateur : Alice et Bob ont chacun une copie, une étiquette, une liaison, un souhait ;
 -- Alice vend « Paris », Bob y a misé, chacun a une notification ; Alice et Bob sont amis, Alice propose à Bob
--- un échange de leurs deux copies ; Carol, authentifiée, n'a rien.
+-- un échange de leurs deux copies ; Carol, authentifiée, n'a rien. Alice écrit « Salut » à Bob (non lu), met sa copie
+-- en vitrine (emplacement 0), signale Bob pour spam et a un abonnement push.
 
 do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob'); c uuid; t uuid; begin
   insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def)
@@ -22,17 +24,22 @@ do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob
   insert into public.trades (initiator_id, recipient_id, expires_at) values (a, b, now() + interval '168 hours') returning id into t;
   insert into public.trade_items (trade_id, offered_by, user_card_id, card_id, snapshot_rarity)
   select t, user_id, id, card_id, snapshot_rarity from public.user_cards where user_id in (a, b);
+  insert into public.chat_messages (sender_id, recipient_id, content) values (a, b, 'Salut');
+  insert into public.showcase (user_id, position, user_card_id) select a, 0, id from public.user_cards where user_id = a;
+  insert into public.reports (reporter_id, reported_user_id, reason) values (a, b, 'spam');
+  insert into public.push_subscriptions (user_id, endpoint, p256dh, auth)
+  values (a, 'https://fcm.googleapis.com/fcm/send/fixture', 'k', 'a');
 end $$;
 
 do $$ begin
   assert (select array[count(*), count(*) filter (where not c.relrowsecurity)] from pg_class c
-          where c.relnamespace = 'public'::regnamespace and c.relkind = 'r') = '{12, 0}',
-    'tables de public : 12 attendues, toutes sous RLS';
+          where c.relnamespace = 'public'::regnamespace and c.relkind = 'r') = '{16, 0}',
+    'tables de public : 16 attendues, toutes sous RLS';
 end $$;
 
 -- Droits exacts sur toutes les tables de public : anon lit le catalogue seul (0003), rien pour PUBLIC (grantee 0) ;
--- en écriture, seuls starred, tags.name/color et les insert/delete listés ; le marché (0004), les échanges et amitiés (0005)
--- en lecture seule.
+-- en écriture, seuls starred, tags.name/color, chat_messages.read et les insert/delete listés ; le marché (0004), les échanges
+-- et amitiés (0005) en lecture seule ; ni vitrine, ni signalements, ni abonnements push (0006, M4b-28).
 do $$ declare got text; begin
   select string_agg(g, ', ' order by g collate "C") into got from (
     select format('%s %s %s', coalesce(nullif(a.grantee, 0)::regrole::text, 'public'), c.relname, a.privilege_type) g
@@ -46,7 +53,8 @@ do $$ declare got text; begin
       and a.grantee in ('anon'::regrole::oid, 'authenticated'::regrole::oid, 0)
   ) s;
   assert got = 'anon cards SELECT, authenticated auction_bids SELECT, authenticated auctions SELECT, '
-    'authenticated cards SELECT, authenticated friendships SELECT, authenticated notifications SELECT, '
+    'authenticated cards SELECT, authenticated chat_messages SELECT, authenticated chat_messages.read UPDATE, '
+    'authenticated friendships SELECT, authenticated notifications SELECT, '
     'authenticated profiles SELECT, authenticated tags DELETE, '
     'authenticated tags INSERT, authenticated tags SELECT, authenticated tags.color UPDATE, '
     'authenticated tags.name UPDATE, authenticated trade_items SELECT, authenticated trades SELECT, '
@@ -103,7 +111,7 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
 end $$;
 
 -- Échanges et amitiés : Bob et Alice lisent l'échange, ses deux éléments et l'amitié ; Carol, étrangère, rien (M4-14) ;
--- aucune écriture client ; anon ne lit pas les échanges.
+-- aucune écriture client ; anon ne lit pas les échanges. Vitrine, signalements et abonnements push : aucun droit client (M4b-28).
 do $$ declare a uuid := (select id from public.profiles where username = 'Alice');
               b uuid := (select id from public.profiles where username = 'Bob');
               ca uuid := (select id from public.profiles where username = 'Carol');
@@ -127,7 +135,20 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
     'delete from public.trade_items where trade_id = $2',
     'insert into public.friendships (requester_id, addressee_id) values ($1, $3)',
     'update public.friendships set status = ''pending'' where addressee_id = $1',
-    'delete from public.friendships where addressee_id = $1'] loop
+    'delete from public.friendships where addressee_id = $1',
+    'select count(*) from public.showcase',
+    'insert into public.showcase (user_id, position, user_card_id) select $1, 1, id from public.user_cards where user_id = $1',
+    'update public.showcase set position = 1 where user_id = $3',
+    'delete from public.showcase where user_id = $3',
+    'select count(*) from public.reports',
+    'insert into public.reports (reporter_id, reported_user_id, reason) values ($1, $3, ''spam'')',
+    'update public.reports set details = ''x'' where reporter_id = $3',
+    'delete from public.reports where reporter_id = $3',
+    'select count(*) from public.push_subscriptions',
+    'insert into public.push_subscriptions (user_id, endpoint, p256dh, auth)'
+      ' values ($1, ''https://fcm.googleapis.com/fcm/send/bob'', ''k'', ''a'')',
+    'update public.push_subscriptions set auth = ''x'' where user_id = $3',
+    'delete from public.push_subscriptions where user_id = $3'] loop
     begin execute s using b, tr, a; assert false, format('écriture client permise : %s', s);
     exception when insufficient_privilege then null; end;
   end loop;
@@ -137,6 +158,35 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
   assert (select count(*) from public.friendships) = 0, 'Carol voit l''amitié d''Alice et Bob';
   perform tests.logout();
   begin perform from public.trades; assert false, 'anon lit les échanges';
+  exception when insufficient_privilege then null; end;
+  perform tests.reset_role();
+end $$;
+
+-- Messages privés : Alice et Bob lisent leur fil, Carol rien (M4-14), anon pas du tout ; seul le destinataire marque lu,
+-- et rien d'autre que read (M4b-28).
+do $$ declare a uuid := (select id from public.profiles where username = 'Alice');
+              b uuid := (select id from public.profiles where username = 'Bob');
+              ca uuid := (select id from public.profiles where username = 'Carol'); n int; begin
+  perform tests.login(a);
+  assert (select count(*) from public.chat_messages) = 1, 'Alice ne voit pas son message';
+  update public.chat_messages set read = true;
+  get diagnostics n = row_count; assert n = 0, 'l''expéditrice marque lu';
+  perform tests.reset_role();
+  assert not (select read from public.chat_messages), 'message marqué lu par l''expéditrice';
+  perform tests.login(ca);
+  assert (select count(*) from public.chat_messages) = 0, 'Carol voit le message d''Alice à Bob';
+  perform tests.login(b);
+  assert (select count(*) from public.chat_messages) = 1, 'Bob ne voit pas le message d''Alice';
+  update public.chat_messages set read = true where sender_id = a;
+  get diagnostics n = row_count; assert n = 1, 'Bob ne peut pas marquer lu';
+  begin update public.chat_messages set content = 'x' where sender_id = a; assert false, 'contenu du message modifiable';
+  exception when insufficient_privilege then null; end;
+  begin insert into public.chat_messages (sender_id, recipient_id, content) values (b, a, 'x'); assert false, 'message inséré par Bob';
+  exception when insufficient_privilege then null; end;
+  begin delete from public.chat_messages where sender_id = a; assert false, 'message supprimé par Bob';
+  exception when insufficient_privilege then null; end;
+  perform tests.logout();
+  begin perform from public.chat_messages; assert false, 'anon lit les messages';
   exception when insufficient_privilege then null; end;
   perform tests.reset_role();
 end $$;
@@ -235,4 +285,33 @@ do $$ begin
   assert (select count(*) from public.trade_items) = 2, 'service_role ne voit pas les éléments d''échange';
   assert (select count(*) from public.friendships) = 1, 'service_role ne voit pas les amitiés';
   perform tests.reset_role();
+end $$;
+
+-- Contraintes du miroir social (M4b-7, M4b-10), en superutilisateur. En dernier : les blocs précédents comptent la copie d'Alice
+-- et le message unique.
+do $$ declare a uuid := (select id from public.profiles where username = 'Alice');
+              b uuid := (select id from public.profiles where username = 'Bob');
+              ca uuid := (select id from public.user_cards where user_id = a); begin
+  begin insert into public.chat_messages (sender_id, recipient_id, content) values (a, b, repeat('é', 2001));
+    assert false, 'message de 2001 caractères';
+  exception when check_violation then null; end;
+  insert into public.chat_messages (sender_id, recipient_id, content) values (a, b, repeat('é', 2000));
+  begin insert into public.reports (reporter_id, reported_user_id, reason, details) values (b, a, 'spam', repeat('x', 501));
+    assert false, 'détails de 501 caractères';
+  exception when check_violation then null; end;
+  begin insert into public.reports (reporter_id, reported_user_id, reason) values (a, b, 'cheating');
+    assert false, 'second signalement d''Alice sur Bob';
+  exception when unique_violation then null; end;
+  begin insert into public.reports (reporter_id, reported_user_id, reason) values (b, a, 'abuse'); assert false, 'motif inconnu';
+  exception when invalid_text_representation then null; end;
+  begin insert into public.showcase (user_id, position, user_card_id) values (a, 4, ca); assert false, 'emplacement 4';
+  exception when check_violation then null; end;
+  begin insert into public.showcase (user_id, position, user_card_id) values (a, 0, ca); assert false, 'emplacement 0 en double';
+  exception when unique_violation then null; end;
+  begin insert into public.push_subscriptions (user_id, endpoint, p256dh, auth)
+    values (b, 'https://fcm.googleapis.com/fcm/send/fixture', 'k', 'a');
+    assert false, 'endpoint en double';
+  exception when unique_violation then null; end;
+  delete from public.user_cards where id = ca;
+  assert not exists (select from public.showcase where user_id = a), 'emplacement d''une copie supprimée';
 end $$;
