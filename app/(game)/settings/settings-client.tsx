@@ -7,10 +7,12 @@ import { useHydrated } from '@/components/auth/Submit'
 import { ghost as ghostBase } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { ReadError, Section } from '@/components/ui/Section'
-import { api, ApiError, userMessage } from '@/lib/api'
+import { api, ApiError, apiOnce, userMessage } from '@/lib/api'
 import { authErrorMessage, usernameProblem } from '@/lib/auth'
 import { setPrefs } from '@/lib/prefs'
+import { pushState, unsubscribePush } from '@/lib/push-browser'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
+import { PushSection } from './push-section'
 
 type Prefs = { sounds: boolean; hide_sensitive: boolean; is_public: boolean }
 type Key = keyof Prefs
@@ -30,7 +32,7 @@ const ok = 'text-sm font-medium text-[var(--color-accent-light)]'
 const dateFr = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long' })
 const nextChange = (iso: unknown) => (typeof iso === 'string' ? ` Prochain changement possible le ${dateFr.format(new Date(iso))}.` : '')
 
-// Onglet « Général » (R§2.2) : profil, préférences, compte. Page jamais capturée (D§8.5) : chaque section a ses états
+// Onglet « Général » (R§2.2) : profil, préférences, notifications, compte. Page jamais capturée (D§8.5) : chaque section a ses états
 // de chargement, d'échec avec « Réessayer » et d'enregistrement ; une section en échec ne bloque pas les autres.
 export function SettingsClient() {
   // null : en lecture ; false : lecture en échec.
@@ -159,6 +161,8 @@ export function SettingsClient() {
           )}
           <p role="status" className={ok}>{prefSaved}</p>
         </Section>
+
+        <PushSection />
 
         <Section id="settings-account" title="Compte">
           <PasswordForm />
@@ -290,11 +294,19 @@ function PasswordForm() {
 function SignOut() {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const keys = useRef(new Map<string, string>())
 
   async function signOut() {
     if (pending) return
     setPending(true)
     setError(null)
+    // Appareil désabonné d'abord, puis sa ligne (B18, PF12). Un échec ne bloque jamais la déconnexion : le renvoi de la section push
+    // rattachera l'appareil au joueur suivant.
+    const { sub } = await pushState().catch(() => ({ sub: null }))
+    const endpoint = sub && (await unsubscribePush().catch(() => null))
+    if (endpoint) {
+      await apiOnce(keys.current, `unsubscribe:${endpoint}`, '/api/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }).catch(() => {})
+    }
     const { error } = await createBrowserSupabase().auth.signOut()
     // Chargement complet : les pages gardées en mémoire (Activity) ne survivent pas à la session.
     if (!error) return window.location.replace('/login')

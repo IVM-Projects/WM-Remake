@@ -4,8 +4,8 @@ import { gateDecision, gateEnv, gateToken, isGateCookieValid, safeNext } from '@
 describe('porte démo', () => {
   it.each([
     ['/api/health', 'pass'], ['/api/stripe/webhook', 'pass'], ['/api/cron/push', 'pass'], ['/gate', 'pass'],
-    ['/robots.txt', 'pass'], ['/icon', 'pass'],
-    ['/', 'redirect'], ['/pulls', 'redirect'], ['/GATE', 'redirect'], ['/api/health/../pulls', 'unauthorized'],
+    ['/robots.txt', 'pass'], ['/icon', 'pass'], ['/sw.js', 'pass'],
+    ['/', 'redirect'], ['/sw.jsx', 'redirect'], ['/pulls', 'redirect'], ['/GATE', 'redirect'], ['/api/health/../pulls', 'unauthorized'],
     ['/api/cronx', 'unauthorized'], ['/api/health2', 'unauthorized'], ['/api/marketplace', 'unauthorized'],
     ['/api/cron/../marketplace', 'unauthorized'],
   ])('porte active sans cookie : %s → %s', (p, d) => expect(gateDecision(p, true, false)).toBe(d))

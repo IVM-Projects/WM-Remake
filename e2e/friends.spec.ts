@@ -267,7 +267,7 @@ test('deux demandes reçues → « Tout accepter » au clavier : « 2 demandes a
   await expect(toasts(page)).toContainText('2 demandes acceptées.')
   const rows = section(page, 'Amis').getByRole('listitem')
   await expect(rows).toHaveText([old.username, b.username, a.username].map((u) => new RegExp(`^${u}`)))
-  await expect(rows.nth(1).getByRole('link', { name: 'Échanger' })).toBeFocused()
+  await expect(rows.nth(1).getByRole('link', { name: 'Message' })).toBeFocused()
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false)
   await expect(page.getByRole('button', { name: 'Tout accepter' })).toHaveCount(0)
 })
@@ -313,7 +313,7 @@ test('retrait d\'un ami avec un échange en attente : modale, toast, focus sur l
   await expect(section(page, 'Demandes envoyées').getByRole('listitem')).toContainText(other.username)
 })
 
-test('une ligne d\'ami : le lien « Échanger » et le bouton « Retirer », aucun « Message » (M4-1)', async ({ page, login }) => {
+test('une ligne d\'ami : les liens « Message » (vers /dms?with=<id>) et « Échanger », et le bouton « Retirer »', async ({ page, login }) => {
   const me = await login()
   trash.push(me.uid)
   const other = player()
@@ -321,12 +321,12 @@ test('une ligne d\'ami : le lien « Échanger » et le bouton « Retirer », auc
   await open(page)
   const row = section(page, 'Amis').getByRole('listitem')
   await expect(row).toHaveCount(1)
-  await expect(row.getByRole('link')).toHaveText(['Échanger'])
+  await expect(row.getByRole('link')).toHaveText(['Message', 'Échanger'])
+  await expect(row.getByRole('link', { name: 'Message' })).toHaveAttribute('href', `/dms?with=${other.uid}`)
   await expect(row.getByRole('button')).toHaveText(['Retirer'])
   // Nom = texte visible ; le pseudo du joueur en description.
-  await expect(row.getByRole('link')).toHaveAccessibleDescription(other.username)
+  for (const link of await row.getByRole('link').all()) await expect(link).toHaveAccessibleDescription(other.username)
   await expect(row.getByRole('button')).toHaveAccessibleDescription(other.username)
-  await expect(page.locator('main').getByText(/Message/)).toHaveCount(0)
 })
 
 // 500, ou 200 au corps illisible (api() rend null) : la page atteint son état d'échec, jamais un chargement sans fin.
@@ -397,9 +397,9 @@ test('360 px, un ami au pseudo de 24 caractères sans coupure : ni main ni la pa
   await expect(section(page, 'Amis').getByRole('listitem')).toContainText(long.username)
   expect(await page.locator('main').evaluate((m) => m.scrollWidth <= m.clientWidth)).toBe(true)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  const targets = page.locator('main').getByRole('button').or(page.locator('main').getByRole('link', { name: 'Échanger' }))
-  // Tout accepter, Accepter, Refuser, Retirer (envoyée), Échanger, Retirer (ami).
-  await expect(targets).toHaveCount(6)
+  const targets = page.locator('main').getByRole('button').or(page.locator('main').getByRole('link', { name: /^(Message|Échanger)$/ }))
+  // Tout accepter, Accepter, Refuser, Retirer (envoyée), Message, Échanger, Retirer (ami).
+  await expect(targets).toHaveCount(7)
   for (const target of await targets.all()) {
     const box = (await target.boundingBox())!
     expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)

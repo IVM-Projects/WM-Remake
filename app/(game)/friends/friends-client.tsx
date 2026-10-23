@@ -284,6 +284,7 @@ export function FriendsClient() {
           <Section part="friends" title="Amis" empty="Tu n'as pas encore d'amis. Cherche un joueur par son pseudo." rows={s.friends} other={other}>
             {(f, i, desc) => (
               <>
+                <Link href={`/dms?with=${other(f).id}`} aria-describedby={desc} className={ghost}>Message</Link>
                 <Link href={`/trades/new?with=${other(f).id}`} aria-describedby={desc} className={ghost}>Échanger</Link>
                 {/* Inactif pendant une action : sa fin ferme la modale (act). */}
                 <button type="button" aria-disabled={busy || undefined} aria-describedby={desc} onClick={() => { if (!busy) setConfirm({ f, i }) }} className={ghost}>

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { befriend, expect, giveCopies, imageCopy, makePlayer, sql, test } from './fixtures'
+import { stubPush } from './push-stub'
 
 type Known = { rule: string; selector: string }
 
@@ -31,8 +32,8 @@ const TAG_OPTION: Known = { rule: 'nested-interactive', selector: '[role=listbox
 const READY: Record<string, string> = {
   '/reset-password': 'main [role=alert]', '/verify-email': '#signup-otp-code', '/pulls': '[data-stock-bar]',
   '/collection': 'main a[href="/pulls"]', '/global-collection': 'main nav[aria-label="Pagination"]',
-  // Les deux lectures de /settings finies : pseudo et préférences.
-  '/settings': 'main:has(#settings-username) input[name="sounds"]',
+  // Les lectures de /settings finies : pseudo, préférences et notifications push (avec le renvoi de l'abonnement).
+  '/settings': 'main:has(#settings-username):has(input[name="sounds"]) section[data-ready]',
   // Première lecture de /api/friends finie (sections ou erreur).
   '/friends': 'main [data-ready]',
   // Ami, collections et parent lus (composer, blocage ou erreur).
@@ -374,6 +375,23 @@ test('axe /trades/new?with=<id> : deux panneaux garnis, une copie engagée, un c
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
+test('axe /settings : section push active (« Messages » cochée, puis « Activer sur cet appareil »)', async ({ page, login }) => {
+  const { uid } = await login()
+  try {
+    await stubPush(page)
+    await page.goto('/settings')
+    await page.locator(READY['/settings']).waitFor()
+    const saved = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings/notifications')
+    await page.getByRole('checkbox', { name: 'Messages', exact: true }).check()
+    await saved
+    await page.getByRole('button', { name: 'Activer sur cet appareil' }).click()
+    await expect(page.getByText('Notifications activées sur cet appareil.', { exact: true })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
   }
 })
 

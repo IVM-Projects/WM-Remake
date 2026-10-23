@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import type { Page, Route } from '@playwright/test'
-import { expect, makePlayer, sql, test } from './fixtures'
+import type { Locator, Page, Request, Route } from '@playwright/test'
+import { expect, makePlayer, routeOnce, sql, test } from './fixtures'
+import { stubPush } from './push-stub'
 
 const fresh = (prefix: string) => `${prefix}_${randomUUID().slice(-12)}`
 const pseudo = (page: Page) => page.getByLabel('Pseudo', { exact: true })
@@ -195,3 +196,222 @@ test.describe('avant l\'hydratation (JavaScript coupé)', () => {
     await expect(page).toHaveURL('/settings')
   })
 })
+
+// Section « Notifications » (Task 14) : familles en opt-in (M4b-13, B17), abonnement de l'appareil (B18), push simulé (B19).
+const trash: string[] = []
+test.afterEach(() => void sql(`delete from auth.users where id = any(string_to_array(:'uids', ',')::uuid[])`, { uids: trash.splice(0).join(',') }))
+const PREFS = '/api/settings/notifications'
+const SUBSCRIBE = '/api/push/subscribe'
+const FAMILIES = ['Messages', 'Échanges', 'Amis', 'Marché']
+const UNSURE = 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.'
+const ACTIVE = 'Notifications activées sur cet appareil.'
+const FAILED = 'L\'activation a échoué, réessaie.'
+const push = (page: Page) => page.locator('section[aria-labelledby="settings-notifications"]')
+const family = (page: Page, name: string) => push(page).getByRole('checkbox', { name, exact: true })
+const activate = (page: Page) => push(page).getByRole('button', { name: 'Activer sur cet appareil' })
+const deactivate = (page: Page) => push(page).getByRole('button', { name: 'Désactiver sur cet appareil' })
+const is = (method: string, path: string) => (r: Request) => r.method() === method && new URL(r.url()).pathname === path
+const onBody = (page: Page) => page.evaluate(() => document.activeElement === document.body)
+const pushTypes = (uid: string) => sql(`select push_types from wm.notification_prefs where user_id = :'uid'`, { uid })
+const rows = (endpoint: string) => sql(`select user_id from public.push_subscriptions where endpoint = :'endpoint'`, { endpoint })
+// Requêtes d'une méthode et d'un chemin, dans l'ordre d'envoi.
+function record(page: Page, method: string, path: string): Request[] {
+  const seen: Request[] = []
+  page.on('request', (r) => { if (is(method, path)(r)) seen.push(r) })
+  return seen
+}
+async function openPush(page: Page) {
+  await page.goto('/settings')
+  await push(page).and(page.locator('[data-ready]')).waitFor()
+}
+async function big(target: Locator) {
+  const box = (await target.boundingBox())!
+  expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)
+}
+// Une case cochée ou décochée : le POST de la liste entière, attendu jusqu'à sa réponse.
+async function toggle(page: Page, name: string, on: boolean): Promise<unknown> {
+  const sent = page.waitForResponse((r) => is('POST', PREFS)(r.request()))
+  await (on ? family(page, name).check() : family(page, name).uncheck())
+  return (await sent).request().postDataJSON()
+}
+
+test('push : quatre familles décochées, « Activer » inactif ; « Messages » puis « Activer » → un abonnement, aucune préférence de plus ; « Désactiver » → DELETE ; cibles ≥ 44 px', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  const endpoint = await stubPush(page)
+  const subs = record(page, 'POST', SUBSCRIBE)
+  const prefs = record(page, 'POST', PREFS)
+  await openPush(page)
+  await expect(push(page).getByRole('heading')).toHaveText('Notifications')
+  await expect(push(page)).toContainText('Ces choix valent pour tous tes appareils.')
+  for (const f of FAMILIES) await expect(family(page, f)).not.toBeChecked()
+  await expect(activate(page)).toHaveAttribute('aria-disabled', 'true')
+  await expect(activate(page)).toHaveAccessibleDescription('Coche d\'abord au moins une famille.')
+  // Inactif : Entrée n'abonne rien (compté à la fin : un seul POST, celui du clic qui suit « Messages »).
+  await activate(page).focus()
+  await page.keyboard.press('Enter')
+
+  expect(await toggle(page, 'Messages', true)).toEqual({ push_types: ['chat_message'] })
+  await expect(activate(page)).not.toHaveAttribute('aria-disabled')
+  await activate(page).click()
+  await expect(push(page).getByRole('status')).toHaveText(ACTIVE)
+  await expect(deactivate(page)).toBeFocused()
+  expect(subs.map((r) => r.postDataJSON().endpoint)).toEqual([endpoint])
+  expect(prefs).toHaveLength(1)
+  for (const f of FAMILIES) await (f === 'Messages' ? expect(family(page, f)).toBeChecked() : expect(family(page, f)).not.toBeChecked())
+  expect(pushTypes(uid)).toBe('{chat_message}')
+  expect(rows(endpoint)).toBe(uid)
+  await big(deactivate(page))
+  for (const label of await push(page).locator('label').all()) await big(label)
+  await expect(push(page).locator('label')).toHaveCount(4)
+
+  const removed = page.waitForRequest(is('DELETE', SUBSCRIBE))
+  await deactivate(page).click()
+  expect((await removed).postDataJSON()).toEqual({ endpoint })
+  await expect(activate(page)).toBeFocused()
+  await expect(push(page).getByRole('status')).toHaveText('')
+  await big(activate(page))
+  expect(rows(endpoint)).toBe('')
+  expect(await onBody(page)).toBe(false)
+  expect(subs).toHaveLength(1)
+})
+
+test('push : « Marché » écrit ses 5 types en bloc, décoché les retire ; « Échanges » à l\'issue incertaine → le texte du B12, puis la case relue', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  await stubPush(page)
+  await openPush(page)
+  await toggle(page, 'Messages', true)
+  expect(await toggle(page, 'Marché', true)).toEqual({ push_types: ['auction_outbid', 'auction_sold', 'auction_unsold', 'auction_won', 'chat_message', 'wishlist_listed'] })
+  await expect(family(page, 'Marché')).toBeChecked()
+  expect(await toggle(page, 'Marché', false)).toEqual({ push_types: ['chat_message'] })
+  await expect(family(page, 'Marché')).not.toBeChecked()
+  expect(pushTypes(uid)).toBe('{chat_message}')
+
+  // Le serveur enregistre, la réponse se perd : l'incertitude dite, puis la liste relue par GET.
+  await routeOnce(page, `**${PREFS}`, async (r) => {
+    await r.fetch()
+    await r.fulfill({ status: 500 })
+  }, (r) => r.request().method() === 'POST')
+  const reread = page.waitForRequest(is('GET', PREFS))
+  await family(page, 'Échanges').check()
+  await reread
+  await expect(push(page).getByRole('alert')).toHaveText(UNSURE)
+  await expect(family(page, 'Échanges')).toBeChecked()
+  await expect(family(page, 'Messages')).toBeChecked()
+  expect(pushTypes(uid)).toBe('{chat_message,trade_accepted,trade_cancelled,trade_countered,trade_declined,trade_received}')
+  expect(await onBody(page)).toBe(false)
+})
+
+test('push : deux réponses perdues de suite (« Messages » coché, puis décoché), puis coché de nouveau → une clé neuve, la base suit', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  await stubPush(page)
+  await openPush(page)
+  const posts = record(page, 'POST', PREFS)
+  // Deux POST enregistrés par le serveur, réponses perdues : chaque fois l'incertitude, puis la case relue.
+  for (const on of [true, false]) {
+    await routeOnce(page, `**${PREFS}`, async (r) => {
+      await r.fetch()
+      await r.fulfill({ status: 500 })
+    }, (r) => r.request().method() === 'POST')
+    const reread = page.waitForResponse((r) => is('GET', PREFS)(r.request()))
+    await (on ? family(page, 'Messages').check() : family(page, 'Messages').uncheck())
+    await reread
+    await expect(push(page).getByRole('alert')).toHaveText(UNSURE)
+    await (on ? expect(family(page, 'Messages')).toBeChecked() : expect(family(page, 'Messages')).not.toBeChecked())
+  }
+  // La clé du premier envoi, gardée, rejouerait sa réponse stockée (la case cochée, la base vide).
+  expect(await toggle(page, 'Messages', true)).toEqual({ push_types: ['chat_message'] })
+  const keys = posts.map((r) => r.headers()['idempotency-key'])
+  expect(new Set(keys).size).toBe(3)
+  await expect(family(page, 'Messages')).toBeChecked()
+  expect(pushTypes(uid)).toBe('{chat_message}')
+})
+
+test('push : notifications bloquées → le texte en role="status", aucun bouton d\'activation, aucune alerte ; les familles restent', async ({ page, login }) => {
+  trash.push((await login()).uid)
+  await stubPush(page, { permission: 'denied' })
+  await openPush(page)
+  await expect(push(page).getByRole('status')).toHaveText('Les notifications sont bloquées pour ce site : autorise-les dans les réglages de ton navigateur.')
+  await expect(push(page).getByRole('button')).toHaveCount(0)
+  await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
+  for (const f of FAMILIES) await expect(family(page, f)).toBeVisible()
+})
+
+test.describe('Review Focus, navigateur partagé', () => {
+  // Endpoint E déjà enregistré pour un autre joueur, le navigateur abonné à E.
+  const shared = () => {
+    const other = makePlayer()
+    trash.push(other.uid)
+    const endpoint = `https://fcm.googleapis.com/fcm/send/e2e-${randomUUID()}`
+    sql(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (:'u', :'e', 'x', 'y')`, { u: other.uid, e: endpoint })
+    return endpoint
+  }
+
+  test('l\'arrivée sur /settings renvoie l\'abonnement, sans clic ni préférence : E passe au joueur connecté, « activées », familles décochées', async ({ page, login }) => {
+    const { uid } = await login()
+    trash.push(uid)
+    const endpoint = shared()
+    await stubPush(page, { endpoint })
+    const subs = record(page, 'POST', SUBSCRIBE)
+    const prefs = record(page, 'POST', PREFS)
+    await openPush(page)
+    await expect(push(page).getByRole('status')).toHaveText(ACTIVE)
+    for (const f of FAMILIES) await expect(family(page, f)).not.toBeChecked()
+    expect(subs.map((r) => r.postDataJSON().endpoint)).toEqual([endpoint])
+    expect(prefs).toHaveLength(0)
+    expect(rows(endpoint)).toBe(uid)
+  })
+
+  test('renvoi en 500 → « L\'activation a échoué, réessaie. » et « Activer sur cet appareil »', async ({ page, login }) => {
+    trash.push((await login()).uid)
+    const endpoint = shared()
+    await stubPush(page, { endpoint })
+    const subs = record(page, 'POST', SUBSCRIBE)
+    await routeOnce(page, `**${SUBSCRIBE}`, (r) => r.fulfill({ status: 500 }))
+    await openPush(page)
+    await expect(push(page).getByRole('alert')).toHaveText(FAILED)
+    await expect(activate(page)).toBeVisible()
+    await expect(push(page).getByRole('status')).toHaveText('')
+    // Issue incertaine : « Activer » reprend la même intention, donc la même clé.
+    await toggle(page, 'Messages', true)
+    await activate(page).click()
+    await expect(push(page).getByRole('status')).toHaveText(ACTIVE)
+    await expect(deactivate(page)).toBeFocused()
+    expect(subs.map((r) => r.headers()['idempotency-key'])).toEqual(Array(2).fill(subs[0].headers()['idempotency-key']))
+  })
+
+  test('« Se déconnecter » désabonne l\'appareil : DELETE de E avant /login, plus de ligne pour E', async ({ page, login }) => {
+    trash.push((await login()).uid)
+    const endpoint = shared()
+    await stubPush(page, { endpoint })
+    await openPush(page)
+    await expect(push(page).getByRole('status')).toHaveText(ACTIVE)
+    const order: string[] = []
+    page.on('request', (r) => { if (is('DELETE', SUBSCRIBE)(r)) order.push(`DELETE ${r.postDataJSON().endpoint}`) })
+    // Une fois : /login peut renaviguer (remplacement d'adresse).
+    page.on('framenavigated', (f) => { if (f === page.mainFrame() && new URL(f.url()).pathname === '/login' && !order.includes('/login')) order.push('/login') })
+    await page.getByRole('button', { name: 'Se déconnecter' }).click()
+    await expect(page).toHaveURL('/login')
+    expect(order).toEqual([`DELETE ${endpoint}`, '/login'])
+    expect(rows(endpoint)).toBe('')
+  })
+})
+
+// 500, ou 200 au corps illisible : la section atteint son état d'échec (data-ready posé), les autres restent lues.
+for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }]] as const) {
+  test(`push : lecture en échec (${label}) → alerte et « Réessayer » dans la section, « Profil » et « Préférences » lues ; « Réessayer » → les familles, focus sur le titre`, async ({ page, login }) => {
+    trash.push((await login()).uid)
+    await stubPush(page)
+    await routeOnce(page, `**${PREFS}`, (r) => r.fulfill(reply))
+    await openPush(page)
+    await expect(push(page).getByRole('alert')).toBeVisible()
+    await expect(push(page).getByRole('checkbox')).toHaveCount(0)
+    await expect(pseudo(page)).toBeVisible()
+    await expect(page.getByRole('checkbox', { name: 'Sons', exact: true })).toBeVisible()
+    await push(page).getByRole('button', { name: 'Réessayer' }).click()
+    for (const f of FAMILIES) await expect(family(page, f)).not.toBeChecked()
+    await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeFocused()
+  })
+}

@@ -65,6 +65,17 @@ export const gate: RouteSpec = {
       },
     },
     {
+      name: 'sans cookie : /sw.js (exempté, M4b-23) → 200 JavaScript, gestionnaire push, aucun gestionnaire fetch',
+      run: async ({ gated }) => {
+        const res = await get(gated, '/sw.js')
+        assert.equal(res.status, 200)
+        assert.match(res.headers.get('content-type') ?? '', /javascript/)
+        const body = await res.text()
+        assert.ok(body.includes('addEventListener(\'push\''), 'gestionnaire push')
+        assert.ok(!body.includes('addEventListener(\'fetch\''), 'aucun gestionnaire fetch')
+      },
+    },
+    {
       name: '/robots.txt interdit tout',
       run: async ({ gated }) => assert.match(await (await get(gated, '/robots.txt')).text(), /^Disallow: \/$/m),
     },

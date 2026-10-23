@@ -250,6 +250,17 @@ test('détail en initiateur : seul « Annuler » → « Échange annulé. »', a
   await expect(status(page)).toBeFocused()
 })
 
+test('détail : le destinataire voit « Message à <initiateur> », l\'initiateur « Message à <destinataire> », vers le fil de l\'autre', async ({ page, login }) => {
+  const { me, other, mine, theirs } = await friends(login)
+  const message = page.locator('main').getByRole('link', { name: /^Message à / })
+  await open(page, `/trades/${propose(other, me, [theirs[0], mine[0]])}`)
+  await expect(message).toHaveText(`Message à ${other.username}`)
+  await expect(message).toHaveAttribute('href', `/dms?with=${other.uid}`)
+  await open(page, `/trades/${propose(me, other, [mine[1], theirs[1]])}`)
+  await expect(message).toHaveText(`Message à ${other.username}`)
+  await expect(message).toHaveAttribute('href', `/dms?with=${other.uid}`)
+})
+
 test('accepté ailleurs entre la lecture et le clic : « Accepter » → le refus en alerte, puis le statut relu', async ({ page, login }) => {
   const { me, other, mine, theirs } = await friends(login)
   const id = propose(other, me, [theirs[0], mine[0]])
