@@ -41,6 +41,8 @@ const READY: Record<string, string> = {
   '/profile/[username]': 'main [data-ready]',
   // Ligne du profil et vitrine lues (ou l'échec).
   '/profile': 'main [data-ready]',
+  // Liste des conversations lue, avec le fil quand `with` est là (ou l'échec).
+  '/dms': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -275,6 +277,41 @@ test('axe /profile : deux emplacements remplis, puis le sélecteur d\'avatar ouv
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id = :'me'`, { me: me.uid })
+  }
+})
+
+test('axe /dms : deux conversations, l\'une à deux non lus', async ({ page, login }) => {
+  const me = await login()
+  const [a, b] = [makePlayer(), makePlayer()]
+  try {
+    befriend(me, a)
+    befriend(me, b)
+    sql(`insert into public.chat_messages (sender_id, recipient_id, content) values (:'me', :'b', 'Pour B'), (:'a', :'me', 'Un'), (:'a', :'me', 'Deux')`,
+      { me: me.uid, a: a.uid, b: b.uid })
+    await page.goto('/dms')
+    await page.locator(READY['/dms']).waitFor()
+    await expect(page.getByRole('list', { name: 'Conversations' }).getByRole('listitem')).toHaveCount(2)
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'a', :'b')`, { me: me.uid, a: a.uid, b: b.uid })
+  }
+})
+
+// Le fil : div[role=log] et son ol sans rôle (un ol au rôle log perdrait sa sémantique de liste, et chaque li lèverait listitem).
+test('axe /dms?with=<ami> : dix messages', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(me, friend)
+    sql(`insert into public.chat_messages (sender_id, recipient_id, content)
+select case when i % 2 = 0 then :'me' else :'f' end::uuid, case when i % 2 = 0 then :'f' else :'me' end::uuid, 'Message ' || i
+from generate_series(1, 10) i`, { me: me.uid, f: friend.uid })
+    await page.goto(`/dms?with=${friend.uid}`)
+    await page.locator(READY['/dms']).waitFor()
+    await expect(page.getByRole('log').getByRole('listitem').filter({ hasText: 'Message ' })).toHaveCount(10)
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
   }
 })
 

@@ -1,0 +1,255 @@
+'use client'
+
+import Link from 'next/link'
+import { Fragment, useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
+import { link, primary } from '@/components/ui/button'
+import { LoadError } from '@/components/ui/LoadError'
+import { Loading } from '@/components/ui/Loading'
+import { api, ApiError, apiOnce, unsure, userMessage } from '@/lib/api'
+import { formatInt, formatLongDate, formatTime } from '@/lib/format'
+import { unreadStore } from '@/lib/notifications'
+import { usePoll } from '@/lib/poll'
+import { createBrowserSupabase } from '@/lib/supabase/browser'
+import type { Message, Thread as Data } from './types'
+
+const MAX = 2000
+// Réponse perdue, 5xx ou corps illisible : le message a pu être créé ; renvoyé tel quel, il garde sa clé et le serveur rejoue sa réponse.
+const UNSURE = 'Le message n\'a pas été confirmé : il a peut-être été envoyé. La conversation se met à jour.'
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
+
+// Fil avec un pair (/dms?with=<id>), remonté pour chaque pair (key). Lu à chaque affichage (Activity compris), puis toutes les 5 s tant
+// que la page est visible ; le main défile, jamais un conteneur du fil (R§6.3), la saisie collée en bas. Aucun id fixe (useId).
+export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: string; onSent: () => void; onSettled: () => void }) {
+  const id = useId()
+  const [head, setHead] = useState<Omit<Data, 'messages'> | null>(null)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [failed, setFailed] = useState(false)
+  const [missing, setMissing] = useState(false)
+  const [value, setValue] = useState('')
+  // Un envoi à la fois : aria-disabled et garde, jamais disabled ; le champ en readOnly.
+  const [sending, setSending] = useState(false)
+  // Échec du dernier envoi (role=alert) : un refus reste jusqu'à l'envoi suivant, une issue incertaine jusqu'au premier message nouveau lu.
+  const [error, setError] = useState<{ text: string; unsure: boolean } | null>(null)
+  const inflight = useRef(false)
+  // Clés des envois (B15) : aucune relecture ne les oublie, seulement apiOnce (réponse lue) et toute modification du champ.
+  const keys = useRef(new Map<string, string>())
+  // Lectures ordonnées : seule la dernière partie s'applique ; celles parties avant la réponse d'un envoi sont jetées (hold).
+  const gen = useRef(0)
+  const hold = useRef(0)
+  // Messages affichés, à jour avant leur rendu : la nouveauté d'une lecture ou d'un envoi s'y mesure.
+  const shown = useRef<Message[]>([])
+  // Défilement au rendu suivant : à l'ouverture, puis pour un message nouveau quand le joueur était en bas.
+  const stick = useRef<ScrollBehavior | null>('instant')
+  const root = useRef<HTMLDivElement>(null)
+  const items = useRef<HTMLOListElement>(null)
+  const bottom = useRef<HTMLDivElement>(null)
+  const title = useRef<HTMLHeadingElement>(null)
+  const lost = useRef<HTMLHeadingElement>(null)
+  const retryButton = useRef<HTMLButtonElement>(null)
+  const field = useRef<HTMLTextAreaElement>(null)
+  const notFriend = useRef<HTMLParagraphElement>(null)
+
+  // En bas : le dernier message entier au-dessus de la saisie collée.
+  const atBottom = () => {
+    const last = items.current?.lastElementChild
+    return !last || !bottom.current || last.getBoundingClientRect().bottom <= bottom.current.getBoundingClientRect().top + 1
+  }
+  // Rend vrai si un message n'était pas encore affiché.
+  const show = (next: Message[]) => {
+    const old = new Set(shown.current.map((m) => m.id))
+    const fresh = next.some((m) => !old.has(m.id))
+    if (fresh && stick.current === null && atBottom()) stick.current = reduced() ? 'instant' : 'smooth'
+    shown.current = next
+    setMessages(next)
+    return fresh
+  }
+
+  // Lu par le destinataire seul (RLS) ; le trigger marque aussi la notification chat_message du couple, que la cloche relit. Un échec ne
+  // fait rien : le poll suivant réessaie.
+  const markRead = () => void createBrowserSupabase().from('chat_messages').update({ read: true })
+    .eq('sender_id', peerId).eq('recipient_id', me).eq('read', false)
+    .then(({ error: e }) => { if (!e) void unreadStore().refresh() }, () => {})
+
+  const read = () => {
+    const g = ++gen.current
+    const started = performance.now()
+    return api<Data | null>(`/api/chat/${encodeURIComponent(peerId)}`).then((r) => {
+      if (g !== gen.current || started < hold.current) return
+      // 2xx au corps illisible (api() rend null) ou sans `messages` : une lecture en échec ; le fil affiché reste, brouillon compris.
+      if (!Array.isArray(r?.messages) || !r.peer) return setFailed(true)
+      setHead({ peer: r.peer, isFriend: r.isFriend })
+      if (show(r.messages)) setError((e) => (e?.unsure ? null : e))
+      setFailed(false)
+      // Onglet caché : rien de lu ; au retour en visible, le poll relit tout de suite (lib/poll.ts) et marque alors.
+      if (document.visibilityState === 'visible' && r.messages.some((m) => m.sender_id === peerId && !m.read)) markRead()
+    }, (e) => {
+      if (g !== gen.current || started < hold.current) return
+      // Inconnu (404) ou adresse invalide (400) : « Joueur introuvable », plus interrogé. Autre échec : le fil affiché reste.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 400)) setMissing(true)
+      else setFailed(true)
+    })
+  }
+  const onShow = useEffectEvent(() => void read())
+  useEffect(() => onShow(), [])
+  usePoll(read, 5_000, !missing)
+
+  const settled = !!head || failed || missing
+  const onReady = useEffectEvent(onSettled)
+  useEffect(() => { if (settled) onReady() }, [settled])
+
+  useLayoutEffect(() => {
+    if (!head || !stick.current) return
+    root.current?.closest('main')?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: stick.current })
+    stick.current = null
+  }, [head, messages])
+
+  // Le contrôle focalisé disparaît (fil ouvert depuis la liste cachée, « Réessayer », saisie remplacée quand l'amitié change) : le focus
+  // tombé sur body va au titre du fil, au « Réessayer » revenu, à « Joueur introuvable », ou à ce qui remplace la saisie.
+  const kind = missing ? 'missing' : head ? (head.isFriend ? 'friend' : 'stranger') : failed ? 'failed' : null
+  const prev = useRef<typeof kind>(null)
+  const retried = useRef(false)
+  useEffect(() => {
+    if (!kind || (kind === prev.current && !retried.current)) return
+    const from = prev.current
+    prev.current = kind
+    retried.current = false
+    if (document.activeElement !== document.body) return
+    if (kind === 'missing') lost.current?.focus()
+    else if (kind === 'failed') retryButton.current?.focus()
+    else if (from === 'friend' || from === 'stranger') (kind === 'friend' ? field : notFriend).current?.focus()
+    // Sans défilement : l'ouverture montre le dernier message.
+    else title.current?.focus({ preventScroll: true })
+  }, [kind])
+
+  function retry() {
+    retried.current = true
+    setFailed(false)
+    void read()
+  }
+
+  async function send(e?: FormEvent) {
+    e?.preventDefault()
+    const content = value
+    if (inflight.current || !content.trim()) return
+    inflight.current = true
+    setSending(true)
+    setError(null)
+    const intent = `send:${peerId}:${content}`
+    // Seule la clé de cette intention vaut encore : une autre, gardée, rejouerait sa réponse stockée (leçon de la Task 12).
+    for (const k of keys.current.keys()) if (k !== intent) keys.current.delete(k)
+    try {
+      const r = await apiOnce<{ message: Message } | null>(keys.current, intent, `/api/chat/${encodeURIComponent(peerId)}`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      })
+      // 2xx au corps illisible (apiOnce garde la clé) ou sans `message` : issue incertaine.
+      if (!r?.message?.id) throw new Error('Réponse illisible')
+      // Posé à la réponse, jamais au départ : un poll parti pendant le POST déferait le message.
+      hold.current = performance.now()
+      // Succès ou rejeu : fusionné par id, sans seconde bulle si un poll l'a déjà montré. Le focus reste dans le champ.
+      if (!shown.current.some((m) => m.id === r.message.id)) show([...shown.current, r.message])
+      setValue('')
+      onSent()
+    } catch (err) {
+      const maybe = unsure(err)
+      if (!maybe) hold.current = performance.now()
+      // Refus : le texte reste dans le champ.
+      setError({ text: userMessage(err, maybe ? UNSURE : 'L\'action n\'a pas abouti.'), unsure: maybe })
+    } finally {
+      inflight.current = false
+      setSending(false)
+    }
+  }
+
+  if (missing) {
+    return (
+      <div className="card-frame flex flex-col items-center gap-3 p-6 text-center">
+        <h2 ref={lost} tabIndex={-1} className="text-lg font-bold outline-none">Joueur introuvable</h2>
+        <Link href="/dms" className={link}>Retour aux messages</Link>
+      </div>
+    )
+  }
+  if (!head) return failed ? <LoadError ref={retryButton} onRetry={retry} /> : <Loading label="Chargement des messages" />
+  const { peer } = head
+  // Pseudo lu en clair : encodé dans le lien (pseudo hérité).
+  const profile = `/profile/${encodeURIComponent(peer.username)}`
+  const off = sending || !value.trim()
+  return (
+    <div ref={root} className="space-y-3">
+      <h2 ref={title} tabIndex={-1} className="text-lg font-bold outline-none">
+        <Link href={profile} className="inline-flex min-h-11 items-center wrap-anywhere text-[var(--color-accent-light)] underline-offset-2 hover:underline">
+          {peer.username}
+        </Link>
+      </h2>
+      {/* Sans rôle sur l'ol ni ses li : un ol au rôle log perdrait sa sémantique de liste (axe listitem). */}
+      <div role="log" aria-label={`Messages avec ${peer.username}`}>
+        {messages.length ? (
+          <ol ref={items} className="space-y-2">
+            {messages.map((m, i) => {
+              const mine = m.sender_id === me
+              const day = formatLongDate(m.created_at)
+              return (
+                <Fragment key={m.id}>
+                  {(i === 0 || formatLongDate(messages[i - 1].created_at) !== day) && (
+                    <li className="py-2 text-center text-xs font-medium text-[var(--color-foreground)]/70">{day}</li>
+                  )}
+                  <li className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`min-w-0 max-w-[85%] rounded-2xl px-3 py-2 ${mine ? 'bg-[var(--color-accent)]/15' : 'bg-[var(--color-surface-light)]'}`}>
+                      <p className="whitespace-pre-wrap wrap-anywhere text-sm">
+                        <span className="sr-only">{mine ? 'Toi : ' : `${peer.username} : `}</span>
+                        {m.content}
+                      </p>
+                      <time dateTime={m.created_at} className="mt-1 block text-right text-xs text-[var(--color-foreground)]/70">{formatTime(m.created_at)}</time>
+                    </div>
+                  </li>
+                </Fragment>
+              )
+            })}
+          </ol>
+        ) : (
+          <p className="card-frame p-6 text-center text-sm">Aucun message pour l&apos;instant.</p>
+        )}
+      </div>
+      <div ref={bottom} className="sticky bottom-0 space-y-2 border-t border-[var(--color-border)] bg-[var(--color-background)] py-3">
+        {head.isFriend ? (
+          <form onSubmit={(e) => void send(e)} className="space-y-2">
+            <textarea
+              ref={field}
+              aria-label="Ton message"
+              aria-describedby={`${id}-help ${id}-count`}
+              value={value}
+              maxLength={MAX}
+              rows={2}
+              readOnly={sending}
+              onChange={(e) => {
+                keys.current.clear()
+                setValue(e.target.value)
+              }}
+              // U9 : Entrée envoie ; Maj+Entrée va à la ligne ; Entrée qui valide une composition IME n'envoie rien.
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+                e.preventDefault()
+                void send()
+              }}
+              className="block w-full resize-y rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm"
+            />
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <p id={`${id}-help`} className="text-xs text-[var(--color-foreground)]/70">Entrée pour envoyer, Maj+Entrée pour aller à la ligne.</p>
+              <div className="flex items-center gap-3">
+                {/* value.length : unités UTF-16, plus strict que les caractères comptés par le serveur, jamais plus large. */}
+                <span id={`${id}-count`} className="text-xs tabular-nums text-[var(--color-foreground)]/70">{`${formatInt(value.length)} / ${formatInt(MAX)}`}</span>
+                <button type="submit" aria-disabled={off || undefined} className={`${primary} justify-center`}>Envoyer</button>
+              </div>
+            </div>
+            {error && <p role="alert" className="text-sm font-medium text-red-400">{error.text}</p>}
+          </form>
+        ) : (
+          <>
+            <p ref={notFriend} tabIndex={-1} className="text-sm font-medium outline-none">Vous devez être amis pour vous écrire</p>
+            <Link href={profile} className={`${link} wrap-anywhere`}>{`Profil de ${peer.username}`}</Link>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
