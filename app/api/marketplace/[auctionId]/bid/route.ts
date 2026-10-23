@@ -7,5 +7,6 @@ export const POST = route({
   params: AuctionParams,
   input: z.object({ amount: z.int32() }),
   idem: true,
+  push: true,
   args: (i, { params }) => ({ p_auction_id: params.auctionId, p_amount: i.amount }),
 })

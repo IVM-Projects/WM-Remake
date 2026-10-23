@@ -5,5 +5,6 @@ export const POST = route({
   fn: 'settle_request',
   params: AuctionParams,
   idem: true,
+  push: true,
   args: (_, { params }) => ({ p_auction_id: params.auctionId }),
 })

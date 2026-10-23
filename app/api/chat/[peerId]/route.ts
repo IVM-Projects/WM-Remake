@@ -9,6 +9,7 @@ export const POST = route({
   params: PeerParams,
   input: ChatBody,
   idem: true,
+  push: true,
   status: 201,
   args: (i, { params }) => ({ p_peer_id: params.peerId, p_content: i.content }),
 })

@@ -13,10 +13,11 @@ import { marketReads, marketWrites } from './market.ts'
 import { notifications } from './notifications.ts'
 import { packs } from './packs.ts'
 import { profile } from './profile.ts'
+import { push } from './push.ts'
 import { reports } from './reports.ts'
 import { restSpecs } from './rest.ts'
 import { trades } from './trades.ts'
 import { wallet } from './wallet.ts'
 
 // Une entrée par route ; recap-coverage.ts compte les routes du recap couvertes ici.
-export const specs: RouteSpec[] = [health, gate, auth, ...packs, wallet, ...collection, cards, credits, cron, ...accounts, ...restSpecs, ...marketWrites, ...marketReads, ...friends, ...trades, ...notifications, ...profile, ...reports, ...chat]
+export const specs: RouteSpec[] = [health, gate, auth, ...packs, wallet, ...collection, cards, credits, cron, ...accounts, ...restSpecs, ...marketWrites, ...marketReads, ...friends, ...trades, ...notifications, ...profile, ...reports, ...chat, ...push]

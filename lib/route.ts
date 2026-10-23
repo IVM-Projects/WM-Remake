@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { NextRequest } from 'next/server'
+import { after, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
@@ -91,6 +91,8 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
   status?: number
   // Posés sur un succès seulement.
   headers?: Record<string, string>
+  // RPC qui insère des notifications (B6) : drain de l'outbox après la réponse d'un succès ; lib/push chargé seulement alors.
+  push?: boolean
 }): (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response> {
   const auth = opts.auth ?? true
   const ok = opts.status ?? 200
@@ -149,6 +151,15 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
       out = await run(req, ctx)
     } catch {
       out = fail(500, INTERNAL)
+    }
+    if (opts.push && out.status === ok) {
+      after(async () => {
+        try {
+          await (await import('@/lib/push')).drainPush()
+        } catch {
+          console.error(JSON.stringify({ push: 'drain_failed' }))
+        }
+      })
     }
     console.log(JSON.stringify({
       route: maskPath(req.nextUrl.pathname, ctx.params),

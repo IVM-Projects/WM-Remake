@@ -57,3 +57,18 @@ export const ShowcasePosition = z.object({ position: z.int32() })
 export const ReportBody = z.object({ reportedUserId: z.uuid(), reason: pgText, details: pgText.optional() })
 // Message privé : vide, blancs seuls et plus de 2 000 caractères (points de code) refusés en SQL ; le contenu part tel quel, sans rognage.
 export const ChatBody = z.object({ content: pgText })
+
+// Abonnement push (M4b-12) : la forme seulement, chaque refus en « Abonnement push invalide » ; l'origine est contrôlée en SQL (B9), le
+// point sur la courbe dans la route (node:crypto). Tailles sans Buffer, ce fichier partant au navigateur : 65 octets en base64url sans
+// remplissage font 87 caractères, le premier B (0x04) et le dernier porteur de 4 bits ; 16 octets font 22 caractères, le dernier porteur de 2.
+const INVALID_PUSH = 'Abonnement push invalide'
+const pushUrl = z.url({ error: INVALID_PUSH }).max(2048, INVALID_PUSH)
+export const PushEndpoint = z.object({ endpoint: pushUrl }, { error: INVALID_PUSH })
+export const PushSubscriptionBody = PushEndpoint.extend({
+  keys: z.object({
+    p256dh: z.string({ error: INVALID_PUSH }).regex(/^B[A-Za-z0-9_-]{85}[AEIMQUYcgkosw048]$/, INVALID_PUSH),
+    auth: z.string({ error: INVALID_PUSH }).regex(/^[A-Za-z0-9_-]{21}[AQgw]$/, INVALID_PUSH),
+  }, { error: INVALID_PUSH }),
+})
+// Types validés en SQL (« Type de notification inconnu ») ; 13 aujourd'hui.
+export const PushTypes = z.object({ push_types: z.array(pgText).max(20) })

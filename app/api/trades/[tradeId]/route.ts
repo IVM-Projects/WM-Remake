@@ -10,5 +10,6 @@ export const PATCH = route({
   params: TradeParams,
   input: z.object({ action: pgText }),
   idem: true,
+  push: true,
   args: (i, { params, tz }) => ({ p_trade_id: params.tradeId, p_action: i.action, p_tz: tz }),
 })

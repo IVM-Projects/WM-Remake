@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { PUSH_FAMILIES, pushTypes } from './notification-view'
 import { createUnreadStore, notificationView, type Notification } from './notifications'
 
 // Sans DOM (R18) : document simulé par un EventTarget, minuteurs simulés ; le singleton unreadStore() n'est jamais touché ici.
@@ -134,4 +136,16 @@ test('notificationView : texte et lien des 12 types, et d\'un type inconnu', () 
   ])
   // Une unité au singulier (wikibidous(1)).
   expect(notificationView(n('auction_sold', { ...a, amount: 1 })).text).toBe('Chat vendue pour 1 wikibidou')
+})
+
+test('notificationView : chat_message → « Alice t\'a écrit », lien du fil (M4b-4)', () => {
+  expect(notificationView(n('chat_message', { user_id: 'u-1', username: 'Alice' }))).toEqual({ text: 'Alice t\'a écrit', href: '/dms?with=u-1' })
+})
+
+test('PUSH_FAMILIES aplati et trié = pushTypes() = push_types de 1800 ; chaque type a son texte', () => {
+  const sql = readFileSync(new URL('../supabase/migrations/1800_wm_social_core.sql', import.meta.url), 'utf8')
+  const seeded: unknown = JSON.parse(/'push_types',\s*'(\[[^']*\])'/.exec(sql)?.[1] ?? 'null')
+  expect(PUSH_FAMILIES.flatMap((f) => f.types).sort()).toEqual(pushTypes())
+  expect(pushTypes()).toEqual(seeded)
+  for (const type of pushTypes()) expect(notificationView({ type, data: {} }).text, type).not.toBe('Nouvelle notification')
 })

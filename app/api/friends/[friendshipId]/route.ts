@@ -8,6 +8,7 @@ export const PATCH = route({
   params: FriendshipParams,
   input: z.object({ action: pgText }),
   idem: true,
+  push: true,
   args: (i, { params }) => ({ p_friendship_id: params.friendshipId, p_action: i.action }),
 })
 

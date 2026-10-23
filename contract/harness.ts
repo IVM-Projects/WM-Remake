@@ -7,6 +7,7 @@ import { createServer, request, type Server } from 'node:http'
 import { createServer as createTcpServer } from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import webpush from 'web-push'
 import { generateKeys, signJwt } from './jwt.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -21,6 +22,10 @@ const STARTUP_MS = 120_000
 const KEY_ROLES = new Map([['sb_publishable_test', 'anon'], ['sb_secret_test', 'service_role']])
 export const GATE = { password: 'test-gate', secret: 'test-secret' }
 export const CRON_SECRET = 'test-cron'
+// Faux service de push de la passerelle (M4b-32) : endpoints `${PUSH_SINK}/<id>`, ou `${PUSH_SINK}/gone/<id>` pour un 410.
+export const PUSH_SINK = `${SUPABASE_URL}/push`
+// Paire VAPID tirée à chaque run, la même pour les deux serveurs ; jamais écrite ni imprimée. La clé publique est dérivée côté app (M4b-14).
+const VAPID_PRIVATE = webpush.generateVAPIDKeys().privateKey
 
 // Vérificateur Turnstile du banc (POST /turnstile/siteverify) : seul ce couple est accepté.
 const TURNSTILE = { secret: 'test-turnstile', response: 'dev-bypass' }
@@ -81,6 +86,7 @@ const OPEN_AUTH = /^\/auth\/v1\/(verify|\.well-known\/jwks\.json)(\?|$)/
 const UPSTREAMS = [['/rest/v1', POSTGREST_PORT], ['/auth/v1', GOTRUE_PORT]] as const
 
 function gateway(privateJwk: JsonWebKey): Server {
+  const deliveries = new Map<string, { headers: unknown; body_b64: string }[]>()
   return createServer((req, res) => {
     const json = (status: number, body: unknown) => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
     const url = req.url ?? '/'
@@ -98,6 +104,19 @@ function gateway(privateJwk: JsonWebKey): Server {
         const form = new URLSearchParams(body)
         const ok = form.get('secret') === TURNSTILE.secret && form.get('response') === TURNSTILE.response
         json(200, ok ? { success: true } : { success: false, 'error-codes': ['invalid-input-response'] })
+      })
+    }
+    // Faux service de push : enregistre sans déchiffrer, la spec déchiffre (contract/push-crypto.ts).
+    const push = /^\/push\/(gone\/)?([\w-]+)$/.exec(url)
+    if (push && req.method === 'GET' && !push[1]) return json(200, { deliveries: deliveries.get(push[2]) ?? [] })
+    if (push && req.method === 'POST') {
+      // Corps aes128gcm binaire : lu en Buffer, jamais en UTF-8 (qui le corromprait, M4b-11).
+      const chunks: Buffer[] = []
+      req.on('data', (c: Buffer) => chunks.push(c))
+      return void req.on('end', () => {
+        if (push[1]) return void res.writeHead(410).end()
+        deliveries.set(push[2], [...(deliveries.get(push[2]) ?? []), { headers: req.headers, body_b64: Buffer.concat(chunks).toString('base64') }])
+        res.writeHead(201).end()
       })
     }
     // Préflight CORS du navigateur (jamais d'apikey) : la passerelle y répond, comme le plugin cors de Kong chez Supabase.
@@ -236,6 +255,8 @@ export async function startNext(name: 'plain' | 'gated', backend: Backend): Prom
     TURNSTILE_SECRET_KEY: TURNSTILE.secret,
     TURNSTILE_VERIFY_URL: `${backend.supabaseUrl}/turnstile/siteverify`,
     CRON_SECRET,
+    VAPID_PRIVATE,
+    VAPID_SUBJECT: 'mailto:push@example.invalid',
   })
   const stop = () => kill(child)
   try {
