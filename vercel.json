@@ -1,1 +1,4 @@
-{ "regions": ["dub1"] }
+{
+  "regions": ["dub1"],
+  "git": { "deploymentEnabled": { "claude/*": false } }
+}
