@@ -79,13 +79,15 @@ language sql security definer set search_path = '' as $$
   returning id
 $$;
 
--- Contrôle P5 (M4-2, M4b-2, M4b-31) des fonctions wm.<fs> : null si chacune pose lock_timeout à 2 s avant son premier verrou (for update,
--- for key share, wm.lock_users, wm.lock_user), sinon la liste des fautives, une fonction absente comprise. Logique de 28_trades.test.sql:81-97.
-create or replace function tests.lock_timeout_violations(fs text[]) returns text language sql stable as $$
+-- Contrôle P5 (M4-2, M4b-2, M4b-31) des fonctions wm.<fs> : null si chacune pose lock_timeout à 2 s avant son premier verrou (le premier
+-- marqueur de p_markers trouvé : for update, for key share, wm.lock_users, wm.lock_user par défaut ; la table de sa première écriture pour
+-- les fonctions du push), sinon la liste des fautives, une fonction absente comprise. Logique de 28_trades.test.sql:81-97.
+create or replace function tests.lock_timeout_violations(fs text[],
+  p_markers text[] default array['for update', 'for key share', 'wm.lock_users(', 'wm.lock_user(']) returns text language sql stable as $$
   select string_agg(f, ', ' order by o) from unnest(fs) with ordinality u (f, o)
   left join lateral (select prosrc s from pg_proc where oid = to_regproc('wm.' || f)) p on true,
-    lateral (select strpos(s, 'perform set_config(''lock_timeout'', ''2s'', true);') t, (select min(i) from unnest(array[strpos(s, 'for update'),
-      strpos(s, 'for key share'), strpos(s, 'wm.lock_users('), strpos(s, 'wm.lock_user(')]) i where i > 0) l) x
+    lateral (select strpos(s, 'perform set_config(''lock_timeout'', ''2s'', true);') t,
+      (select min(i) from unnest(p_markers) m, strpos(s, m) i where i > 0) l) x
   where not coalesce(t > 0 and t < l, false)
 $$;
 

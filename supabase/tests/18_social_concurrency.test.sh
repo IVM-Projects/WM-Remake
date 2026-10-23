@@ -193,3 +193,33 @@ for pass in 1 2; do
   got="$(q -c "select reason from public.reports where reporter_id = '$by' and reported_user_id = '$on'")"
   [[ $got == spam ]] || fail "signalement, passe $pass : motif « $got »"
 done
+
+# 4. Réservation de l'outbox : 1 000 lignes nées de vraies notifications d'un abonné au type (PF6). La session 1 réserve les 500 premières et
+# tient leurs verrous 1 s ; la session 2 les saute (skip locked) et rend les 500 suivantes sans attendre.
+u="$(player p)"
+q -c "delete from wm.push_outbox where true" \
+  -c "select wm.notification_prefs_set('$u', array['trade_received'])" \
+  -c "select wm.push_subscribe('$u', 'https://fcm.googleapis.com/fcm/send/$tag', 'p', 'k')" \
+  -c "insert into public.notifications (user_id, type) select '$u', 'trade_received' from generate_series(1, 1000)" >/dev/null
+got="$(q -c "select count(*) from wm.push_outbox")"
+[[ $got == 1000 ]] || fail "réservation : $got lignes d'outbox (1 000 attendues)"
+claim="select wm.push_claim(500)::text"
+q -v VERBOSITY=verbose -c "set role service_role; begin; $claim; select pg_sleep(1); commit;" >"$tmp/4s1" 2>"$tmp/4s1.err" &
+blocker=$!
+sleeping "$tmp/4s1.err"
+t0=$EPOCHREALTIME
+q -v VERBOSITY=verbose -c "set role service_role; $claim" >"$tmp/4s2" 2>"$tmp/4s2.err" || fail "réservation : seconde session en erreur" "$tmp/4s2.err"
+d="$(ms)"
+wait "$blocker" || fail "réservation : première session en erreur" "$tmp/4s1.err"
+echo "18_social_concurrency : réservation : seconde session servie en $d ms" >&2
+quiet "$tmp/4s1.err" "$tmp/4s2.err"
+(( d < 500 )) || fail "réservation : seconde session servie en $d ms (moins de 500)"
+# Réponses relues par un fichier : plus de 100 Ko chacune, au-delà, à elles deux, des 128 Kio d'un argument de commande.
+cat >"$tmp/4.sql" <<SQL
+select jsonb_array_length(a) || ' ' || jsonb_array_length(b) || ' ' || (select count(distinct x ->> 'notification_id')
+  from jsonb_array_elements(a || b) x where x ->> 'notification_id' in (select id::text from public.notifications where user_id = '$u'))
+  || ' ' || (select count(*) from wm.push_outbox)
+from (select \$j\$$(cat "$tmp/4s1")\$j\$::jsonb a, \$j\$$(cat "$tmp/4s2")\$j\$::jsonb b) v
+SQL
+got="$(q -f "$tmp/4.sql")"
+[[ $got == "500 500 1000 0" ]] || fail "réservation : éléments des deux sessions, notifications distinctes du joueur, lignes restantes : $got"

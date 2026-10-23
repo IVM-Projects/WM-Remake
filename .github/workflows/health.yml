@@ -1,7 +1,8 @@
 name: Santé de la démo
 
 # Chaque matin : /api/health de la démo (route publique, exemptée de la porte), puis le règlement par pg_cron : dernier run réussi de
-# wm-settle il y a 60 s au plus, aucune enchère échue en souffrance (M3-21, P13).
+# wm-settle il y a 60 s au plus, aucune enchère échue en souffrance (M3-21, P13) ; puis le retard du push : plus vieille ligne de l'outbox
+# de 120 s au plus (push_lag_s, M4b-18 : nul sur une outbox vide, 86400 sur une lecture en erreur).
 # Effet voulu : la requête garde le projet Supabase Free éveillé (C25).
 on:
   schedule:
@@ -21,7 +22,7 @@ jobs:
       - shell: bash
         run: |
           curl -fsS --max-time 30 "$DEMO_URL/api/health" > health.json
-          jq -e '.settle_lag_s != null and .settle_lag_s <= 60 and .overdue_s == null' health.json
+          jq -e '.settle_lag_s != null and .settle_lag_s <= 60 and .overdue_s == null and (.push_lag_s // 0) <= 120' health.json
       - if: failure()
         shell: bash # -eo pipefail : un `gh issue list` en échec fait échouer l'étape au lieu de créer un doublon
         env:
@@ -30,7 +31,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           title='Santé de la démo en échec'
-          body="\`GET $DEMO_URL/api/health\` a échoué ou le règlement est en retard : $RUN_URL"
+          body="\`GET $DEMO_URL/api/health\` a échoué, ou le règlement ou le push est en retard : $RUN_URL"
           if [[ -s health.json ]]; then body+=$'\n\n```json\n'"$(cat health.json)"$'\n```'; fi
           n="$(gh issue list --state open --search "in:title \"$title\"" --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")"
           if [[ -n "$n" ]]; then gh issue comment "$n" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
