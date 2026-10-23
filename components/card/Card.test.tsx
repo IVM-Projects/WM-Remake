@@ -108,4 +108,17 @@ describe('Card (DOM de R§6.4)', () => {
     expect(textOf(h)).toContain('x3')
     expect(textOf(html(<Card card={chat} owned count={1} />))).not.toContain('x1')
   })
+
+  test('pastille « ami possède » : lien vers le profil au pseudo encodé, nom « Profil de … », boîte de 44 px même pour 3 caractères', () => {
+    const link = (h: string) => h.match(/<a ([^>]*)>(.*?)<\/a>/) ?? ['', '', '']
+    const [, attrs, inner] = link(html(<Card card={chat} friendOwner="Élise Ü" />))
+    expect(attrs).toContain('href="/profile/%C3%89lise%20%C3%9C"')
+    expect(attrs).toContain('aria-label="Profil de Élise Ü"')
+    expect(inner).toMatch(/^<span class="[^"]*rounded-full bg-sky-300\/65[^"]*">/)
+    expect(textOf(inner)).toBe('Élise Ü')
+    const [, ili] = link(html(<Card card={chat} friendOwner="ili" />))
+    expect(ili).toContain('href="/profile/ili"')
+    expect(ili.match(/class="([^"]*)"/)?.[1].split(' ')).toEqual(
+      expect.arrayContaining(['relative', 'z-10', 'inline-flex', 'min-h-11', 'min-w-11', 'max-w-full', 'items-end', '-mt-7']))
+  })
 })

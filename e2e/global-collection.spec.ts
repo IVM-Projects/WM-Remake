@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 import { formatInt } from '../lib/format.ts'
-import { expect, sql, test } from './fixtures'
+import { befriend, expect, hydrated, makePlayer, sql, test } from './fixtures'
 
 // Catalogue d'essai (supabase/seed.sql) : 2 000 cartes, L 6 · UR 24 · SR 90 · R 280 · PC 600 · C 1 000.
 const COUNTS = [['L', 6], ['UR', 24], ['SR', 90], ['R', 280], ['PC', 600], ['C', 1000]] as const
@@ -80,6 +81,36 @@ select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards
   await expect(header).toContainText(`${formatInt(2000)} cartes au total`)
   await expect(page.getByText('Page 1 / 40', { exact: true })).toBeVisible()
   await expect(search).toBeDisabled()
+})
+
+test('pastille « ami possède » : lien vers le profil de l\'ami au pseudo encodé, cible de 44 px, clic qui mène au profil', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  // Pseudo hérité aux caractères spéciaux (C28 ne vaut pas pour les pseudos existants, l'inscription le refuserait) : le lien l'encode.
+  const name = `Élise Ü ${randomUUID().slice(-8)}`
+  try {
+    sql(`update public.profiles set username = :'name' where id = :'id'`, { name, id: friend.uid })
+    befriend(me, friend)
+    // La première carte de la page 0, dans l'ordre du catalogue (rareté, puis seq du pool).
+    sql(`insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards where id = (wm.cards_page_shared() -> 'cards' -> 0 ->> 'id')::uuid`,
+    { uid: friend.uid })
+    await page.goto('/global-collection')
+    const chip = cards(page).first().getByRole('link', { name: `Profil de ${name}`, exact: true })
+    const href = `/profile/${encodeURIComponent(name)}`
+    await expect(chip).toHaveAttribute('href', href)
+    await expect(chip.locator('span.rounded-full.bg-sky-300\\/65')).toHaveText(name)
+    await expect(cards(page).getByRole('link')).toHaveCount(1)
+    // Cible d'au moins 44 px dans les deux sens (D:751), comme les liens de la barre (e2e/shell.spec.ts).
+    expect(await chip.evaluate((a) => Math.min(a.getBoundingClientRect().width, a.getBoundingClientRect().height))).toBeGreaterThanOrEqual(44)
+    // Sans hydratation, le clic recharge la page sans gestionnaire : ni Link ni stopPropagation ne seraient éprouvés.
+    await hydrated(chip)
+    await chip.click()
+    await expect(page).toHaveURL(href)
+    // goBack() puis toujours aucun role="dialog" : dans l'E2E de la Task 11, quand /profile/[username] existe (PF2).
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
 })
 
 test('liste de souhaits : ajout depuis la modale, bascule, retrait, focus jamais sur body', async ({ page, login }) => {

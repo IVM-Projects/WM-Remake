@@ -1,6 +1,7 @@
 'use client'
 
 import { Shield, Star, Swords, Users } from 'lucide-react'
+import Link from 'next/link'
 import { useState } from 'react'
 import { brand } from '@/lib/brand'
 import { formatInt } from '@/lib/format'
@@ -137,12 +138,20 @@ export function Card({ card, size = 'lg', owned, starred, onToggleStar, starOff,
         {/* neutral-900/90 partout, extrait de la modale compris : le neutral-800/88 d'origine fait 4,45:1 sur SR (lib/contrast.test.ts). */}
         {text && <p className={`${excerpt ? 'text-[10px] line-clamp-[10]' : s.p} text-neutral-900/90`}>{text}</p>}
         <div className="mt-auto">
-          {/* shortcut: pastille seule, le lien vers le profil de l'ami arrive avec les amis (M4). */}
+          {/* Au-dessus du bouton du h3 (z-10) ; boîte de 44 × 44 px au moins (D:751) qui monte de 28 px sur la description, pastille en bas,
+              à sa place. stopPropagation : la racine ouvrirait la modale. */}
           {friendOwner && (
-            <span className="mb-1 inline-flex max-w-full items-center gap-1 rounded-full bg-sky-300/65 px-1.5 py-0.5 text-[9px] font-semibold text-black">
-              <Users className="size-3 shrink-0" />
-              <span className="truncate">{friendOwner}</span>
-            </span>
+            <Link
+              href={`/profile/${encodeURIComponent(friendOwner)}`}
+              aria-label={`Profil de ${friendOwner}`}
+              onClick={(e) => e.stopPropagation()}
+              className="relative z-10 inline-flex min-h-11 min-w-11 max-w-full items-end -mt-7"
+            >
+              <span className="mb-1 inline-flex max-w-full items-center gap-1 rounded-full bg-sky-300/65 px-1.5 py-0.5 text-[9px] font-semibold text-black">
+                <Users className="size-3 shrink-0" />
+                <span className="truncate">{friendOwner}</span>
+              </span>
+            </Link>
           )}
           {/* svg puis span.font-bold, côte à côte (R§6.4) : l'étiquette sr-only passe avant l'icône. */}
           <div className={`flex w-full items-center justify-between border-t border-black/20 pt-1 py-1 ${s.stats}`}>

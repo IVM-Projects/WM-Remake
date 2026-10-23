@@ -155,6 +155,22 @@ test('axe /global-collection : modale de carte ouverte, liste de souhaits vide, 
   await expectNoSeriousViolations(page)
 })
 
+// Pastille « ami possède » en lien (M4b-21) : sa boîte de 44 px passe target-size (wcag22aa).
+test('axe /global-collection, pastille d\'un ami', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(friend, me)
+    sql(`insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards where wikipedia_title = 'Article d''essai n° 0001'`, { uid: friend.uid })
+    await page.goto('/global-collection')
+    await page.locator('main a[href^="/profile/"]').waitFor()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
 // Tuile du contrat (R§6.8) attendue avant l'analyse : une enchère d'une carte neuve, filtrée par son titre ; tout est supprimé à la fin.
 test('axe /marketplace : tuile d\'une enchère créée par sql', async ({ page, login }) => {
   const { uid } = await login()

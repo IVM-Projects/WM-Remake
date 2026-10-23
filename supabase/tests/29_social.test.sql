@@ -1,5 +1,6 @@
 -- Social (1800_wm_social_core.sql, puis 1810…1850) : config, index, avatar_url, vitrine hors échange et dans trade_move ; profil, vitrine et
--- collection d'un profil privé (1810) ; messages privés, débit, notification chat_message et synchronisation « lu » (1820) ; signalements (1830).
+-- collection d'un profil privé (1810) ; messages privés, débit, notification chat_message et synchronisation « lu » (1820) ; signalements (1830) ;
+-- friendOwners de l'overlay du catalogue (1850).
 -- Une seule transaction pour tout le fichier (now() figé) : chaque bloc crée ses joueurs et ses cartes, et ne filtre que sur eux.
 
 -- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune) ; l'effet de p_sql n'est annulé que si p_sql lève.
@@ -512,6 +513,34 @@ do $$ declare a uuid := pg_temp.player('Signal1'); b uuid := pg_temp.player('Sig
   assert wm.report_upsert(a, carol, 'cheating', 'k2', 'k-rep') = r and wm.report_get(a, carol) = r
     and r = '{"report":{"reason":"spam","details":"k1"}}', 'rejeu de la clé';
   assert not exists (select from public.notifications where user_id in (a, b, carol)), 'notification d''un signalement';
+end $$;
+
+-- friendOwners de l'overlay (1850, M4b-21) : amis acceptés des deux sens, profil privé compris (E), soi exclu (W), demandes en attente
+-- ignorées dans les deux sens (F, G) ; au plus list_caps.friend_owners par carte, par lower(username), id (le tri brut en C mettrait POS4 en
+-- tête) ; deux copies d'un ami comptent une fois ; une carte sans ami possesseur n'a pas de clé.
+do $$ declare a uuid := pg_temp.player('Pos0'); b uuid := pg_temp.player('Pos1'); c uuid := pg_temp.player('pos2');
+  d uuid := pg_temp.player('POS4'); e uuid := pg_temp.player('pos3'); f uuid := pg_temp.player('Pos5'); g uuid := pg_temp.player('Pos6');
+  x uuid := pg_temp.card('Ami possède X'); y uuid := pg_temp.card('Ami possède Y'); z uuid := pg_temp.card('Ami possède Z');
+  w uuid := pg_temp.card('Ami possède W'); begin
+  perform pg_temp.friends(a, b);
+  perform pg_temp.friends(a, c);
+  perform pg_temp.friends(d, a);
+  perform pg_temp.friends(e, a);
+  insert into public.friendships (requester_id, addressee_id) values (f, a), (a, g);
+  update public.profiles set is_public = false where id = e;
+  perform pg_temp.copy(b, x);
+  perform pg_temp.copy(b, x);
+  perform pg_temp.copy(c, x);
+  perform pg_temp.copy(u, y) from unnest(array[b, c, d, e]) u;
+  perform pg_temp.copy(f, z);
+  perform pg_temp.copy(g, z);
+  perform pg_temp.copy(a, w);
+  assert wm.cards_overlay(a, array[x, y, z, w]) -> 'friendOwners' = jsonb_build_object(
+    x, jsonb_build_array(jsonb_build_object('id', b, 'username', 'Pos1'), jsonb_build_object('id', c, 'username', 'pos2')),
+    y, jsonb_build_array(jsonb_build_object('id', b, 'username', 'Pos1'), jsonb_build_object('id', c, 'username', 'pos2'),
+      jsonb_build_object('id', e, 'username', 'pos3'))), wm.cards_overlay(a, array[x, y, z, w])::text;
+  assert wm.cards_overlay(f, array[z]) = jsonb_build_object('ownedCardIds', jsonb_build_array(z), 'wishlistCardIds', '[]'::jsonb,
+    'friendOwners', '{}'::jsonb), wm.cards_overlay(f, array[z])::text;
 end $$;
 
 -- Volatilité des lectures (1810, 1820, 1830) : un create or replace sans le mot-clé repasserait en volatile. lock_timeout (P5, M4b-2) avant le

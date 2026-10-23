@@ -14,8 +14,11 @@ import { RARITY, type RarityCode } from '@/lib/rarity'
 
 const LIMIT = 50
 
-// Réponse de wm.cards_page (R§3.4) : total null et pas de rarityCounts pendant une recherche.
-type CardsPage = { cards: CatalogCard[]; total: number | null; rarityCounts?: Partial<Record<RarityCode, number>>; searchHasMore?: boolean }
+// Réponse de wm.cards_page (R§3.4) : total null et pas de rarityCounts pendant une recherche ; friendOwners par id de carte (M4b-21).
+type CardsPage = {
+  cards: CatalogCard[]; total: number | null; rarityCounts?: Partial<Record<RarityCode, number>>; searchHasMore?: boolean
+  friendOwners: Record<string, { id: string; username: string }[]>
+}
 type Query = { q?: string; rarity?: RarityCode[]; wishlist?: boolean }
 
 // Singulier pour 0 et 1, comme en français.
@@ -234,7 +237,9 @@ export function GlobalClient() {
         ) : (
           <>
             <div ref={grid} aria-busy={stale} className="flex flex-wrap justify-center gap-3 sm:gap-[22px] md:gap-[26px]">
-              {items.map((c) => <Card key={c.id} card={c} size="grid" onClick={() => setOpen(c)} />)}
+              {items.map((c) => (
+                <Card key={c.id} card={c} size="grid" friendOwner={data?.friendOwners[c.id]?.[0]?.username} onClick={() => setOpen(c)} />
+              ))}
             </div>
             <Pagination
               page={page}
