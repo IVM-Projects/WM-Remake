@@ -15,6 +15,7 @@ export const Username = pgText.min(1).max(64)
 export const AuctionParams = z.object({ auctionId: z.uuid() })
 export const FriendshipParams = z.object({ friendshipId: z.uuid() })
 export const TradeParams = z.object({ tradeId: z.uuid() })
+export const PeerParams = z.object({ peerId: z.uuid() })
 // Corps de POST /api/trades, partagé avec le composer. items : une unité par élément, deux côtés × 100 ; les plafonds par côté et leurs
 // messages français sont des règles SQL (P11).
 export const TradeBody = z.object({
@@ -54,3 +55,5 @@ export const ShowcaseBody = z.object({ position: z.int32(), user_card_id: z.uuid
 export const ShowcasePosition = z.object({ position: z.int32() })
 // Motif et longueur des détails validés en SQL.
 export const ReportBody = z.object({ reportedUserId: z.uuid(), reason: pgText, details: pgText.optional() })
+// Message privé : vide, blancs seuls et plus de 2 000 caractères (points de code) refusés en SQL ; le contenu part tel quel, sans rognage.
+export const ChatBody = z.object({ content: pgText })
