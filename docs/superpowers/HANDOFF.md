@@ -4,7 +4,7 @@
 
 ## Où on en est (2026-10-23)
 
-- **M4a livré sur la démo** (2026-10-23) : amis et échanges, tâches 1 à 16 du plan `docs/superpowers/plans/2026-10-22-m4a-amis-echanges.md` sur la branche `claude/clever-cannon-59x0dj` (base d27918d, fusion du M3). Chaque tâche a eu une revue de conformité, une revue adverse et ses tours de correction. La revue finale de la branche (cinq lentilles, puis une vérification adverse) n'a trouvé aucun Critical. Elle a donné un envoi de corrections (b6872fc, 70a6e7a, deux Important et un Minor réel, plus la déduplication) et un envoi résiduel (2ff1380, deux Important de la re-revue). Décisions M4-1 à M4-18, P1 à P26, écarts au design et rulings : `docs/decisions-graphify.md` ; reportés : `docs/suivi.md`.
+- **M4a livré sur la démo** (2026-10-23) : amis et échanges, tâches 1 à 16 du plan `docs/superpowers/plans/2026-10-22-m4a-amis-echanges.md` sur la branche `claude/clever-cannon-59x0dj` (base d27918d, passation du M3, fusionnée dans `develop` par 3961ddc). Chaque tâche a eu une revue de conformité, une revue adverse et ses tours de correction. La revue finale de la branche (cinq lentilles, puis une vérification adverse) n'a trouvé aucun Critical. Elle a donné un envoi de corrections (b6872fc, 70a6e7a : les deux Important, le panneau bloqué sur un corps illisible et cinq Minor, plus la déduplication) et un envoi résiduel (2ff1380, deux Important de la re-revue). Décisions M4-1 à M4-18, P1 à P26, écarts au design et rulings : `docs/decisions-graphify.md` ; reportés : `docs/suivi.md`.
   - Livré :
     - migrations `0005` (miroir `trades`, `trade_items`, `friendships`), `1700` (socle : verrou d'échange `card_locked` dans la vente et la défausse, invariant `trade_money`), `1710` (amitiés, recherche, « Tout accepter », collection d'un ami), `1720` (création et contre-offre), `1730` (acceptation, refus, annulation, expiration ; `wm.trade_move` en cinq instructions ensemblistes), `1740` (lectures) et `9010` (job `wm-trade-expire`) ;
     - routes `/api/friends…`, `/api/trades…` et `/api/notifications` (idempotence sur chaque écriture, `pgText` qui refuse NUL et demi-paires UTF-16) ;
@@ -15,7 +15,7 @@
     - acceptation 100 ↔ 100 sous 500 ms : bench local, p95 112,6 et 105,2 ms (Task 15) ; sur la démo, **190 ms** de route pour une acceptation réelle 100 ↔ 100 (Task 16, Step 6 ; une mesure, démo Free) ;
     - atomicité, une erreur injectée annule tout, prouvée trois fois : en SQL par `tests.boom` dans `28_trades.test.sql` (Task 5), par la route (Task 9) et sous concurrence dans `17_trades_concurrency.test.sh` (Task 7) ;
     - rejeu d'`Idempotency-Key` qui renvoie le résultat stocké : SQL (Task 5), concurrence, deux sessions et même clé (Task 7), et contrat (Task 9) ;
-    - contrat : `coverage:recap` 54 routes sur 90, §3.6 complet ; le §3.7 et le push en CI sont au M4b.
+    - contrat : `coverage:recap` 54 routes sur 90, §3.6 complet et 8 routes du §3.7 (amis, notifications) ; les 12 autres du §3.7 (profil, vitrine, messages, signalements) et le push en CI sont au M4b.
   - Suite locale (tête 2ff1380) : `npm test` 450 tests ; contrat 185 cas ; E2E 232 tests ; `coverage:recap` 54/90. CI verte sur postgres:17 (run 39870722686).
   - Démo, dans l'ordre R32 : `deploy-m4a.sql` (concaténation de `0005`, `1700`…`1740`, `9010`, de l'historique et du `notify`), répété sur une base d'avant le M4a (deux passes, `28_trades` vert, même empreinte des fonctions `wm` que la branche), puis lancé par l'utilisateur dans le SQL Editor. Contrôles du MCP verts (job, droits, sondes 401 `42501`, invariants, conseillers). Fusion `--no-ff` 7d77bb2 dans `develop`, production `dpl_49Q1LvN9cBJ8WrRkSdo351paa49R` READY, `/api/health` 200, `health.yml` vert. Détail : « M4a — livraison » de `docs/verifications.md`.
   - Comptes de démo : forux et forux2 sont amis, chacun avec 100 cartes de plus, échangées par la mesure du Step 6 (échange `c704a0ba-…`, accepté).
@@ -102,7 +102,7 @@
 9. **Retirer `SUPABASE_DB_URL` des variables Vercel** (Production) : l'app ne la lit pas, seul `catalog.yml` s'en sert comme secret GitHub (moindre privilège).
 10. **Facultatif, vérification visuelle du M3** (Task 16, Step 6) : derrière la porte, mettre une carte en vente depuis la modale de `/collection`, voir sa tuile dans `/marketplace` et son détail, miser depuis un second compte si l'on en a un. Pour mesurer le cron seul, fermer l'onglet avant l'échéance : un détail ouvert réglerait par la voie paresseuse.
 11. **Faite (2026-10-23) : préversions Vercel.** La liste des déploiements n'a pas de sélection multiple, et le MCP Vercel ne supprime pas : l'utilisateur a réglé la rétention du projet `wmr` (**Settings → Build and Deployment → Deployment Retention Policy**) à 1 jour pour les déploiements annulés, en erreur et de pré-production (préversions), 30 jours pour la production. Vercel supprime les anciennes en arrière-plan ; reste à relire « Functions Storage » dans l'onglet Usage le lendemain.
-12. **Facultatif, vérification visuelle du M4a** : derrière la porte, avec deux comptes amis (forux et forux2) : la cloche et son panneau, `/friends` (recherche, demande, « Tout accepter »), une proposition depuis `/trades/new`, une contre-offre, un refus. Résultat consigné dans `docs/verifications.md`.
+12. **Facultatif, vérification visuelle du M4a** : derrière la porte, avec forux et forux2 (déjà amis) : la cloche et son panneau, une proposition depuis `/trades/new`, une contre-offre, un refus ; pour `/friends` (recherche, demande, « Tout accepter »), un troisième compte, ou retirer puis redemander l'amitié (« Retirer », puis demande de l'un, « Tout accepter » chez l'autre), avant les échanges. Résultat consigné dans `docs/verifications.md`.
 
 ## Exploitation du marché
 
@@ -115,7 +115,7 @@
 
 ## Exploitation des échanges
 
-- **Arrêt d'urgence de l'expiration**, par le MCP : `select cron.alter_job(jobid, active := false) from cron.job where jobname = 'wm-trade-expire'`. Reprise avec `active := true`. Sans le job, rien ne casse : un échange échu se lit `expired` (`trade_json`, P3), ne peut plus être accepté, refusé ni annulé (garde d'échéance, M4-5), et ses cartes ne sont plus verrouillées (`wm.card_locked` lit l'échéance) ; seul le statut stocké reste `pending` jusqu'à la reprise.
+- **Arrêt d'urgence de l'expiration**, par le MCP : `select cron.alter_job(jobid, active := false) from cron.job where jobname = 'wm-trade-expire'`. Reprise avec `active := true`. Sans le job, rien ne casse : un échange échu se lit `expired` (`trade_json`, P3), ne peut plus être accepté, refusé ni annulé (garde d'échéance, M4-5), et ses cartes ne sont plus verrouillées (`wm.card_locked` lit l'échéance) ; seul le statut stocké reste `pending` jusqu'à la reprise. Ces échanges restent alors dans la part sans plafond de `wm.trades_list` (tous les `pending` stockés, hors des 200 derniers clos) : la réponse de `/api/trades`, relue toutes les 20 s, grossit tant que le job est arrêté.
 - Le job tourne à :27 chaque heure, par lots de 5 000 (73 ms au bench pour 5 000).
 - `maintenance = true` (`wm.config`) bloque aussi les échanges et les amitiés (`wm.actor`), mais pas le job d'expiration (M4-5).
 
