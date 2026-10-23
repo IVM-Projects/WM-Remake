@@ -39,7 +39,7 @@
   Une tâche qui touche une migration, `supabase/tests/`, `scripts/db-test.sh`, l'app ou le contrat lance les contrôles complets.
 - **Verrous (C4, P4a:29-35, M4b-2, M4b-31)** :
   - d'abord la ligne métier (aucune au M4b), puis les profils et leur `user_state` par `wm.lock_users` (deux joueurs) ou `wm.lock_user` (un seul), une seule fois, puis les copies ;
-  - `perform set_config('lock_timeout', '2s', true)` précède le premier verrou de `chat_send`, `profile_update`, `showcase_put`, `showcase_delete` et `report_upsert` ;
+  - `perform set_config('lock_timeout', '2s', true)` précède le premier verrou de `chat_send`, `profile_update`, `showcase_put`, `showcase_delete` et `report_upsert`, ainsi que la première écriture de `push_subscribe`, `push_unsubscribe` et `notification_prefs_set` : la décision 2 du contrôleur y range « toutes ces fonctions », et l'upsert d'un abonnement ou d'une préférence prend `FOR KEY SHARE` sur le profil, donc attend une acceptation en cours ;
   - `wm.actor` ne verrouille rien et passe après `idem_claim` ;
   - **une insertion qui référence deux profils** (une notification, un message, un signalement) a ses `FOR KEY SHARE` pris dans l'ordre des id : par `lock_users` déjà tenu, par une instruction `order by user_id` (P28), ou par un `for key share order by id` explicite (`report_upsert`, M4b-31).
 - **Notifications** :
@@ -64,13 +64,19 @@
   - cibles d'au moins 44 px ; nombres par `formatInt` ;
   - `aria-disabled` et une garde, jamais `disabled` ;
   - focus jamais sur `body` ; 360 px sans défilement horizontal ;
+  - focus quand le contrôle focalisé disparaît : un effet après rendu, seulement si `document.activeElement === document.body` (modèle `trade-client.tsx:80-90`), et une assertion `toBeFocused()` dans l'E2E de la tâche :
+    - `/profile/[username]` : « Réessayer » → le h1 du profil, « Joueur introuvable », ou le « Réessayer » revenu (Task 11) ;
+    - `/profile` : « Retirer l'avatar » → « Changer l'avatar » (Task 12) ;
+    - `/dms` : « ← Conversations » → l'entrée du pair dans la liste, sinon le h1 « Messages » ; la saisie remplacée quand `isFriend` passe à faux → le texte « Vous devez être amis pour vous écrire » (`tabIndex={-1}`) (Task 13) ;
+    - `/settings` : « Activer sur cet appareil » → « Désactiver sur cet appareil », et l'inverse ; un échec → le même bouton (Task 14) ;
+  - un pseudo lu en clair (réponse d'API, ligne `profiles`) est encodé par `encodeURIComponent` dans tout lien et toute URL d'API. Le `username` de `useParams()` arrive déjà encodé et n'est jamais réencodé (Task 11) ;
   - `alt=""` pour un avatar placé à côté du pseudo (D:753).
 - **Motifs imposés à chaque page nouvelle** (DG:459-463) :
   - lectures ordonnées (génération ou `hold`) ;
-  - un corps 2xx illisible est une lecture en échec ;
+  - un corps 2xx illisible est une lecture en échec. Chaque lecture d'une page nouvelle a son E2E en échec, sur le modèle de `e2e/friends.spec.ts:332-347` : une boucle `for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }]] as const)` par `routeOnce`. La page atteint son état d'échec, jamais un chargement sans fin, et `data-ready` est posé ;
   - une issue incertaine est dite comme telle, prise au départ et effacée quand l'état affiché change ;
   - `data-ready` ;
-  - clés `apiOnce` oubliées après une relecture réussie ;
+  - clés `apiOnce` oubliées après une relecture réussie, là où l'état relu refuse une relance déjà faite (`friends-client.tsx:90-92`, DG:461). Le fil de `/dms` fait exception (B15) ;
   - formulaire figé (`readOnly`) pendant l'envoi ;
   - relecture à chaque affichage (Activity).
 - **E2E** (P4a:65) :
@@ -86,7 +92,7 @@
 
 ## Décisions (contrôleur, à consigner dans `docs/decisions-graphify.md`, Task 17)
 
-Règles de conduite inchangées (DG:339). Format : décision — pourquoi — coût si faux. M4b-1 à M4b-27 viennent du contrôleur. M4b-28 à M4b-33 sont tranchées par ce plan, là où le contrôleur l'a laissé faire.
+Règles de conduite inchangées (DG:339). Format : décision — pourquoi — coût si faux. M4b-1 à M4b-27 viennent du contrôleur. M4b-28 à M4b-31 et M4b-33 sont tranchées par ce plan, là où le contrôleur l'a laissé faire. M4b-32 s'écarte des décisions 11 et 23 du contrôleur, et l'écart est consigné sous « Écarts aux décisions du contrôleur ». M4b-13 suit la lettre de la décision 13 (B17).
 
 - **M4b-1. Un plan, une livraison** `deploy-m4b.sql` (`0006`, `1800`–`1850`, `9020`) dans l'ordre R32, avec les tâches du push en dernier. Si la sonde de réveil échoue sur la démo, on livre quand même : `after()` couvre les événements nés d'une requête — pourquoi : M4-1 a déjà coupé le jalon en deux, et D:1083 réunit le push et le §3.7 — coût si faux : une seconde répétition et une seconde fenêtre du SQL Editor.
 - **M4b-2. Verrous.**
@@ -103,7 +109,7 @@ Règles de conduite inchangées (DG:339). Format : décision — pourquoi — co
   - Coût si faux : un `count(*)` indexé par envoi.
 - **M4b-4. Notification `chat_message`.**
   - `data` = `{user_id, username}` de l'expéditeur, sans texte (M4-12).
-  - Au plus une non lue par couple (expéditeur, destinataire) : rien n'est inséré s'il en existe déjà une. C'est sans course grâce à M4b-2.
+  - Au plus une non lue par couple (expéditeur, destinataire) : rien n'est inséré s'il en existe déjà une. Deux envois sont sérialisés par M4b-2. Un envoi et un marquage lu (le `PATCH` direct et son trigger, ou `wm.notifications_read`) le sont par la notification non lue du couple : l'envoi la prend `for update`, et chaque marquage la verrouille en l'écrivant (B20, Task 4).
   - Lien de la cloche `/dms?with=<user_id>`, dans `notificationView` (P14).
   - Synchronisation : un trigger `after update on public.chat_messages referencing old table as o new table as n for each statement`, **sans liste de colonnes**. PG refuse une table de transition sur un trigger à liste de colonnes, ce qui est prouvé. Le trigger filtre `o.read is distinct from n.read` et marque lues les `chat_message` du couple.
   - Le contenu n'entre jamais dans la charge du push.
@@ -121,7 +127,7 @@ Règles de conduite inchangées (DG:339). Format : décision — pourquoi — co
   - Sa clause `when (old.avatar_user_card_id is not null and new.avatar_user_card_id is null)` est tranchée par ce plan. Elle protège l'`avatar_url` d'un profil migré sans copie, quand une écriture remet la colonne à sa valeur nulle.
   - Le `PATCH` écrit `avatar_url = cards.image_url` de la copie validée, ou `null` pour un retrait.
   - Refus : copie non possédée → 403 `42501` ; sans image ou en `hide_image` → 400 ; en `nsfw_image` → 400, un écart inféré et consigné ; `avatar_user_card_id: null` retire l'avatar.
-  - `shortcut:` : une image de catalogue changée après coup reste en avatar.
+  - `shortcut:` : une image de catalogue changée, ou masquée après coup (`hide_image`, `nsfw_image`, modération du M6), reste en avatar.
   - Coût si faux : une carte cédée qui reste en avatar.
 - **M4b-7. Vitrine.**
   - Table `public.showcase(user_id → profiles on delete cascade, position smallint check (position between 0 and 3), user_card_id → user_cards on delete cascade, primary key (user_id, position))`, avec un index **non unique** `(user_card_id)` en `1800`.
@@ -147,34 +153,35 @@ Règles de conduite inchangées (DG:339). Format : décision — pourquoi — co
   - Index : `(sender_id, recipient_id, created_at desc)` (D:811), `(recipient_id, sender_id, created_at desc)` et un partiel `(recipient_id) where not read`.
   - Coût si faux : un historique tronqué au-delà de 100 messages.
 - **M4b-10. Contraintes du miroir `0006`** : `check (char_length(content) <= 2000)`, `check (char_length(details) <= 500)`, `unique (reporter_id, reported_user_id)`, enum `report_reason` (`cheating`, `inappropriate_content`, `spam`, R:341). Le message français vient de la fonction `wm`, qui valide avant (P11) — coût si faux : un `CHECK` que le DUMP-S contredirait, retiré au M7.
-- **M4b-11. Chiffrement et transport du push** : `web-push@3.6.7` (D:74) fait aes128gcm et le JWT VAPID par `generateRequestDetails`, exportée (`web-push/src/index.js:19`) et sans `this`, ce qui est vérifié sur la copie du paquet. Puis `fetch` avec `AbortSignal.timeout(5000)`.
-  - Le faux service de push est **HTTP**, dans la passerelle du banc, sur le modèle de Turnstile (`contract/harness.ts:94-102`). Il répond 201, ou 410 sous `/push/gone/`.
+- **M4b-11. Chiffrement et transport du push** : `web-push@3.6.7` (D:74) fait aes128gcm et le JWT VAPID par `generateRequestDetails`, exportée (`web-push/src/index.js:19`) et sans `this`, ce qui est vérifié sur la copie du paquet. Puis `fetch` avec `AbortSignal.timeout(5000)` et `redirect: 'error'` : un service de push ne redirige pas, et un 307 rejouerait le POST et son JWT n'importe où, adresses internes comprises (le `https.request` de `sendNotification`, `web-push-lib.js:369`, ne suit aucune redirection).
+  - Le faux service de push est **HTTP**, dans la passerelle du banc, comme Turnstile (`contract/harness.ts:94-102`) : ni certificat ni `NODE_EXTRA_CA_CERTS`. Seul le transport est repris, pas la lecture du corps : Turnstile lit en `setEncoding('utf8')`, et un corps aes128gcm relu en UTF-8 est corrompu (le déchiffrement échoue alors sur « Public key is not valid for specified curve »). Il répond 201, ou 410 sous `/push/gone/`. Il enregistre sans déchiffrer : le déchiffrement et la vérification du JWT, que la décision 11 place dans la passerelle, vont à la spec (M4b-32).
   - `@types/web-push` est épinglé exactement (M4b-30).
   - Pourquoi : D:74 et D:602 tenus, sans certificat de test ni variable d'environnement de plus.
   - Coût si faux : passer à `sendNotification` derrière un faux service HTTPS, environ une heure.
 - **M4b-12. Liste blanche des endpoints dans `wm.config.push_origins`** : origines `https://fcm.googleapis.com`, `https://updates.push.services.mozilla.com` et `https://web.push.apple.com`, plus le suffixe `.notify.windows.com`.
-  - `wm.push_subscribe` la contrôle et refuse en 400 français. zod contrôle la forme : URL de 2 048 caractères au plus, `p256dh` de 65 octets en base64url commençant par 0x04, `auth` de 16 octets.
+  - `wm.push_subscribe` la contrôle selon la règle du B9 et refuse en 400 français. zod contrôle la forme : URL de 2 048 caractères au plus, `p256dh` de 65 octets en base64url commençant par 0x04, `auth` de 16 octets.
   - Le test ajoute `http://127.0.0.1:54321` par psql : c'est de la configuration.
   - Pourquoi : SSRF, et un service s'ajoute sans redéployer.
   - Coût si faux : un navigateur non listé ne peut pas s'abonner, jusqu'à une ligne de config.
 - **M4b-13. Préférences push en opt-in par type**, à la lettre de D:600 et avec le consentement de R:637.
   - Table `wm.notification_prefs(user_id pk → profiles on delete cascade, push_types text[] not null default '{}')`, nommée par D:259. Route ajoutée `GET`/`POST /api/settings/notifications`. `get_prefs` et `set_prefs` sont inchangés.
-  - Au premier « Activer sur cet appareil », l'UI active les 13 types. Ensuite, chaque famille s'écrit en bloc : Messages (`chat_message`), Échanges (`trade_*`), Amis (`friend_*`), Marché (`auction_*`, `wishlist_listed`).
+  - Les quatre cases de famille sont visibles dans tous les états de l'appareil, et chaque famille s'écrit en bloc dès sa case : Messages (`chat_message`), Échanges (`trade_*`), Amis (`friend_*`), Marché (`auction_*`, `wishlist_listed`). « Activer sur cet appareil » n'écrit aucune préférence : il reste en `aria-disabled` tant que `push_types` est vide, avec l'aide « Coche d'abord au moins une famille. ». C'est la lettre de la décision 13 (« l'UI écrit tous les types de la famille choisie », B17).
+  - Pourquoi : D:600 (« qui ont activé ce type ») et R:637 (consentement). Ouvrir les 13 types d'office rouvrirait aussi le Marché d'un joueur qui a tout décoché, dès qu'il active un autre appareil.
   - Coût si faux : un type du M5 demande une case ou un `update`.
-- **M4b-14. Clé publique VAPID dérivée de `VAPID_PRIVATE` à l'exécution** (`createECDH('prime256v1')`), rendue par `GET /api/settings/notifications` sous la clé `vapid_public` (`null` si le push est coupé). `VAPID_PUBLIC` devient facultatif, un écart de nom consigné — pourquoi : une seule source de vérité, et rien de figé au build — coût si faux : une variable et un redéploiement.
+- **M4b-14. Clé publique VAPID dérivée de `VAPID_PRIVATE` à l'exécution** (`createECDH('prime256v1')`), rendue par `GET /api/settings/notifications` sous la clé `vapid_public` (`null` si le push est coupé). `VAPID_PUBLIC` n'est jamais lue (sa ligne reste dans `.env.example`, marquée « ignorée »), un écart de nom consigné — pourquoi : une seule source de vérité, et rien de figé au build — coût si faux : une variable et un redéploiement.
 - **M4b-15. `VAPID_SUBJECT` obligatoire** (env serveur) ; sans lui, le push est coupé. Production : `https://wmr-ivm.vercel.app` ; banc : `mailto:push@example.invalid`, posé par le harnais. L'origine de la requête ne convient pas : web-push refuse un sujet `http:` (`vapid-helper.js:68-87`) — coût si faux : Apple refuse le sujet (403 sur iOS seulement).
 - **M4b-16. Échec fermé.**
-  - Sans `VAPID_PRIVATE` ou sans `VAPID_SUBJECT`, le drain ne réserve rien et `/api/cron/push` répond 503 `push_disabled`.
+  - Sans `VAPID_PRIVATE` ou `VAPID_SUBJECT` valides (`vapidConfig()` rend `null`, Task 10), le drain ne réserve rien et `/api/cron/push` répond 503 `push_disabled`.
   - `wm.push_wake()` purge d'abord l'outbox de plus d'une heure. `wm.purge_expired()` est inchangée.
   - Pourquoi : la base est partagée, et un déploiement sans clés détruirait les lignes d'un autre.
   - Coût si faux : les push d'une heure de panne sont perdus ; la cloche reste juste.
 - **M4b-17. Réveil.**
   - `wm.push_wake()` vit en `1840`, sous le scan des droits. Son URL est dans `wm.config.push_wake_url` (`null` par défaut, posée par `deploy-m4b.sql`).
-  - Secret lu dans `vault.decrypted_secrets where name = 'CRON_SECRET'`, une entrée qui existe déjà sur la démo : ne pas la recréer.
-  - `9020_wm_push_cron.sql`, sans fonction `wm` : si pg_cron est présent et pg_net préchargé, `create extension if not exists pg_net`, puis `cron.schedule('wm-push-wake', '15 seconds', 'select wm.push_wake()')`.
+  - Secret lu dans `vault.decrypted_secrets where name = 'CRON_SECRET'`, une entrée qui existe déjà sur la démo : ne pas la recréer. La lecture a son propre bloc `exception` : une vue absente ou illisible donne un avertissement et `null`, et la purge, faite avant, reste acquise (Task 6).
+  - `9020_wm_push_cron.sql`, sans fonction `wm` : si pg_cron est présent et pg_net préchargé, `create extension if not exists pg_net with schema extensions`, puis `cron.schedule('wm-push-wake', '15 seconds', 'select wm.push_wake()')`.
   - Test SQL avec de faux schémas `net` et `vault`. Sonde après le SQL Editor : `net._http_response.status_code` = 200 dans les 15 s.
   - Coût si faux : les push nés d'un cron attendent le prochain `after()`, ou la purge.
-- **M4b-18. Règle des fonctions redéfinies.** Une clé en plus est permise sur une fonction redéfinie quand D l'exige, et le test d'égalité stricte est élargi dans la même tâche. Au M4b, la règle vaut seulement pour `wm.health()` (`push_lag_s`, `null` si l'outbox est vide, D:1059) et pour `health.yml` (`(.push_lag_s // 0) <= 120`) — coût si faux : un test de forme à revoir.
+- **M4b-18. Règle des fonctions redéfinies.** Une clé en plus est permise sur une fonction redéfinie quand D l'exige, et le test d'égalité stricte est élargi dans la même tâche. Au M4b, la règle vaut seulement pour `wm.health()` (`push_lag_s`, `null` si l'outbox est vide et 86400 sur une lecture en erreur, B16, D:1059 ; ses trois tests d'égalité stricte, `10_wm_core.test.sql:126-129`, `27_market.test.sql:1195` et `:1201`, sont élargis à la Task 6) et pour `health.yml` (`(.push_lag_s // 0) <= 120`) — coût si faux : un test de forme à revoir.
 - **M4b-19. Au plus 500 lignes réservées par appel** (`delete … returning`, `skip locked`), envoi par vagues de 50, sans boucle. `shortcut:` dans `lib/push.ts` — pourquoi : la lettre de D:602 — coût si faux : quelques minutes de retard sur une carte très souhaitée.
 - **M4b-20. 10 abonnements par joueur** (`wm.config.push_max_subscriptions`), consigné en écart à C30 et à M4-16 : c'est une validation à une frontière de confiance, contre l'amplification. Au-delà, l'upsert garde les 10 plus récents — coût si faux : un onzième appareil fait tomber le plus ancien.
 - **M4b-21. `friendOwners`** (P21 a et b) : `{[cardId]: [{id, username}]}`, au plus 3 par carte (`list_caps.friend_owners`), tous les amis.
@@ -224,20 +231,26 @@ Règles de conduite inchangées (DG:339). Format : décision — pourquoi — co
   - Prouvé par le scénario 3 de `18_social_concurrency.test.sh` (Task 5), qui doit voir un `40P01` sans cette ligne.
   - Coût si faux : un 503 `BUSY` rare sur un signalement.
 - **M4b-32. La passerelle enregistre, la spec déchiffre.**
-  - `POST /push/<id>` garde la requête (en-têtes et corps) et répond 201 ; `POST /push/gone/<id>` répond 410 ; `GET /push/<id>` rend les livraisons reçues.
+  - `POST /push/<id>` garde la requête (en-têtes et corps) et répond 201 ; `POST /push/gone/<id>` répond 410 ; `GET /push/<id>` rend `{deliveries: [{headers, body_b64}]}` (corps lu en `Buffer`, rendu en base64).
   - Le déchiffrement (RFC 8291) et la vérification du JWT VAPID vivent dans `contract/push-crypto.ts`, avec un test unitaire aller-retour contre `webpush.encrypt`.
   - Pourquoi : la clé privée de l'abonnement est une donnée du test, et la passerelle n'en garde aucune.
+  - C'est un écart aux décisions 11 et 23 du contrôleur, consigné sous « Écarts aux décisions du contrôleur ».
   - Coût si faux : aucun.
 - **M4b-33. Découpage ajusté.** `public/sw.js` et l'exemption de la porte vont à la Task 14, avec la section qui enregistre le SW. `health.yml` va à la Task 6, avec `push_lag_s`. La Task 10 reste ainsi la preuve serveur seule, et chaque tâche garde un livrable qu'un relecteur peut rejeter seul — coût si faux : aucun.
 
 **Écarts au spec (la décision l'emporte) :**
 - M4b-6 : un avatar en `nsfw_image` est refusé, alors que D:594 ne cite que `hide_image`.
 - M4b-13 : `wm.notification_prefs` est une table neuve, à côté de `wm.user_prefs`, la table du M1.
-- M4b-14 : `VAPID_PUBLIC` (D:1053) est facultatif et dérivé de la clé privée. `VAPID_SUBJECT` s'ajoute.
+- M4b-14 : `VAPID_PUBLIC` (D:1053) n'est jamais lue : la clé publique est dérivée de la clé privée. `VAPID_SUBJECT` s'ajoute.
 - M4b-20 : un plafond de 10 abonnements, contre C30.
 - M4b-24 : « Message à <pseudo> » est sur le détail `/trades/[id]` (R:127 le place sur l'offre de la liste) : le bouton du contrat reste seul dans `div.card-frame.p-4`.
 - M4b-5 : `lastSeenAt` est omis (R:246 le donne facultatif).
 - D:302 dit que `9000` exige pg_net : pg_net naît dans `9020`, et `9000` ne se modifie pas (M4-1).
+- D§3.4 (D:101, D:928) : l'avatar est une miniature Commons, en 96 px sur `/profile/[username]` et `/profile` et en 40 px sur `/dms`. Il s'affiche sans auteur ni licence : le profil ne porte que `avatar_url` (B2), et y ajouter la carte de l'avatar changerait les clés exactes des Tasks 3, 8, 11 et 13. Le crédit de cette image reste dans la modale de la carte, depuis la collection de son propriétaire. De même, les emplacements de l'éditeur `/profile` et le `CardPicker` montrent les copies du joueur sans crédit : celui-ci est dans la modale de `/collection`. La vitrine de `/profile/[username]`, elle, ouvre `CardModal` (Task 11). Reporté au M7.
+
+**Écarts aux décisions du contrôleur (`7-rulings.md`, consignés) :**
+- M4b-32 et les décisions 11 et 23 (« la passerelle déchiffre, vérifie le JWT VAPID »). La passerelle enregistre les livraisons, et `contract/push-crypto.ts` déchiffre (RFC 8291) et vérifie le JWT, côté spec — pourquoi : la clé privée de l'abonnement est une donnée du test, et la passerelle n'en garde aucune — coût si faux : aucun, la preuve de D:1083 reste `contract/spec/push.ts`.
+- B15 et la règle « clés `apiOnce` oubliées après une relecture réussie » (motifs imposés du M4a, repris par le contrôleur) : le fil de `/dms` garde les clés de ses envois à travers ses relectures (B15).
 
 ## Décisions ajoutées par ce plan (à consigner avec les précédentes)
 
@@ -258,19 +271,23 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   - Message : `{id, sender_id, recipient_id, content, read, created_at}` (R:253).
   - Conversation : `{peer_id, peer_username, peer_avatar_url, last_message, last_message_at, unread_count}` (R:252).
 - **B3. Plafonds** : `list_caps` gagne `{"conversations": 50, "messages": 100, "friend_owners": 3}`, par `update wm.config set value = '{…}'::jsonb || value where key = 'list_caps'` (les valeurs déjà posées gagnent ; idempotent).
-- **B4. `notificationView` déménage dans `lib/notification-view.ts`** : un module pur, qui n'importe que `lib/format.ts`. `lib/notifications.ts` le réexporte. Raison : `lib/notifications.ts` importe `lib/poll.ts`, qui importe des crochets React, et le client navigateur. Le même module exporte `PUSH_FAMILIES` (M4b-13) et `pushTypes()`, la liste triée des 13 types.
+- **B4. `notificationView` et `type Notification` déménagent dans `lib/notification-view.ts`** : un module pur, qui n'importe que `lib/format.ts`. `lib/notifications.ts` les réexporte. Raison : `lib/notifications.ts` importe `lib/poll.ts`, qui importe des crochets React, et le client navigateur. Le même module exporte `PUSH_FAMILIES` (M4b-13) et `pushTypes()`, la liste triée des 13 types.
 - **B5. Modules serveur.**
   - `lib/vapid.ts` : `vapidConfig()`, sans web-push, lu aussi par la route des préférences ;
   - `lib/push.ts` : `pushPayload`, `drainPush` ;
   - `lib/cron.ts` : `cronDenied(req)`, la garde de `app/api/cron/revalidate/route.ts:5-16`, déplacée telle quelle et partagée par les deux routes du cron.
-- **B6. `push: true`** sur les huit routes dont la RPC insère des notifications : `POST /api/friends`, `PATCH /api/friends/{friendshipId}`, `POST /api/friends/accept-all`, `POST /api/trades`, `PATCH /api/trades/{tradeId}`, `POST /api/marketplace/{auctionId}/bid`, `POST /api/marketplace/{auctionId}/settle` et `POST /api/chat/{peerId}`. Le règlement paresseux du `GET` d'une enchère tourne sous `'use cache: remote'` : il est laissé au réveil, avec un `shortcut:` près de `sharedAuction` (`lib/market-cache.ts:36-37`).
+- **B6. `push: true`** sur les huit routes dont la RPC insère des notifications : `POST /api/friends`, `PATCH /api/friends/{friendshipId}`, `POST /api/friends/accept-all`, `POST /api/trades`, `PATCH /api/trades/{tradeId}`, `POST /api/marketplace/{auctionId}/bid`, `POST /api/marketplace/{auctionId}/settle` et `POST /api/chat/{peerId}`. Le règlement paresseux du `GET` d'une enchère tourne sous `'use cache: remote'` : il est laissé au réveil, avec un `shortcut:` au-dessus de `sharedAuction` (`lib/market-cache.ts:35-36`, Task 10).
 - **B7. `import webpush from 'web-push'`**, l'import par défaut : en ESM, Node ne voit que `WebPushError` et `supportedContentEncodings` en exports nommés de ce paquet CommonJS (mesuré). `esModuleInterop` est déjà vrai.
-- **B8. Charge du push** : `JSON.stringify({title: brand.name, body: notificationView(n).text, url: notificationView(n).href ?? '/', tag})`, avec `tag` = `dm:<user_id>` pour un `chat_message`, sinon l'id de la notification. Options : `TTL` 86 400 et `vapidDetails` par appel, sans état global. Les en-têtes passés à `fetch` sont en chaînes, sans `Content-Length` (fetch le calcule).
-- **B9. Origine d'un endpoint en SQL** : l'autorité est ce qui suit `://` jusqu'au premier `/`, `?` ou `#`. Elle est passée en minuscules et refusée si elle contient `@`. Une origine listée doit être égale à `scheme://autorité`. Un suffixe exige `https:` et une autorité sans port qui finit par le suffixe.
+- **B8. Charge du push** : `JSON.stringify({title: brand.name, body: notificationView(n).text, url: notificationView(n).href ?? '/', tag})`, avec `tag` = `dm:<user_id>` pour un `chat_message`, sinon l'id de la notification. Options : `TTL` 86 400 et `vapidDetails` par appel, sans état global. Les en-têtes passés à `fetch` sont en chaînes, sans `Content-Length` (fetch le calcule). Le corps est `new Uint8Array(details.body)`, une copie des seuls octets chiffrés : avec TypeScript 5.9.3 et `@types/node` 24.19.2, le `Buffer` de `RequestDetails.body` n'est pas un `BodyInit` (TS2769), et `details.body.buffer` est le pool partagé de `Buffer`, qui enverrait des octets en trop.
+- **B9. Origine d'un endpoint en SQL** (`wm.push_subscribe`) : trois refus successifs, chacun en 400 « Service de notifications non pris en charge ».
+  - Un endpoint qui contient autre chose que de l'ASCII imprimable (`p_endpoint !~ '^[!-~]+$'` : espace, caractère de contrôle, U+007F ou non-ASCII), ou un `\` (`strpos(p_endpoint, '\') > 0`).
+  - `m := regexp_match(lower(p_endpoint), '^([a-z][a-z0-9+.-]*)://([^/?#]*)')` sans correspondance. `m[1]` est le schéma, `m[2]` l'autorité : ce qui suit le `://` collé au schéma en tête de chaîne, jusqu'au premier `/`, `?` ou `#`.
+  - Une autorité qui n'est ni celle d'une origine listée (`m[1] || '://' || m[2]` égale à l'une d'elles), ni un hôte de suffixe : `m[1] = 'https'`, `m[2] ~ '^[a-z0-9.-]+$'` (donc ni port, ni `@`, ni `%`, ni crochet d'IPv6), et `m[2]` qui finit par le suffixe.
+  Décision : refuser, et non normaliser par `new URL()` dans la route ; zod reste `z.url().max(2048)`, puisque `lib/schemas.ts` part au navigateur — pourquoi : `fetch` (WHATWG), zod `z.url()` et le `url.parse` de web-push (l'audience du JWT, `web-push-lib.js:274-276`) lisent `\` comme `/` et acceptent `https:` sans `//`. Ainsi `https://evil.example\.notify.windows.com/x` et `https:evil.example/x://a.notify.windows.com/` partiraient vers `evil.example`, et zod 4.6.7 les accepte tous deux (`zod/v4/core/schemas.js:263-293`, mesuré). Après ces refus, l'hôte que lit le SQL est celui que lit `fetch`, et le contrôle reste au seul endroit qui connaît la liste (M4b-12). L'ASCII imprimable borne aussi l'entrée de l'index unique sur `endpoint` : 2 048 caractères non ASCII font jusqu'à 6 000 octets, au-delà des 2 704 de l'index (54000, donc un 500). `fetch` prend en plus `redirect: 'error'` (M4b-11) — coût si faux : un endpoint réel refusé (aucun service listé n'émet de `\`, de port, d'IPv6 ni de non-ASCII), jusqu'à une correction de la règle.
 - **B10. Aides de test** (`supabase/tests/helpers.sql`, schéma `tests`, absent de la démo) :
   - `tests.image_card(p_title text) returns uuid` : une carte R, ATK et DEF à 10, `image_url` = `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`. Les cartes du seed n'ont pas d'image ; elle sert au SQL, au contrat (psql) et aux E2E (`imageCopy`) ;
-  - `tests.trade_snapshot` gagne `showcase` (`[[user_id, position, user_card_id]]` des deux joueurs, trié) et `push_outbox` (lignes dont la notification porte `data ->> 'trade_id'` = l'échange).
-- **B11. E2E** : `imageCopy(u: User): string` dans `e2e/fixtures.ts`, qui crée par `sql` une `tests.image_card` et une copie, puis renvoie l'id de la copie. `stubPush(page, opts)` est dans `e2e/push-stub.ts` (Task 14).
+  - `tests.trade_snapshot` gagne `showcase` (`[[user_id, position, user_card_id]]` des deux joueurs, trié) et `push_outbox` (lignes dont la notification porte `data ->> 'trade_id'` = l'échange), et ses `profiles` gagnent `avatar_url` (effacé dans la transaction de l'acceptation, M4b-6). Seules les erreurs injectées des Tasks 2 et 6 éprouvent ces ajouts.
+- **B11. E2E** : `imageCopy(u: User): string` dans `e2e/fixtures.ts`, qui crée par `sql` une `tests.image_card` et une copie, puis renvoie l'id de la copie. Le titre passé à `tests.image_card` est unique, `` `Zz image e2e ${randomUUID().slice(-12)} z` ``, à fin non numérique comme `e2e/credits.spec.ts:42-43` : un titre fixe lèverait `unique_violation` sur `cards (lang, wikipedia_title)` entre specs parallèles, et `collection()` d'`a11y.spec.ts:94-98` prend les titres qui finissent par 0001, 0007… L'`imageCopy(env, uid)` du contrat (Task 8) fait de même, avec `` `Zz image contrat ${randomUUID().slice(-12)} z` ``. `stubPush(page, opts)` est dans `e2e/push-stub.ts` (Task 14, B19).
 - **B12. Textes ajoutés** (absents du R§, au format P19) :
   - profil :
     - « Modifier mon profil », « Voir comme les autres », « Membre depuis {mois année} » ;
@@ -290,11 +307,12 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - « {n} message non lu » / « {n} messages non lus », « Messages avec {pseudo} », « Toi : », « Aucun message pour l'instant. » ;
     - « Ton message », « {n} / 2 000 », « Envoyer », « Entrée pour envoyer, Maj+Entrée pour aller à la ligne. », « Retour aux messages » ;
     - issue incertaine : « Le message n'a pas été confirmé : il a peut-être été envoyé. La conversation se met à jour. » ;
+  - issue incertaine des autres écritures (avatar, bio, visibilité et vitrine de `/profile`, modale de signalement, section push ; « Ajouter en ami » et « Accepter sa demande » la tiennent déjà du P19) : « L'action n'a pas été confirmée : elle a peut-être eu lieu. », le texte de `/friends` (`friends-client.tsx:156`, DG:379), avec le repli connu « L'action n'a pas abouti. » ;
   - push (`/settings`) :
     - « Notifications », « Ces choix valent pour tous tes appareils. » ;
     - « Activer sur cet appareil », « Désactiver sur cet appareil », « Notifications activées sur cet appareil. » ;
     - « Les notifications sont bloquées pour ce site : autorise-les dans les réglages de ton navigateur. », « Ton navigateur ne gère pas les notifications push. », « Les notifications push ne sont pas disponibles pour l'instant. », « L'activation a échoué, réessaie. » ;
-    - familles « Messages », « Échanges », « Amis », « Marché » ;
+    - familles « Messages », « Échanges », « Amis », « Marché », et l'aide « Coche d'abord au moins une famille. » ;
   - cloche : « {u} t'a écrit ».
   Chargements : « Chargement du profil », « Chargement de la vitrine », « Chargement de la collection », « Chargement des conversations », « Chargement des messages », « Chargement des notifications push ».
 - **B13. Sauté, dit ici** :
@@ -302,20 +320,34 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   - `lastSeenAt` ; les `galleries` et une 2ᵉ rangée de vitrine ;
   - « En vitrine » dans la modale de `/collection` ;
   - un push de test ; une pastille de non-lus sur « Messages » ;
-  - `pushsubscriptionchange` ; la seconde cloche (R:138, M7) ;
+  - `pushsubscriptionchange` : le renvoi de l'abonnement à chaque affichage de la section push couvre le cas courant (B18) ; la seconde cloche (R:138, M7) ;
   - l'onglet du profil dans l'adresse (même `shortcut:` que `/trades`) ; le titre de document au pseudo ;
   - les liens de pseudo vers le profil sur `/friends` (le focus de ses lignes est réglé sur leur premier contrôle) ;
   - `user_agent` dans `push_subscriptions` (« appareil » de R:470, sans lecteur) ;
-  - le désabonnement avant la déconnexion : l'upsert par endpoint réattribue le navigateur (Review Focus).
+  - un rattachement du navigateur hors de `/settings` : « Se déconnecter » désabonne l'appareil, et la section push renvoie l'abonnement présent à chaque affichage (B18). Une session échue sans déconnexion laisse les push du joueur précédent arriver sur l'appareil, jusqu'à ce que le suivant ouvre `/settings`.
 - **B14. Mesure de l'overlay** (Task 16) : un joueur à 1 000 amis, dont chacun possède les 50 cartes d'une page. Le plan de la requête de `friendOwners` est lu par `auto_explain` (`log_nested_statements`, `client_min_messages = log`) : `user_cards_card_user_idx` par carte, jamais `Seq Scan on user_cards`. p95 de `wm.cards_overlay` sur 200 appels < 50 ms, un seuil indicatif (A5) choisi ici.
+- **B15. Clés de l'envoi d'un message : aucune relecture ne les oublie.** La règle « clés oubliées après une relecture réussie » (DG:461) vaut sur `/friends`, où l'état de la ligne refuse une relance. Ici, rien ne refuse un second message (`idem_claim` sans empreinte du corps) : le poll de 5 s, qui montre le message d'une issue incertaine, effacerait sa clé, et Entrée sur le texte resté dans le champ en créerait un second. La clé `send:<pair>:<texte>` n'est donc oubliée que par `apiOnce` (réponse lue, `lib/api.ts:56`, `:59`) et par toute modification du champ (`onChange` → `keys.current.clear()`, modèle `components/collection/SelectionBar.tsx:121-122`) — pourquoi : C6 (D:131), la relance rejoue au lieu d'agir deux fois — coût si faux : un texte retapé à l'identique après une issue incertaine peut doubler le message.
+- **B16. Lecture de l'outbox en erreur dans `wm.health()` : `push_lag_s` = 86400.** La lecture a son propre bloc `begin … exception when others then raise warning …`, après celui du cron et hors de lui. Une relecture proposait `null` — pourquoi : c'est la règle de `settle_lag_s` (P13, `1650:76-79`) ; `null` se confondrait avec une outbox vide, et `health.yml` passerait vert par `(.push_lag_s // 0)` sur une lecture en échec ; `/api/health` reste 200 — coût si faux : une alerte de santé sur un droit manquant, dont la cause est dans le `warning`.
+- **B17. Premier « Activer sur cet appareil » : les familles choisies d'abord, aucune préférence écrite par l'activation.** La décision 13 du contrôleur dit « l'UI écrit tous les types de la famille choisie » ; l'option A de la critique qu'elle reprend disait « la liste reçoit tous les types actuels ». Deux relectures confirmées se contredisaient : consigner un écart, ou suivre la lettre. Le plan suit la lettre de la décision : quatre cases visibles avant l'activation, et « Activer » en `aria-disabled` tant qu'aucune n'est cochée (M4b-13) — pourquoi : D:600 (« qui ont activé ce type ») et R:637 demandent un consentement par type, que l'écran recueille avant le geste ; ouvrir les 13 types à l'activation rouvrirait aussi les familles qu'un joueur a décochées — coût si faux : une case à cocher de plus au premier abonnement.
+- **B18. Abonnement du navigateur et ligne du serveur.** « Désactiver sur cet appareil » et « Se déconnecter » désabonnent d'abord le navigateur (`unsubscribePush()`), puis envoient `DELETE {endpoint}`. La section push renvoie l'abonnement présent à chaque lecture (upsert par endpoint de `wm.push_subscribe`) et n'affiche « Notifications activées sur cet appareil. » qu'après sa réponse ; un renvoi en échec affiche « Activer sur cet appareil ». Une relecture proposait l'ordre inverse (`DELETE`, puis `unsubscribe()` après un succès) ; une autre gardait « activées » après un renvoi en échec — pourquoi : dans l'ordre inverse, un `unsubscribe()` en échec laisserait l'abonnement local, que le renvoi réinscrirait, alors qu'un `DELETE` perdu ne laisse qu'une ligne morte, que le premier 404 ou 410 efface (`push_gone`). Le renvoi rattache un navigateur partagé au joueur connecté et répare une activation incertaine ou une ligne évincée (M4b-20) : l'état affiché est ainsi celui du serveur, pas celui du seul navigateur — coût si faux : un appareil qui reçoit encore un push après « Désactiver », jusqu'au premier 410.
+- **B19. Stub E2E du push : vrai service worker, `PushManager` et `Notification` simulés.** `stubPush` pose toujours `Notification.permission` (`'default'` par défaut) et remplace `Notification.requestPermission`, `PushManager.prototype.subscribe` et `getSubscription` ; `register` et `ready` restent réels, le vrai `public/sw.js` étant servi sans porte (Task 14). Deux relectures proposaient de simuler aussi `register`, et l'une `ready` — pourquoi : un `register` simulé laisse le vrai `ready` en attente (mesuré sur les deux Chromium du banc), et un `ready` simulé cacherait l'attente que `subscribePush` doit faire ; la CI lance `chromium-headless-shell`, où `Notification.permission` vaut `'denied'`, d'où le getter toujours posé — coût si faux : des E2E qui dépendent de l'enregistrement réel du worker, plus lents d'environ une seconde.
+- **B20. Envoi contre marquage lu : la notification non lue du couple prise `for update`.** `chat_send` la prend avant son `insert … where not exists`, et `wm.chat_read_sync` la prend avant de la marquer lue, dans une instruction à part qui vérifie qu'aucun message du couple ne reste non lu (Task 4). Une relecture proposait d'admettre la course avec un `shortcut:` — pourquoi : sans ce verrou, un marquage concurrent laisse un message neuf sans cloche ni push, dans les deux ordres (reproduit) ; le correctif tient en une instruction de chaque côté — coût si faux : un verrou de ligne de plus par envoi, sur une ligne que seuls ce couple et sa cloche touchent.
+- **B21. `list_caps` de `28_trades.test.sql` : le littéral passe à six clés au Step 1 de la Task 2.** Trois relectures confirmées divergeaient : recaler le littéral avant l'implémentation, après elle, ou comparer `list_caps` privée des clés du M4b — pourquoi : le littéral exact garde l'égalité stricte du M4a, et le changer au Step 1 rend le Step 2 rouge pour la bonne raison (`FAIL 28_trades.test.sql`, le premier dans l'ordre lexical) — coût si faux : aucun, la même valeur est vérifiée dans `29_social.test.sql`.
 
 ## Review Focus
 
-- **Endpoint d'abonnement hostile ou voisin.** `https://fcm.googleapis.com@evil.example/x`, `https://fcm.googleapis.com.evil.example/x`, `http://fcm.googleapis.com/x`, `https://fcm.googleapis.com:8443/x`, `https://notify.windows.com/x` et `https://evilnotify.windows.com/x` → 400 « Service de notifications non pris en charge », et aucune ligne. `https://FCM.GOOGLEAPIS.COM/fcm/send/x` et `https://wns2-par02p.notify.windows.com/w/?token=x` passent. → `30_push.test.sql` (Task 6) ; route : Task 10.
-- **Navigateur partagé.** A s'abonne avec l'endpoint E, se déconnecte, puis B s'abonne avec E : une seule ligne, à B. Une notification de A n'écrit plus rien pour E, une de B en écrit une. `DELETE` par A de E → `{ok: true}`, et la ligne de B reste. → Task 6.
+- **Endpoint d'abonnement hostile ou voisin** (B9). Treize refus en 400 « Service de notifications non pris en charge », sans aucune ligne :
+  - `https://fcm.googleapis.com@evil.example/x` (`@`), `https://fcm.googleapis.com.evil.example/x` et `http://fcm.googleapis.com/x` ;
+  - `https://fcm.googleapis.com:8443/x` et `https://a.notify.windows.com:8443/x` (port) ;
+  - `https://notify.windows.com/x` et `https://evilnotify.windows.com/x` ;
+  - `https://evil.example\.notify.windows.com/x` et `https://127.0.0.1\.notify.windows.com/x` (`\`, que `fetch` lit `/`), puis `https:evil.example/x://a.notify.windows.com/` (schéma sans `//`) ;
+  - `https://evil.example%2F.notify.windows.com/x` (`%2F`) et `https://[::1]/x` (IPv6) ;
+  - `https://fcm.googleapis.com/fcm/send/` suivi de 2 000 caractères CJK variés (non ASCII).
+  Passent : `https://FCM.GOOGLEAPIS.COM/fcm/send/x` (casse) et `https://wns2-par02p.notify.windows.com/w/?token=x`. Chaque `\` est un seul caractère de la valeur : `'…\.…'` en SQL, `'…\\.…'` en TypeScript. → `30_push.test.sql` (Task 6) ; route : Task 10, avec les deux formes qui passent zod.
+- **Navigateur partagé.** A s'abonne avec l'endpoint E, se déconnecte, puis B s'abonne avec E : une seule ligne, à B. Une notification de A n'écrit plus rien pour E, une de B en écrit une. Une ligne d'outbox posée pour A avant que B reprenne E est consommée par `push_claim()` sans être rendue. `DELETE` par A de E → `{ok: true}`, et la ligne de B reste. → Task 6. Côté navigateur, « Se déconnecter » désabonne l'appareil et retire E, et la section push renvoie l'abonnement présent à chaque affichage, ce qui rattache E au joueur connecté (B18). → Task 14.
 - **Débit aux bornes de la fenêtre.** Le 31ᵉ message de la minute → 429, avec `retry_after` entre 1 et 60 et `Retry-After` égal. Une fenêtre échue repart à 1. Un message refusé (vide, non-ami, trop long) ne compte pas, ni un rejeu de la même clé. Le compte est par expéditeur, tous pairs confondus. → Task 4 ; HTTP : Task 9.
 - **Contenu aux bornes.** Blancs seuls (`'  \n\t '`) → 400 « Le message est vide ». 2 000 émojis (2 000 points de code, 4 000 unités UTF-16) passent, 2 001 `é` sont refusés. `\0` → 400 « Caractère invalide » à la route. Espaces de tête et de fin gardés tels quels. Le compteur de l'UI suit `value.length`, donc il est plus strict que le serveur, jamais plus large. → Task 4, Task 9, Task 13.
-- **Pseudo hérité aux caractères spéciaux** (C28 ne s'applique pas aux pseudos existants). `Élise Ü`, `a%b` et `x?y#z` s'ouvrent sur `/profile/<encodeURIComponent>`, depuis la pastille, le fil et un lien tapé. La route rend le bon profil, et `maskPath` le masque dans le journal. → Task 8 (contrat et `maskPath`), Task 11 (E2E).
+- **Pseudo hérité aux caractères spéciaux** (C28 ne s'applique pas aux pseudos existants). `Élise Ü`, `a%b` et `x?y#z` s'ouvrent sur `/profile/<encodeURIComponent>`, depuis la pastille, le fil et un lien tapé. La route rend le bon profil, et `maskPath` le masque dans le journal. → Task 7 (pastille), Task 8 (contrat et `maskPath`), Tasks 11 et 13 (E2E).
 
 ## Fichiers
 
@@ -329,11 +361,11 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 | `supabase/migrations/1840_wm_push.sql` | Préférences, abonnements, trigger d'outbox, réservation, réveil, `health` |
 | `supabase/migrations/1850_wm_catalog_friends.sql` | `cards_overlay` avec `friendOwners` |
 | `supabase/migrations/9020_wm_push_cron.sql` | pg_net et le job `wm-push-wake`, seulement si possible |
-| `supabase/tests/29_social.test.sql`, `30_push.test.sql`, `18_social_concurrency.test.sh`, `helpers.sql` | Tests SQL et concurrence |
+| `supabase/tests/29_social.test.sql`, `30_push.test.sql`, `18_social_concurrency.test.sh`, `helpers.sql` ; recalés : `02_mirror_rls`, `10_wm_core`, `27_market` et `28_trades` | Tests SQL et concurrence |
 | `app/api/{profile/[username],profile/[username]/showcase,showcase,reports,chat,chat/[peerId],push/subscribe,settings/notifications,cron/push}/route.ts` | Routes |
-| `lib/{push,vapid,cron,notification-view}.ts`, `lib/route.ts` | Push côté serveur et option `push` |
+| `lib/{push,vapid,cron,notification-view}.ts`, `lib/route.ts`, `lib/market-cache.ts` (commentaire du B6) | Push côté serveur, option `push` et `shortcut:` du règlement paresseux |
 | `contract/spec/{profile,reports,chat,push}.ts`, `contract/push-crypto.ts`, `contract/harness.ts` | Contrat, faux service de push |
-| `app/(game)/profile/**`, `app/(game)/dms/*`, `components/{profile,dms}/*`, `app/(game)/settings/push-section.tsx`, `public/sw.js` | Pages |
+| `app/(game)/profile/**`, `app/(game)/dms/*`, `components/{profile,dms}/*`, `app/(game)/settings/push-section.tsx`, `lib/push-browser.ts`, `public/sw.js` | Pages |
 | `e2e/{profile,dms,social-journey}.spec.ts`, `e2e/push-stub.ts` | E2E et a11y |
 | `load/bench/{trade_setup.sql,overlay.sql,run.sh}` | Bench |
 
@@ -375,7 +407,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - Bob : `update … set content = 'x'` → `insufficient_privilege` ;
     - Bob : `insert` et `delete` sur `chat_messages` → `insufficient_privilege`.
   - Bob : `select`, `insert`, `update` et `delete` sur `showcase`, `reports` et `push_subscriptions` → `insufficient_privilege`, soit 12 instructions dans la boucle de `02_mirror_rls.test.sql:120-133`.
-  - En superutilisateur :
+  - En superutilisateur, dans un dernier bloc du fichier, après celui de `service_role` (`02_mirror_rls.test.sql:224-237`), avec la suppression de la copie d'Alice en dernier : les blocs précédents comptent cette copie (`:154-160`, `:168-187`, `:224-237`) et le message unique, que l'insertion de `repeat('é', 2000)` en ferait deux :
     - `repeat('é', 2001)` en `content` → `check_violation`, `repeat('é', 2000)` passe ;
     - `repeat('x', 501)` en `details` → `check_violation` ;
     - un second signalement Alice → Bob → `unique_violation` ;
@@ -395,7 +427,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 
 **Files:**
 - Create: `supabase/migrations/1800_wm_social_core.sql`, `supabase/tests/29_social.test.sql`
-- Modify: `supabase/tests/helpers.sql:50-66` (B10)
+- Modify: `supabase/tests/helpers.sql:50-66` (B10), `supabase/tests/28_trades.test.sql:58-60` (littéral de `list_caps`, B3, B21)
 
 **Interfaces:**
 - Consumes : Task 1 ; `wm.trade_move` (`1730_wm_trade_action.sql:8-34`).
@@ -403,7 +435,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 
   | Objet | Contenu |
   |---|---|
-  | Clés `wm.config` (`on conflict do nothing`) | `chat_burst` `{"count": 30, "window_s": 60}` (« Messages privés par fenêtre, par expéditeur (D:595, C17, M4b-3) ») ; `push_origins` `{"origins": ["https://fcm.googleapis.com", "https://updates.push.services.mozilla.com", "https://web.push.apple.com"], "suffixes": [".notify.windows.com"]}` (« Services de push acceptés, contre le SSRF ; le banc y ajoute son origine (M4b-12) ») ; `push_max_subscriptions` `10` (« Abonnements par joueur ; écart à C30 (M4b-20) ») ; `push_types` = les 13 types triés `["auction_outbid","auction_sold","auction_unsold","auction_won","chat_message","friend_accepted","friend_request","trade_accepted","trade_cancelled","trade_countered","trade_declined","trade_received","wishlist_listed"]` (« Types qu'un joueur peut activer en push (M4b-13) ») ; `push_wake_url` `'null'::jsonb` (« URL de /api/cron/push pour pg_net, posée par deploy-m4b.sql (C30, M4b-17) ») ; `list_caps` étendue par B3 |
+  | Clés `wm.config` (`on conflict do nothing`) | `chat_burst` `{"count": 30, "window_s": 60}` (« Messages privés par fenêtre, par expéditeur (D:595, C17, M4b-3) ») ; `push_origins` `{"origins": ["https://fcm.googleapis.com", "https://updates.push.services.mozilla.com", "https://web.push.apple.com"], "suffixes": [".notify.windows.com"]}` (« Services de push acceptés, contre le SSRF ; le banc y ajoute son origine (M4b-12) ») ; `push_max_subscriptions` `10` (« Abonnements par joueur ; écart à C30 (M4b-20) ») ; `push_types` = les 13 types triés `["auction_outbid","auction_sold","auction_unsold","auction_won","chat_message","friend_accepted","friend_request","trade_accepted","trade_cancelled","trade_countered","trade_declined","trade_received","wishlist_listed"]` (« Types qu'un joueur peut activer en push (M4b-13) »), écrit en littéral `'[…]'` juste après sa clé, que `lib/notifications.test.ts` relit (Task 10) ; `push_wake_url` `'null'::jsonb` (« URL de /api/cron/push pour pg_net, posée par deploy-m4b.sql (C30, M4b-17) ») ; `list_caps` étendue par B3 |
   | `wm.user_state` | `add column if not exists chat_window_start timestamptz`, `add column if not exists chat_window_count int not null default 0` |
   | `wm.notification_prefs` | M4b-13 |
   | `wm.push_outbox` | `id bigint generated always as identity primary key`, `subscription_id uuid not null`, `notification_id uuid not null`, `created_at timestamptz not null default now()`. Sans clé étrangère : aucun verrou pris, et une ligne orpheline est jetée à la réservation |
@@ -412,7 +444,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   | `wm.trade_move(p_trade public.trades) returns void` | Même signature et même corps que `1730:8-34`, plus l'instruction (6) `delete from public.showcase where user_card_id = any (v_full)` (M4b-7). L'en-tête ne dit plus « P13 : pas de vitrine au M4a ». |
 
 - [ ] **Step 1: Tests qui échouent** (`29_social.test.sql`)
-  - En tête : `pg_temp.err`, `pg_temp.inv`, `pg_temp.player`, `pg_temp.card`, `pg_temp.copy` et `pg_temp.friends`, repris de `28_trades.test.sql` tels quels. Chaque bloc filtre sur ses propres joueurs.
+  - En tête : `pg_temp.err`, `pg_temp.inv`, `pg_temp.player`, `pg_temp.card`, `pg_temp.copy`, `pg_temp.friends` et `pg_temp.items` (`28_trades.test.sql:433-437`), repris de `28_trades.test.sql` tels quels. Chaque bloc filtre sur ses propres joueurs.
   - Config :
     - le `jsonb_object_agg` de `chat_burst`, `push_origins`, `push_max_subscriptions`, `push_types` et `push_wake_url` = les valeurs exactes ;
     - `list_caps` = `{"conversations": 50, "friend_owners": 3, "friend_search": 20, "messages": 100, "notifications": 50, "trades_closed": 200}` ;
@@ -432,8 +464,16 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - A montre a1 (seule) en position 0 et a2 (pile de 3, 2 unités échangées) en position 1, avec a1 en avatar ; B montre b1 en position 2 ;
     - B accepte → l'emplacement 0 de A a disparu, l'emplacement 1 reste sur a2, l'emplacement 2 de B a disparu ; l'avatar de A et son `avatar_url` sont nuls ;
     - `tests.trade_snapshot(t) ?& array['showcase', 'push_outbox']`, avec `push_outbox` = 0 (personne n'est abonné) ; `pg_temp.inv`.
-  - `28_trades.test.sql` et `17_trades_concurrency.test.sh` restent inchangés et verts (l'égalité des instantanés tient avec les clés en plus).
-- [ ] **Step 2: `npm run test:db`** → `FAIL 29_social.test.sql`.
+  - Erreur injectée (M4-7 A, D:1083), sur le modèle de `28_trades.test.sql:803-842` :
+    - A et B amis, à 1 000 WB chacun ;
+    - A montre a1 (seule) en position 0, aussi en avatar, avec `avatar_url` `'u-vit'` ; B montre b1 (seule) en position 2 ;
+    - `t := wm.create_trade(A, B, pg_temp.items(A, array[a1]) || pg_temp.items(B, array[b1]), 300, 500) ->> 'id'`, avec des WB des deux côtés : sans WB, l'acceptation n'écrirait aucune ligne de grand livre, et la faute ne partirait pas ;
+    - `s := tests.trade_snapshot(t)`, avec `jsonb_array_length(s -> 'showcase') = 2` ;
+    - par `execute format`, comme `28_trades.test.sql:820` : `create trigger zz_boom after insert on wm.wb_ledger for each row when (new.ref = 'trade:<t>') execute function tests.boom()` ;
+    - `wm.trade_action(B, t, 'accept', null, 'k-vit')` lève `XX000` « erreur injectée », et `tests.trade_snapshot(t) = s` ;
+    - trigger retiré, la même clé → `accepted`, `r -> 'showcase' = '[]'`, et l'avatar et l'`avatar_url` de A sont nuls dans `r -> 'profiles'`.
+  - `17_trades_concurrency.test.sh` reste inchangé et vert. Dans `28_trades.test.sql`, seule l'assertion de config change (`:58-60`) : son `list_caps` attendu devient `{"conversations":50,"friend_owners":3,"friend_search":20,"messages":100,"notifications":50,"trades_closed":200}` (B3, B21), et `trade_limits` et `friend_limit` ne changent pas. Le reste du fichier est inchangé et vert : l'égalité des instantanés y tient avec les clés en plus, qui valent `[]`, 0 et `null` avant comme après, et seules l'erreur injectée ci-dessus et celle de la Task 6 les éprouvent.
+- [ ] **Step 2: `npm run test:db`** → `FAIL 28_trades.test.sql` (`list_caps` encore à trois clés : c'est le premier fichier en échec dans l'ordre lexical, et le banc s'arrête là, `scripts/db-test.sh:68-70`). `29_social.test.sql` échoue ensuite, tant que `1800` manque.
 - [ ] **Step 3: Implémenter `1800` et `helpers.sql`** ; fin `revoke`/`grant`.
 - [ ] **Step 4: Contrôles complets** → vert, `contract/spec/trades.ts` inchangé.
 - [ ] **Step 5: Commit** — `feat(db): socle social (config, outbox push, préférences push, index, avatar_url effacé avec sa copie, trade_move qui vide la vitrine)`
@@ -479,7 +519,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - profil migré, avatar nul et `avatar_url` `'legacy'` : `profile_update(A, <A>, p_bio => 'x')` garde `'legacy'` (clause `when` du trigger, M4b-6) ;
     - le pseudo de B → 403 `FORBIDDEN` exact ;
     - la réponse = `profile_get(A, <A>)` ; le même `p_idem` deux fois → même réponse ; `maintenance` à `true` → 503 `maintenance`.
-  - `profile_collection` (P21 c), A privé : B ami → `{collection, total}` ; Carol → 403 « Ce profil est privé » (`23_collection.test.sql:211` reste vrai).
+  - `profile_collection` (P21 c), A privé : B ami → `{collection, total}` ; Carol → 403 « Ce profil est privé » (`23_collection.test.sql:209-210` reste vrai).
   - Vitrine :
     - `showcase_put(A, 0, a1)` → exactement `{"showcase":[{"position":0,"user_card_id":a1,"user_card":{…}}],"galleries":[]}` ;
     - les clés de `user_card` = `{card, count, id, is_shiny, snapshot_rarity}`, et celles de `card` = celles du `card` de `wm.my_collection` ;
@@ -491,14 +531,17 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - même `p_idem` deux fois sur `put`, puis sur `delete` → mêmes réponses.
   - `profile_showcase` : Carol sur A privé → 403 « Ce profil est privé » ; B ami → les emplacements ; pseudo inconnu → 404.
   - Volatilité : `profile_get`, `showcase_json`, `my_showcase` et `profile_showcase` ont `provolatile = 's'`.
-  - `lock_timeout` (P5) : le bloc de `28_trades.test.sql:81-96`, recopié dans `29_social.test.sql`, avec les marqueurs `for update`, `for key share`, `wm.lock_users(` et `wm.lock_user(`, sur `profile_update`, `showcase_put` et `showcase_delete` ; chaque tâche suivante y ajoute ses fonctions.
+  - `lock_timeout` (P5) : le bloc de `28_trades.test.sql:81-96`, recopié dans `29_social.test.sql`, avec les marqueurs `for update`, `for key share`, `wm.lock_users(` et `wm.lock_user(`, sur `profile_update`, `showcase_put` et `showcase_delete`. Dans `prosrc`, `wm.lock_user(` précède aussi le premier `public.user_cards` de `profile_update` et de `showcase_put` : la copie est relue sous le verrou (M4b-2). Chaque tâche suivante y ajoute ses fonctions.
 - [ ] **Step 2: Test de concurrence** (`18_social_concurrency.test.sh`)
-  - Aides `q`, `bg`, `waitall`, `refusals`, `quiet` et `fail` recopiées de `17_trades_concurrency.test.sh`, `tag="soc_$RANDOM$RANDOM"`, un `cleanup` en `trap`, et en tête la liste des scénarios.
-  - **1. Vitrine contre acceptation**, 10 fois : A et B amis, un échange T qui donne a1 (seule) de A à B. Derrière un bloqueur qui tient A et B pendant 1 s, lancés ensemble : `wm.trade_action(B, T, 'accept')` et `wm.showcase_put(A, 0, a1)`. Attendu :
+  - Aides `q` (`17_trades_concurrency.test.sh:20`), `fail` (`:33`), `bg`, `waitall`, `refusals` et `quiet` (`:70-79`), `sleeping`, `hold`, `released` et `ms` (`:86-125`), recopiées telles quelles ; le préfixe `17_trades_concurrency :` du message de `released` devient `18_social_concurrency :`. `tag="soc_$RANDOM$RANDOM"`, un `cleanup` en `trap` qui commence par `wait` (`:26`), et en tête la liste des scénarios (1, 2, 2 b, 2 c, 3 et 4).
+  - « Derrière un bloqueur qui tient A et B » veut dire partout, comme au M4a (DG:434) : `hold <nom> "perform from public.profiles where id in ('$a', '$b') order by id for update" <n>`, puis les n appels par `bg`, puis `released <nom> <n/2>` et `waitall`. Le bloqueur tient jusqu'à ce que n appels attendent, 1 s au plus après le premier vu et 5 s en tout, et la file vue est imprimée. Jamais de `pg_sleep` fixe devant le `lock_timeout` de 2 s.
+  - Seuls sommeils fixes : le bloqueur du scénario 3, qui prend ses deux verrous l'un après l'autre, les bloqueurs du scénario 2 c, et la session 1 des scénarios 2 b et 4, qui prouvent un rejeu et `skip locked`, pas une file. Chacun est lancé en arrière-plan avec `blocker=$!`, puis attendu par `sleeping` ; les durées se mesurent par `t0=$EPOCHREALTIME` et `ms`.
+  - **1. Vitrine et avatar contre acceptation**, 10 fois : A et B amis, a1 une copie seule d'une `tests.image_card` (l'avatar passe ainsi la règle d'image), un échange T qui donne a1 de A à B. Derrière `hold s1 … 3`, lancés ensemble par `bg` (puis `released s1 1`) : `wm.trade_action(B, T, 'accept')`, `wm.showcase_put(A, 0, a1)` et `wm.profile_update(A, <A>, p_avatar_user_card_id => a1, p_avatar_set => true)`. Attendu :
     - aucun `40P01` ni `55P03` ;
-    - chaque `showcase_put` réussit ou échoue en « Vous ne possédez pas cette carte » ;
-    - `select count(*) from public.showcase s join public.user_cards uc on uc.id = s.user_card_id where uc.user_id <> s.user_id` = 0.
-  - Mutation éprouvée rouge : `lock_user` retiré de `showcase_put` → le dernier compte devient non nul en au moins un tour sur 10. Sinon la consigner « non reproduite » dans le rapport de tâche.
+    - chaque `showcase_put` et chaque `profile_update` réussit ou échoue en « Vous ne possédez pas cette carte » ;
+    - `select count(*) from public.showcase s join public.user_cards uc on uc.id = s.user_card_id where uc.user_id <> s.user_id` = 0 ;
+    - `select count(*) from public.profiles p join public.user_cards uc on uc.id = p.avatar_user_card_id where uc.user_id <> p.id` = 0.
+  - Mutations éprouvées rouges, une à la fois : `lock_user` placé après la vérification de la copie dans `showcase_put`, puis dans `profile_update` → le compte correspondant devient non nul en au moins un tour sur 10. Sinon les consigner « non reproduites » dans le rapport de tâche ; le contrôle `prosrc` du Step 1 attrape déjà cet ordre en statique.
 - [ ] **Step 3: `npm run test:db`** → `FAIL 29_social.test.sql`.
 - [ ] **Step 4: Implémenter `1810`.**
 - [ ] **Step 5: Contrôles complets** → vert.
@@ -520,8 +563,8 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   |---|---|
   | `wm.chat_conversations(p_uid uuid) returns jsonb` | `stable` ; `{conversations: [...]}` (B2) : une entrée par pair avec qui `p_uid` a échangé, `last_message_at desc, peer_id`, au plus `list_caps.conversations` ; `unread_count` = messages du pair vers `p_uid` non lus. `shortcut:` lit tous les messages du joueur, une table de conversations au M8 si besoin |
   | `wm.chat_thread(p_uid uuid, p_peer_id uuid) returns jsonb` | `stable` ; soi-même → 400 « Tu ne peux pas t'écrire à toi-même » ; pair inconnu → 404 ; `{messages: [...], peer: {id, username, avatar_url}, isFriend}`, les `list_caps.messages` plus récents du couple, en ordre `created_at, id` croissant |
-  | `wm.chat_send(p_uid uuid, p_peer_id uuid, p_content text, p_idem text default null) returns jsonb` | `{message}`, dans l'ordre M4b-2. Contenu : `btrim(p_content, E' \t\r\n')` vide → 400 « Le message est vide » ; `char_length(p_content) > 2000` → 400 ; stocké tel quel. Garde : `chat_window_start > now() - window` et `chat_window_count >= count` → 429 (M4b-29), `retry_after = greatest(1, ceil(extract(epoch from chat_window_start + window - now())))::int`. Après l'insertion : notification `chat_message` pour le pair, `{user_id: p_uid, username}`, en une instruction `insert … select … where not exists (une chat_message non lue de p_uid pour p_peer_id)` (M4b-4) ; puis le compteur, comme `market_tick` (`1600:95-119`), sans retirer de vérification humaine ; `idem_store` |
-  | `wm.chat_read_sync() returns trigger` + `create or replace trigger chat_messages_read_sync after update on public.chat_messages referencing old table as o new table as n for each statement execute function wm.chat_read_sync()` | Pour chaque couple (destinataire, expéditeur) d'une ligne passée de non lue à lue (`o.read is distinct from n.read and n.read`), `update public.notifications set read = true where type = 'chat_message' and not read and user_id = <destinataire> and data ->> 'user_id' = <expéditeur>::text` |
+  | `wm.chat_send(p_uid uuid, p_peer_id uuid, p_content text, p_idem text default null) returns jsonb` | `{message}`, dans l'ordre M4b-2. Contenu : `btrim(p_content, E' \t\r\n')` vide → 400 « Le message est vide » ; `char_length(p_content) > 2000` → 400 ; stocké tel quel. Garde : `chat_window_start > now() - window` et `chat_window_count >= count` → 429 (M4b-29), `retry_after = greatest(1, ceil(extract(epoch from chat_window_start + window - now())))::int`. Après l'insertion : `perform from public.notifications where user_id = p_peer_id and type = 'chat_message' and not read and data ->> 'user_id' = p_uid::text for update` (B20), puis la notification `chat_message` pour le pair, `{user_id: p_uid, username}`, en une instruction `insert … select … where not exists (une chat_message non lue de p_uid pour p_peer_id)` (M4b-4). Un marquage lu en cours fait attendre l'envoi ; relue (READ COMMITTED), la ligne marquée lue est exclue, et une notification neuve est insérée ; puis le compteur, comme `market_tick` (`1600:95-119`), sans retirer de vérification humaine ; `idem_store` |
+  | `wm.chat_read_sync() returns trigger` + `create or replace trigger chat_messages_read_sync after update on public.chat_messages referencing old table as o new table as n for each statement execute function wm.chat_read_sync()` | Pour les couples (destinataire, expéditeur) des lignes passées de non lue à lue (`o.read is distinct from n.read and n.read`) : d'abord `perform from public.notifications where type = 'chat_message' and not read and (user_id, data ->> 'user_id') in (<couples>) order by id for update`. Puis, dans une instruction à part (instantané neuf) : `update public.notifications nt set read = true where <mêmes conditions> and not exists (select from public.chat_messages m where m.recipient_id = nt.user_id and m.sender_id::text = nt.data ->> 'user_id' and not m.read)`. Un envoi validé pendant l'attente garde ainsi sa notification non lue (B20) |
 
 - [ ] **Step 1: Tests qui échouent** (`29_social.test.sql`)
   - Envoi, A et B amis :
@@ -557,13 +600,19 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - le même `update` rejoué ne lève rien.
   - Volatilité : `chat_conversations` et `chat_thread` ont `provolatile = 's'`.
   - `lock_timeout` (P5) : ajouter `chat_send`, et vérifier que `wm.lock_users(` précède `insert into public.chat_messages` dans `prosrc`.
-- [ ] **Step 2: Test de concurrence** (`18_social_concurrency.test.sh`, scénario 2)
-  - **Messages croisés** : `chat_burst` relevé à `{"count": 1000, "window_s": 60}` puis restauré. A et B amis ; derrière un bloqueur qui tient A et B pendant 1 s, 30 `chat_send(A, B, …)` et 30 `chat_send(B, A, …)` lancés ensemble.
+- [ ] **Step 2: Test de concurrence** (`18_social_concurrency.test.sh`, scénarios 2, 2 b et 2 c)
+  - **2. Messages croisés** : `chat_burst` relevé à `{"count": 1000, "window_s": 60}` puis restauré. A et B amis ; derrière `hold s2 … 60`, 30 `chat_send(A, B, …)` et 30 `chat_send(B, A, …)` lancés ensemble par `bg`, puis `released s2 30` (contention prouvée).
   - Attendu :
     - aucun `40P01` ni `55P03`, aucune erreur ;
     - 60 messages ;
     - exactement une `chat_message` non lue pour A (de B) et une pour B (de A).
   - Mutation éprouvée rouge : `lock_users(array[…])` remplacé par `lock_user(p_uid)` → un `40P01`.
+  - **2 b. Même clé, deux sessions** (M4-8 ; gabarit : scénario 4 de `17_trades_concurrency.test.sh:199-214`). E et F, deux joueurs neufs et amis. La session 1 lance en arrière-plan `set role service_role; begin; select wm.chat_send('<E>', '<F>', 'x', 'k-dup')::text; select pg_sleep(1); commit;` (`blocker=$!`, puis `sleeping`). La session 2 lance le même appel, chronométré par `ms`. Attendu : elle est servie en 500 ms au moins, avec le même corps que la session 1 ; un seul message E → F, une seule `chat_message` non lue pour F, et `chat_window_count` de E = 1 ; aucun `40P01` ni `55P03`.
+  - **2 c. Envoi et marquage lu** (B20), deux passes, A et B amis. Au départ de chaque passe : un message non lu de A pour B, et sa `chat_message` non lue.
+    - a) Un bloqueur fait `update public.chat_messages set read = true where sender_id = A and recipient_id = B and not read`, puis `pg_sleep(1)` avant `commit` ; `chat_send(A, B, 'x')` part pendant son sommeil (`sleeping`).
+    - b) Un bloqueur fait `select wm.chat_send(A, B, 'y')`, puis `pg_sleep(1)` avant `commit` ; le même `update` part pendant son sommeil.
+    - Attendu dans les deux passes : aucun `40P01` ni `55P03`, et à la fin exactement une `chat_message` non lue de A pour B, et un seul message non lu de A pour B.
+    - Mutations éprouvées rouges : le `for update` de `chat_send` retiré → aucune non lue en a ; le `perform … for update` du trigger, ou son `not exists`, retiré → aucune non lue en b.
 - [ ] **Step 3: `npm run test:db`** → `FAIL 29_social.test.sql`.
 - [ ] **Step 4: Implémenter `1820`.**
 - [ ] **Step 5: Contrôles complets** → vert.
@@ -602,7 +651,10 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   - `lock_timeout` (P5) : ajouter `report_upsert`.
 - [ ] **Step 2: Test de concurrence** (`18_social_concurrency.test.sh`, scénario 3, M4b-31)
   - Préparation : R = le plus grand des deux id, L = le plus petit.
-  - Deux passes, une par sens : R signale L, puis L signale R. Dans chacune, un bloqueur prend L `for update`, attend 1 s, puis prend R `for update`, dans l'ordre de `lock_users`, et le signalement part pendant son sommeil.
+  - Deux passes, une par sens : R signale L, puis L signale R. Dans chacune, un bloqueur prend L `for update`, attend 1 s, puis prend R `for update`, dans l'ordre de `lock_users` :
+    - il est lancé en arrière-plan par `q -c "begin; select from public.profiles where id = '<L>' for update; select pg_sleep(1); select from public.profiles where id = '<R>' for update; commit;"`, sa sortie d'erreur dans `$tmp/3b<passe>`, avec `blocker=$!` ;
+    - puis `sleeping "$tmp/3b<passe>"`, `t0=$EPOCHREALTIME` et le signalement par `q`, sa sortie d'erreur dans `$tmp/3r<passe>` ;
+    - sa durée est lue par `ms`, et `40P01` est cherché dans les deux sorties d'erreur.
   - Attendu dans les deux passes : aucun `40P01`, et le signalement passe après le bloqueur, entre 0,5 et 2 s.
   - Mutation éprouvée rouge : la ligne `for key share` retirée → `40P01` dans l'une des deux passes, au bloqueur ou au signalement. Les deux sens couvrent l'un et l'autre ordre des triggers de clé étrangère.
 - [ ] **Step 3: `npm run test:db`** → `FAIL 29_social.test.sql`.
@@ -616,7 +668,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 
 **Files:**
 - Create: `supabase/migrations/1840_wm_push.sql`, `supabase/migrations/9020_wm_push_cron.sql`, `supabase/tests/30_push.test.sql`
-- Modify: `supabase/tests/10_wm_core.test.sql:126-130` (`- 'push_lag_s'` et `h -> 'push_lag_s' = 'null'::jsonb`), `supabase/tests/18_social_concurrency.test.sh` (scénario 4), `.github/workflows/health.yml:3-4` et `:24`
+- Modify: `supabase/tests/10_wm_core.test.sql:126-129` (`- 'push_lag_s'` et `h -> 'push_lag_s' = 'null'::jsonb`), `supabase/tests/27_market.test.sql:1195` (`"push_lag_s":null` ajouté à l'objet attendu) et `:1201` (`"push_lag_s":86400`), `supabase/tests/18_social_concurrency.test.sh` (scénario 4), `.github/workflows/health.yml:3-4` et `:24`
 
 **Interfaces:**
 - Consumes : Tasks 1 et 2 ; `wm.health` (`1650_wm_market_alerts.sql:80-104`).
@@ -625,15 +677,15 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   | Objet | Réponse, règles |
   |---|---|
   | `wm.notification_prefs_get(p_uid uuid) returns jsonb` | `stable` ; `{push_types: [...]}`, `[]` sans ligne |
-  | `wm.notification_prefs_set(p_uid uuid, p_push_types text[], p_idem text default null) returns jsonb` | `idem_claim`, `actor`, un type hors de `wm.config.push_types` → 400 « Type de notification inconnu », upsert trié et dédoublonné, `idem_store(notification_prefs_get)` |
-  | `wm.push_subscribe(p_uid uuid, p_endpoint text, p_p256dh text, p_auth text, p_idem text default null) returns jsonb` | `{ok: true}`. `idem_claim`, `actor`, l'origine selon B9 contre `push_origins` (400 « Service de notifications non pris en charge »), `insert … on conflict (endpoint) do update set user_id, p256dh, auth, created_at = now()`, puis suppression des abonnements de `p_uid` au-delà des `push_max_subscriptions` plus récents (`created_at desc, id desc`) |
-  | `wm.push_unsubscribe(p_uid uuid, p_endpoint text, p_idem text default null) returns jsonb` | `{ok: true}` ; `idem_claim`, `actor`, `delete … where user_id = p_uid and endpoint = p_endpoint` |
+  | `wm.notification_prefs_set(p_uid uuid, p_push_types text[], p_idem text default null) returns jsonb` | `idem_claim`, `actor`, un type hors de `wm.config.push_types` → 400 « Type de notification inconnu », `lock_timeout`, upsert trié et dédoublonné, `idem_store(notification_prefs_get)` |
+  | `wm.push_subscribe(p_uid uuid, p_endpoint text, p_p256dh text, p_auth text, p_idem text default null) returns jsonb` | `{ok: true}`. `idem_claim`, `actor`, l'origine selon B9 contre `push_origins` (400 « Service de notifications non pris en charge »), `lock_timeout`, `insert … on conflict (endpoint) do update set user_id, p256dh, auth, created_at = now()`, puis suppression des abonnements de `p_uid` au-delà des `push_max_subscriptions` plus récents (`created_at desc, id desc`) |
+  | `wm.push_unsubscribe(p_uid uuid, p_endpoint text, p_idem text default null) returns jsonb` | `{ok: true}` ; `idem_claim`, `actor`, `lock_timeout`, `delete … where user_id = p_uid and endpoint = p_endpoint` |
   | `wm.push_enqueue() returns trigger` + `create or replace trigger notifications_push_enqueue after insert on public.notifications referencing new table as new_n for each statement execute function wm.push_enqueue()` | Une ligne d'outbox par couple (notification, abonnement), pour `new_n` jointe à `push_subscriptions` et à `notification_prefs` sur `type = any (push_types)`, avec la garde `created_at > now() - interval '10 minutes'` (reprise des notifications migrées : jamais de push) |
-  | `wm.push_claim(p_limit int default 500) returns jsonb` | `[{subscription_id, endpoint, p256dh, auth, notification_id, type, data}]` : `delete from wm.push_outbox where id in (select id … order by id limit greatest(coalesce(p_limit, 0), 0) for update skip locked) returning …`, joint à l'abonnement et à la notification (les orphelines sont jetées) ; ni `actor` ni `maintenance` (M4b-22) |
+  | `wm.push_claim(p_limit int default 500) returns jsonb` | `[{subscription_id, endpoint, p256dh, auth, notification_id, type, data}]` : `delete from wm.push_outbox where id in (select id … order by id limit greatest(coalesce(p_limit, 0), 0) for update skip locked) returning …`, joint à l'abonnement et à la notification **du même joueur** (`n.user_id = s.user_id`). Une ligne orpheline, ou dont l'abonnement a changé de joueur depuis (navigateur partagé), est consommée sans être rendue ; ni `actor` ni `maintenance` (M4b-22) |
   | `wm.push_gone(p_subscription_ids uuid[]) returns int` | `delete from public.push_subscriptions where id = any (p_subscription_ids)` ; le nombre |
-  | `wm.push_wake() returns bigint` | `delete from wm.push_outbox where created_at < now() - interval '1 hour'` ; `push_wake_url` nulle ou outbox vide → `null`, sans appel ; secret de `vault.decrypted_secrets where name = 'CRON_SECRET'` absent → `raise warning` et `null` ; sinon `net.http_post(url := …, body := '{}'::jsonb, headers := jsonb_build_object('content-type', 'application/json', 'x-cron-secret', <secret>), timeout_milliseconds := 10000)`. `net.*` et `vault.*` sont liés tardivement (PL/pgSQL). |
-  | `wm.health()` | Même signature, mêmes clés que `1650:80-104`, plus `push_lag_s` = âge en secondes de la plus vieille ligne de l'outbox (`order by id limit 1`), `null` si elle est vide (M4b-18) |
-  | `9020_wm_push_cron.sql` | En tête : ADDITIVE, exception aux migrations `wm` comme `9010:1-4`. Un bloc `do` : si `pg_cron` est dans `pg_extension` et que `shared_preload_libraries` contient `pg_net` (regex de `9000:8`), `create extension if not exists pg_net`, puis `perform cron.schedule('wm-push-wake', '15 seconds', 'select wm.push_wake()')` ; `exception when others then raise warning '9020_wm_push_cron : …'` |
+  | `wm.push_wake() returns bigint` | `delete from wm.push_outbox where created_at < now() - interval '1 hour'` d'abord ; `push_wake_url` nulle ou outbox vide → `null`, sans appel. Puis, dans un bloc `begin … exception when others then raise warning 'wm.push_wake : % %', sqlstate, sqlerrm; return null; end` (motif de `1650:84-100`) : le secret de `vault.decrypted_secrets where name = 'CRON_SECRET'`, absent → `raise warning` et `null`, sinon `net.http_post(url := …, body := '{}'::jsonb, headers := jsonb_build_object('content-type', 'application/json', 'x-cron-secret', <secret>), timeout_milliseconds := 10000)`. Une vue absente ou illisible, ou un appel en erreur, donne un avertissement et `null` ; la purge, faite avant le bloc, reste acquise. `net.*` et `vault.*` sont liés tardivement (PL/pgSQL). |
+  | `wm.health()` | Même signature, mêmes clés que `1650:80-104`, plus `push_lag_s` = âge en secondes de la plus vieille ligne de l'outbox (`order by id limit 1`), `null` si elle est vide (M4b-18). La lecture de l'outbox a son propre bloc, après celui du cron et hors de lui (ni dans le bloc, ni sous son `if to_regclass`) : `begin … exception when others then raise warning 'wm.health : % %', sqlstate, sqlerrm; v_push := 86400; end`. Une lecture en erreur donne 86400, comme `settle_lag_s` (`1650:76-79`, B16) : `health.yml` alerte, et `/api/health` reste 200. Le bloc est requis : `27_market.test.sql:1199-1201` fait tourner `wm.health()` sous le propriétaire `authenticated`, sans `usage` sur `wm` (`1650:106`), et la lecture y lève 42501. Une erreur de `cron.*` ne touche pas `push_lag_s`. |
+  | `9020_wm_push_cron.sql` | En tête : ADDITIVE, exception aux migrations `wm` comme `9010:1-4`. Un bloc `do` : si `pg_cron` est dans `pg_extension` et que `shared_preload_libraries` contient `pg_net` (regex de `9000:8`), `create extension if not exists pg_net with schema extensions` (comme `unaccent`, `1300:3` ; ses objets vivent de toute façon dans `net`), puis `perform cron.schedule('wm-push-wake', '15 seconds', 'select wm.push_wake()')` ; `exception when others then raise warning '9020_wm_push_cron : …'` |
   | `health.yml` | `jq -e '.settle_lag_s != null and .settle_lag_s <= 60 and .overdue_s == null and (.push_lag_s // 0) <= 120' health.json` ; l'en-tête cite le retard du push |
 
 - [ ] **Step 1: Tests qui échouent** (`30_push.test.sql` ; en tête, les aides `pg_temp` de `29_social.test.sql`)
@@ -641,24 +693,31 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - `notification_prefs_get(A)` → `{"push_types": []}` ;
     - `set(A, array['trade_received', 'chat_message', 'chat_message'])` → `{"push_types": ["chat_message", "trade_received"]}` ;
     - `array['nope']` → 400 « Type de notification inconnu » ; même `p_idem` deux fois → même réponse.
-  - ***Review Focus*, endpoints** : les six refus et les deux succès de la section, chacun au corps exact. Après les refus, aucune ligne de A.
+  - ***Review Focus*, endpoints** : les treize refus et les deux succès de la section, chacun au corps exact. En SQL, `'https://evil.example\.notify.windows.com/x'` s'écrit tel quel (`standard_conforming_strings`), et les 2 000 caractères CJK par `(select string_agg(chr(19968 + n), '') from generate_series(1, 2000) n)`. Après les refus, aucune ligne de A.
   - Abonnement :
     - deux appels de A avec E1 → une seule ligne ;
     - 10 abonnements de A posés à la main, aux `created_at = now() - make_interval(mins => n)` pour n de 1 à 10, puis un 11ᵉ par `push_subscribe` → 10 lignes, et celle de n = 10 a disparu ;
     - `push_unsubscribe(A, <inconnu>)` → `{"ok": true}`.
   - ***Review Focus*, navigateur partagé** :
-    - A s'abonne avec E, puis B avec E → une ligne, `user_id` = B ;
-    - A et B ont `trade_received` ;
-    - une notification pour A → 0 ligne d'outbox, une pour B → 1 ;
+    - A s'abonne avec E et a `trade_received` ; une notification pour A → une ligne d'outbox ;
+    - B s'abonne avec E → une ligne, `user_id` = B ; `push_claim()` consomme la ligne posée pour A sans la rendre → `[]` ;
+    - B a aussi `trade_received` ; une notification pour A → 0 ligne d'outbox, une pour B → 1 ;
     - `push_unsubscribe(A, E)` → `{"ok": true}`, et la ligne de B reste.
   - Trigger :
     - A abonné deux fois, `trade_received` activé ; C abonné sans ce type ; D non abonné. Une seule instruction insère 3 notifications `trade_received` (A, C, D) → exactement 2 lignes d'outbox, pour A ;
     - une notification de A au `created_at` vieux de 11 minutes → 0 ligne.
   - Atomicité : dans un bloc `begin … exception`, une notification pour A suivie de `raise exception` → l'outbox ne change pas.
+  - Erreur injectée au dernier effet de l'acceptation (M4-7 A ; Global Constraints, « un échec annule l'événement ») :
+    - A et B amis. A, l'initiateur, a activé `trade_accepted` (`notification_prefs_set`), a un abonnement (`push_subscribe`, endpoint `https://fcm.googleapis.com/fcm/send/vit`) et montre a1 (seule) en position 0 ;
+    - `t := wm.create_trade(A, B, pg_temp.items(A, array[a1])) ->> 'id'` ;
+    - `s := tests.trade_snapshot(t)`, avec `s ->> 'push_outbox' = '0'` : la `trade_received` va à B, qui n'est pas abonné ;
+    - par `execute format` : `create trigger zz_boom after insert on wm.push_outbox for each row when (new.subscription_id = '<abonnement de A>') execute function tests.boom()`. Ce trigger part après l'écriture de la ligne d'outbox ; un trigger de ligne sur `notifications` partirait avant le trigger d'instruction de l'outbox (mesuré sur PG16) ;
+    - `wm.trade_action(B, t, 'accept', null, 'k-out')` lève `XX000` « erreur injectée », et `tests.trade_snapshot(t) = s` ;
+    - trigger retiré, la même clé → `accepted`, `r ->> 'push_outbox' = '1'` et `r -> 'showcase' = '[]'`.
   - Réservation :
-    - 7 lignes d'outbox, dont une sur un abonnement supprimé ensuite ;
-    - `push_claim(3)` → 3 éléments, aux clés exactement les sept de l'interface, `endpoint` et `data` corrects ;
-    - `push_claim()` → les 3 autres ; la ligne orpheline est consommée sans être rendue ; un troisième appel → `[]` ;
+    - 7 lignes d'outbox ; la 4ᵉ par id pointe vers un abonnement supprimé ensuite ;
+    - `push_claim(3)` → les trois premières, aux clés exactement les sept de l'interface, `endpoint` et `data` corrects ;
+    - `push_claim()` → les 5ᵉ à 7ᵉ ; la 4ᵉ est consommée sans être rendue ; un troisième appel → `[]` ;
     - avec `maintenance` à `true`, `push_claim` passe.
   - `push_gone(array[s1, s2])` → 2, et les lignes ont disparu.
   - Santé :
@@ -672,15 +731,18 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - `push_wake_url` à `"https://exemple.invalid/api/cron/push"`, outbox vide → `null`, aucun appel ;
     - une ligne → `1`, et exactement un appel, à cette URL, avec `headers ->> 'x-cron-secret' = 'test-cron'` et `timeout_milliseconds = 10000` ;
     - une ligne vieille de 2 h → supprimée par l'appel, qui rend `null` s'il n'en reste pas ;
-    - vue `vault` sans la ligne → `null`, aucun appel.
-  - `10_wm_core.test.sql:126-130` élargi : `push_lag_s` présent et nul.
+    - vue `vault` sans la ligne → `null`, aucun appel ;
+    - secret illisible : `create function vault.deny() returns text language plpgsql as $$ begin raise exception using errcode = '42501'; end $$`, puis `create or replace view vault.decrypted_secrets as select 'CRON_SECRET'::text name, vault.deny() decrypted_secret`. Avec une ligne vieille de 2 h et une récente → `null`, aucun appel, aucune exception ; la ligne de 2 h a disparu, la récente reste. Un `revoke` ne prouverait rien, puisque le banc tourne en superutilisateur. Puis `drop view vault.decrypted_secrets` (42P01) → de même `null`, sans exception.
+  - `10_wm_core.test.sql:126-129` élargi : `push_lag_s` présent et nul.
+  - `27_market.test.sql:1195` : `"push_lag_s":null` ajouté au littéral (colonne de `cron.job` renommée, outbox lisible et vide). `:1201` : `"push_lag_s":86400` ajouté au littéral (fonction possédée par `authenticated`, sans `usage` sur `wm` : la lecture de l'outbox échoue dans son bloc, sans exception). Aucune autre ligne de ce bloc ne change.
+  - `lock_timeout` (P5) : le bloc de `29_social.test.sql` recopié dans `30_push.test.sql`, avec les marqueurs `public.push_subscriptions` et `wm.notification_prefs`, sur `push_subscribe`, `push_unsubscribe` et `notification_prefs_set`.
   - Volatilité : `notification_prefs_get` a `provolatile = 's'`.
 - [ ] **Step 2: Test de concurrence** (`18_social_concurrency.test.sh`, scénario 4, `skip locked`)
   - 1 000 lignes d'outbox ;
-  - la session 1 lance en arrière-plan `begin; select wm.push_claim(500)::text; select pg_sleep(1); commit;`, et le test attend son `PgSleep` ;
+  - la session 1 lance en arrière-plan `begin; select wm.push_claim(500)::text; select pg_sleep(1); commit;`, et le test attend son `PgSleep` (`blocker=$!`, puis `sleeping`) ; la durée de la session 2 est lue par `ms` ;
   - la session 2 lance `select wm.push_claim(500)`.
   Attendu : la session 2 rend 500 éléments en moins de 0,5 s ; les deux ensembles sont disjoints, et leur union fait 1 000 `notification_id`.
-- [ ] **Step 3: `npm run test:db`** → `FAIL 30_push.test.sql` et `FAIL 10_wm_core.test.sql`.
+- [ ] **Step 3: `npm run test:db`** → `FAIL 10_wm_core.test.sql`, le premier échec : le banc s'arrête là (`scripts/db-test.sh:68-70`), et `27_market.test.sql` et `30_push.test.sql` ne sont pas atteints. `30_push.test.sql` est éprouvé rouge seul : `bash scripts/db-test.sh --setup-only` imprime `DATABASE_URL=…`, puis `psql "<cette URL>" -qX -v ON_ERROR_STOP=1 -c begin -f supabase/tests/30_push.test.sql -c rollback` → erreur, puis `bash scripts/db-test.sh --stop`.
 - [ ] **Step 4: Implémenter `1840` et `9020`**, et modifier `health.yml`. Relire `9020` : aucune fonction `wm`, et `node scripts/check-dml.ts` ne signale rien.
 - [ ] **Step 5: Contrôles complets** → vert ; `contract/spec/health.ts` reste vert (`loose`).
 - [ ] **Step 6: Commit** — `feat(db): push (préférences opt-in par type, abonnements à liste blanche, outbox remplie dans la transaction de la notification, réservation skip locked, réveil pg_net conditionnel, push_lag_s dans la santé)`
@@ -691,14 +753,14 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 
 **Files:**
 - Create: `supabase/migrations/1850_wm_catalog_friends.sql`
-- Modify: `supabase/tests/29_social.test.sql`, `components/card/Card.tsx:139-146`, `components/card/Card.test.tsx:104-110`, `app/(game)/global-collection/global-client.tsx:237` (et son type de page), `contract/spec/catalog.ts`, `e2e/global-collection.spec.ts`
+- Modify: `supabase/tests/29_social.test.sql`, `components/card/Card.tsx:139-146`, `components/card/Card.test.tsx:104-110`, `app/(game)/global-collection/global-client.tsx:237` (et son type de page), `contract/spec/catalog.ts`, `e2e/global-collection.spec.ts`, `e2e/a11y.spec.ts`
 
 **Interfaces:**
 - Consumes : `wm.cards_overlay` (`1520_wm_catalog_pages.sql:76-85`), `wm.are_friends`, `friendships_requester_idx`, `friendships_addressee_idx` et `user_cards_card_user_idx`.
 - Produces :
   - `wm.cards_overlay(p_uid uuid, p_card_ids uuid[]) returns jsonb` : même signature et mêmes clés. `friendOwners` = `{<card_id>: [{id, username}]}` : pour chaque carte possédée par au moins un ami accepté, au plus `list_caps.friend_owners` amis, par `lower(username), id`. Profil privé compris, soi exclu ; une carte sans ami possesseur n'a pas de clé. Le `shortcut:` de `1520:83` disparaît.
-  - `Card` : la prop `friendOwner?: string` est inchangée. Le `span.rounded-full.bg-sky-300/65` du contrat (R:126) est enveloppé dans un `Link` (`next/link`) vers `` `/profile/${encodeURIComponent(friendOwner)}` ``. Le lien porte la classe `relative z-10`, pour se peindre au-dessus du bouton `absolute inset-0` du `h3` (`Card.tsx:135`), et son `onClick` fait `e.stopPropagation()`, pour ne pas ouvrir la modale de la racine (`Card.tsx:64`). Son nom accessible est « Profil de {pseudo} ». Le `shortcut:` de `Card.tsx:140` disparaît.
-  - `global-client.tsx` : `friendOwners: Record<string, { id: string; username: string }[]>` lu dans la page, et `friendOwner={page.friendOwners[c.id]?.[0]?.username}`.
+  - `Card` : la prop `friendOwner?: string` est inchangée. Le `span.rounded-full.bg-sky-300/65` du contrat (R:126) est enveloppé dans un `Link` (`next/link`) vers `` `/profile/${encodeURIComponent(friendOwner)}` ``. Le lien porte les classes `relative z-10 inline-flex min-h-11 min-w-11 max-w-full items-end -mt-7`. `relative z-10` le peint au-dessus du bouton `absolute inset-0` du `h3` (`Card.tsx:135`). Les autres portent sa boîte à 44 × 44 px au moins (D:751) : elle monte de 28 px sur la description, la pastille, inchangée, reste en bas de cette boîte, à sa place actuelle, et `div.mt-auto` garde sa hauteur ; `min-w-11` sert aux pseudos de 3 caractères (C28 : « ili » fait 35 px de large). Un `<a>` en ligne autour de la pastille ferait 20 px de haut et lèverait `target-size` (wcag22aa, *serious*), que demande `e2e/a11y.spec.ts:12`. Coût accepté : un clic sur ces 28 px de description ouvre le profil, comme le `::after` de l'étoile agrandit sa cible (`Card.tsx:112`). Son `onClick` fait `e.stopPropagation()`, pour ne pas ouvrir la modale de la racine (`Card.tsx:64`). Son nom accessible est « Profil de {pseudo} ». Le `shortcut:` de `Card.tsx:140` disparaît.
+  - `global-client.tsx` : `type CardsPage` (`:18`) gagne `friendOwners: Record<string, { id: string; username: string }[]>`, et la grille (`:237`) passe `friendOwner={data?.friendOwners[c.id]?.[0]?.username}` (`data` est la réponse, `page` le numéro de page).
 
 - [ ] **Step 1: Tests qui échouent**
   - `29_social.test.sql` :
@@ -706,10 +768,11 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - `wm.cards_overlay(A, array[X, Y, Z, W]) -> 'friendOwners'` = exactement `{X: [B, C], Y: [les trois premiers de B, C, D, E par lower(username), id]}`, chaque entrée `{id, username}` ;
     - E au profil privé reste compté ;
     - `wm.cards_overlay(F, array[Z])` → `{"ownedCardIds":[Z],"wishlistCardIds":[],"friendOwners":{}}` ;
-    - `24_catalog.test.sql:193` reste vert.
-  - `Card.test.tsx` : `friendOwner="Élise Ü"` → un `<a href="/profile/%C3%89lise%20%C3%9C"` qui contient le `span` de classe `rounded-full bg-sky-300/65` et le texte « Élise Ü ».
+    - `24_catalog.test.sql:189-194` reste vert (un joueur sans ami garde `friendOwners` `{}`).
+  - `Card.test.tsx` : `friendOwner="Élise Ü"` → un `<a href="/profile/%C3%89lise%20%C3%9C"` qui contient le `span` de classe `rounded-full bg-sky-300/65` et le texte « Élise Ü » ; avec `friendOwner="ili"`, le `<a>` porte `min-h-11` et `min-w-11`.
   - `contract/spec/catalog.ts`, nouveau cas : un joueur et son ami (`befriend` de `friends.ts`). La page 0 de `/api/cards` est lue d'abord, puis l'ami reçoit sa première carte par psql (une ligne `user_cards`). Une nouvelle lecture → `friendOwners[<id>]` = `[{id, username}]` de l'ami, et les autres clés de la page sont inchangées.
-  - `e2e/global-collection.spec.ts` : un ami possède la première carte de la page → sa pastille est un lien au `href` exact. Un clic dessus change l'URL en `/profile/<pseudo encodé>`, sans ouvrir la modale de carte (aucun `role="dialog"`). Le h1 de cette page est vérifié à la Task 11.
+  - `e2e/global-collection.spec.ts` : un ami possède la première carte de la page → sa pastille est un lien au `href` exact, qui mesure au moins 44 px dans les deux sens (`Math.min(width, height)` de `getBoundingClientRect()`, comme `e2e/shell.spec.ts:48-50`). Avant le clic, `await hydrated(pastille)` (`e2e/fixtures.ts:56-58`) : sans hydratation, le clic recharge la page sans gestionnaire, et le cas passerait sans `stopPropagation`. Après le clic, l'URL est `/profile/<pseudo encodé>`, puis `page.goBack()` → toujours aucun `role="dialog"` : la page quittée reste montée et cachée sous Activity (`cacheComponents`), et une modale ouverte à tort n'apparaît qu'au retour. Le h1 du profil est vérifié à la Task 11.
+  - `e2e/a11y.spec.ts`, nouveau cas `axe /global-collection, pastille d'un ami` : un ami (`makePlayer`, puis `befriend`) possède `Article d'essai n° 0001`, en tête du catalogue (insertion `user_cards` comme `e2e/global-collection.spec.ts:21-23`) ; attendre `main a[href^="/profile/"]`, puis `expectNoSeriousViolations` → 0 violation grave ; les deux `auth.users` supprimés dans un `finally`.
 - [ ] **Step 2: `npm test && npm run test:db`** → échec.
 - [ ] **Step 3: Implémenter.**
 - [ ] **Step 4: Contrôles complets** → vert.
@@ -741,7 +804,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - `ProfileResponse` = `z.strictObject({ profile, isOwn, isFriend, friendship: z.strictObject({ id, status, requester_id }).nullable() })` ;
     - `ShowcaseItem` et `Showcase` (`z.strictObject`) ;
     - huit `RouteSpec`, `source: 'R§3.7'`, `confidence: 'prob.'` ;
-    - aide `imageCopy(env, uid)` (psql `tests.image_card`, puis une copie), exportée pour `chat.ts` et les specs suivantes.
+    - aide `imageCopy(env, uid)` (psql `tests.image_card` au titre unique du B11, puis une copie), exportée pour `chat.ts` et les specs suivantes.
 
 - [ ] **Step 1: Specs de contrat qui échouent** (chaque erreur au corps entier par `refused`)
   - `GET /api/profile/{u}` :
@@ -797,7 +860,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - `GET /api/chat` : `route({ fn: 'chat_conversations' })` ;
     - `GET /api/chat/{peerId}` : `fn: 'chat_thread'`, `params: PeerParams` ;
     - `POST /api/chat/{peerId}` : `fn: 'chat_send'`, `params: PeerParams`, `input: ChatBody`, `idem: true`, `status: 201`. `push: true` s'y ajoute à la Task 10.
-  - `contract/spec/chat.ts` : `Message`, `Conversation`, `Thread` en `z.strictObject` (B2, M4b-9) ; trois `RouteSpec`, `R§3.7`, `prob.`.
+  - `contract/spec/chat.ts` : `Message`, `Conversation`, `Thread` en `z.strictObject` (B2, M4b-9) ; trois `RouteSpec`, `R§3.7`, `prob.`. Le 201 du `POST` se lit par une aide locale `created<T>(res: Response, schema: z.ZodType<T>): Promise<T>`, sur le modèle de `contract/spec/market.ts:49-53` (statut vérifié avant `JSON.parse`, avec les 500 premiers caractères du corps) : `ok()` attend 200 (`contract/users.ts:92-94`) et ne change pas.
   - `contract/spec/rest.ts` : `rest/v1/chat_messages` en `PATCH` (`R§3.7`, `prob.`), `POST` et `DELETE` (`inc.`, refus).
 
 - [ ] **Step 1: Specs de contrat qui échouent**
@@ -836,6 +899,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   - `lib/route.ts:80-94` et `:133-135` (option `push`), `lib/route.test.ts` ;
   - `lib/notifications.ts` : `notificationView` réexporté, `lib/notifications.test.ts` (cas `chat_message`) ;
   - `app/api/cron/revalidate/route.ts` (`cronDenied`) ;
+  - `lib/market-cache.ts` : le `shortcut:` du B6, inséré juste au-dessus de `export async function sharedAuction` (`:36`), au texte exact `// shortcut: le règlement paresseux de ce détail insère des notifications sous 'use cache: remote', donc sans after() ; leur push part au drain suivant (réveil de 15 s sur la démo, after() d'une autre route ou cron) ; sortir le règlement du cache si ce délai gêne.` ;
   - les huit routes du B6 (`push: true`) ;
   - `lib/schemas.ts` (`PushSubscriptionBody`, `PushEndpoint`, `PushTypes`), définis ci-dessous ;
   - `contract/harness.ts:83-131` (faux service), `:223-239` (VAPID) ;
@@ -845,23 +909,26 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 - Consumes : `wm.push_claim`, `wm.push_gone`, `wm.push_subscribe`, `wm.push_unsubscribe`, `wm.notification_prefs_get` et `wm.notification_prefs_set` (Task 6) ; `createAdminClient` (`lib/supabase/admin.ts`) ; `brand` (`lib/brand.ts:23`).
 - Produces :
   - `lib/notification-view.ts` (B4) :
-    - `notificationView` déplacé tel quel, plus `case 'chat_message': return { text: \`${u} t'a écrit\`, href: \`/dms?with=${data.user_id}\` }` ;
+    - `notificationView({ type, data }: Pick<Notification, 'type' | 'data'>)` déplacé, plus `case 'chat_message': return { text: \`${u} t'a écrit\`, href: \`/dms?with=${data.user_id}\` }`. Seul le type d'entrée change, et les appelants passent toujours une `Notification` entière. `type Notification` déménage avec la fonction, et `lib/notifications.ts` réexporte les deux (`NotificationPanel.tsx:12` inchangé) ;
     - `PUSH_FAMILIES: readonly { label: 'Messages' | 'Échanges' | 'Amis' | 'Marché'; types: readonly string[] }[]` ;
     - `pushTypes(): string[]`, les 13 types triés.
-  - `lib/vapid.ts` : `vapidConfig(): { subject: string; publicKey: string; privateKey: string } | null`. `null` si `VAPID_PRIVATE` ou `VAPID_SUBJECT` manque. `publicKey` est dérivée (M4b-14).
+  - `lib/vapid.ts` : `vapidConfig(): { subject: string; publicKey: string; privateKey: string } | null`. Elle rend `null`, sans jamais lever (la dérivation est dans un `try`), dans quatre cas, qui reprennent les contrôles de `vapid-helper.js:68-133` : `VAPID_PRIVATE` absente ou hors de `/^[A-Za-z0-9_-]{43}$/` ; `VAPID_SUBJECT` absent ; `VAPID_SUBJECT` dont `new URL(…).protocol` n'est ni `https:` ni `mailto:`, ou que `new URL` refuse ; une dérivation qui lève. `publicKey` est toujours dérivée de `VAPID_PRIVATE` (M4b-14) : `VAPID_PUBLIC` n'est jamais lue, même posée.
   - `lib/push.ts` (`import 'server-only'`, B7) :
-    - `pushPayload(n: { notification_id: string; type: string; data: Record<string, unknown> }): { title: string; body: string; url: string; tag: string }` (B8) ;
-    - `drainPush(): Promise<{ sent: number; gone: number; failed: number } | null>`. Sans `vapidConfig()`, c'est `null`, sans aucune RPC. Sinon : `push_claim` avec `p_limit: 500`, puis des vagues de 50 par `Promise.allSettled`, chaque envoi `webpush.generateRequestDetails(…)` puis `fetch(endpoint, { method: 'POST', headers, body, signal: AbortSignal.timeout(5000) })`. Un 2xx compte `sent`, un 404 ou 410 `gone`, le reste et les rejets `failed`. Un seul `push_gone` sur les `subscription_id` dédoublonnés. Une ligne de journal `{"push":{"claimed":n,"sent":n,"gone":n,"failed":n}}`, sans endpoint ni uid. Le `shortcut:` du M4b-19 y figure.
+    - `pushPayload(n: { notification_id: string; type: string; data: Record<string, unknown> }): { title: string; body: string; url: string; tag: string }` (B8), qui passe `n` tel quel à `notificationView` ;
+    - `drainPush(): Promise<{ sent: number; gone: number; failed: number } | null>`. Sans `vapidConfig()`, c'est `null`, sans aucune RPC. Sinon : `push_claim` avec `p_limit: 500`, puis des vagues de 50 par `Promise.allSettled`. Chaque envoi est une fonction `async (row) => { … }` qui va de `pushPayload` à `fetch` : `pushPayload(row)`, `webpush.generateRequestDetails(…)`, puis `fetch(endpoint, { method: 'POST', headers, body: new Uint8Array(details.body), redirect: 'error', signal: AbortSignal.timeout(5000) })` (B8, B9). Jamais de `map` synchrone : `generateRequestDetails` lève de façon synchrone sur une `p256dh` hors de la courbe (`encryption-helper.js:15` ne contrôle que la longueur), et la levée sortirait d'`allSettled` en emportant toute la réservation. Une redirection rejette l'appel, compté `failed`. Un 2xx compte `sent`, un 404 ou 410 `gone`, le reste et les rejets `failed`. Un seul `push_gone` sur les `subscription_id` dédoublonnés. Une ligne de journal `{"push":{"claimed":n,"sent":n,"gone":n,"failed":n}}`, sans endpoint ni uid. Le `shortcut:` du M4b-19 y figure.
   - `lib/cron.ts` : `cronDenied(req: Request): Response | null`, avec les chaînes et le temps constant de `app/api/cron/revalidate/route.ts:5-16`.
   - `route()` gagne `push?: boolean`. Sur un succès seulement (`out.status === ok`), elle appelle `after(async () => { try { await (await import('@/lib/push')).drainPush() } catch { console.error(JSON.stringify({ push: 'drain_failed' })) } })`.
   - Routes :
-    - `POST /api/push/subscribe` : `fn: 'push_subscribe'`, `input: PushSubscriptionBody` = `z.object({ endpoint: z.url().max(2048), keys: z.object({ p256dh: z.string().regex(/^B[A-Za-z0-9_-]{85}[AEIMQUYcgkosw048]$/), auth: z.string().regex(/^[A-Za-z0-9_-]{21}[AQgw]$/) }) })`, chaque refus en « Abonnement push invalide », `idem: true`. Les expressions disent la taille sans `Buffer`, puisque `lib/schemas.ts` part aussi au navigateur. 65 octets font 87 caractères base64url sans remplissage, le premier `B` (0x04) et le dernier porteur de 4 bits ; 16 octets font 22 caractères, le dernier porteur de 2 bits ;
+    - `POST /api/push/subscribe` : `fn: 'push_subscribe'`, `input: PushSubscriptionBody` = `z.object({ endpoint: z.url().max(2048), keys: z.object({ p256dh: z.string().regex(/^B[A-Za-z0-9_-]{85}[AEIMQUYcgkosw048]$/), auth: z.string().regex(/^[A-Za-z0-9_-]{21}[AQgw]$/) }) })`, chaque refus en « Abonnement push invalide », `idem: true` ; `pre` : `ECDH.convertKey(keys.p256dh, 'prime256v1', 'base64url')` (`node:crypto`), qui lève sur un point hors de la courbe → `fail(400, 'Abonnement push invalide', 'invalid_request')`, le corps d'un refus zod. Ce contrôle est dans la route, pas dans `lib/schemas.ts`, qui part au navigateur. Les expressions disent la taille sans `Buffer`, puisque `lib/schemas.ts` part aussi au navigateur. 65 octets font 87 caractères base64url sans remplissage, le premier `B` (0x04) et le dernier porteur de 4 bits ; 16 octets font 22 caractères, le dernier porteur de 2 bits ;
     - `DELETE /api/push/subscribe` : `fn: 'push_unsubscribe'`, `input: PushEndpoint = z.object({ endpoint: z.url().max(2048) })`, `idem: true` ;
     - `GET` et `POST /api/settings/notifications` : `fn: 'notification_prefs_get'` et `'notification_prefs_set'` (`input: PushTypes = z.object({ push_types: z.array(pgText).max(20) })`, `idem: true`), avec `call` qui ajoute `vapid_public: vapidConfig()?.publicKey ?? null` au corps d'un succès ;
     - `POST /api/cron/push` (`export const maxDuration = 60`) : `cronDenied`, puis `drainPush()`. `null` → 503 `push_disabled` « Notifications push non configurées. » ; une exception → 500 `INTERNAL` ; sinon 200 `{sent, gone, failed}`.
   - Harnais :
     - `startNext` pose `VAPID_PRIVATE` et `VAPID_SUBJECT: 'mailto:push@example.invalid'`. La paire vient de `webpush.generateVAPIDKeys()`, une fois au chargement du module : la même pour les deux serveurs du run, jamais écrite ni imprimée ;
-    - la passerelle sert `POST /push/<id>`, `POST /push/gone/<id>` et `GET /push/<id>` (M4b-32) ;
+    - la passerelle sert `POST /push/<id>`, `POST /push/gone/<id>` et `GET /push/<id>` (M4b-32), avant la recherche d'`UPSTREAMS` :
+      - le corps est lu en `Buffer` (`req.on('data', (c: Buffer) => chunks.push(c))`, puis `Buffer.concat(chunks)`), jamais par `setEncoding('utf8')` comme Turnstile : le corps aes128gcm est binaire, et une relecture en UTF-8 le corrompt ;
+      - `POST /push/<id>` ajoute `{headers: req.headers, body_b64: body.toString('base64')}` aux livraisons de `<id>` et répond 201 ; `POST /push/gone/<id>` répond 410 sans rien garder ;
+      - `GET /push/<id>` rend `{deliveries: [{headers, body_b64}]}`, dans l'ordre d'arrivée et vide pour un id inconnu, avec les en-têtes de Node en minuscules. La spec décode par `Buffer.from(body_b64, 'base64')` avant `decryptPush` ;
     - `export const PUSH_SINK = \`${SUPABASE_URL}/push\``.
   - `contract/push-crypto.ts` :
     - `decryptPush(body: Buffer, ua: ECDH, auth: Buffer): string` : en-tête RFC 8188 §2, puis RFC 8291 §3.3-3.4 ;
@@ -872,58 +939,58 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   - `contract/push-crypto.test.ts` :
     - `webpush.encrypt(<p256dh>, <auth>, 'é ok', 'aes128gcm')`, puis `decryptPush` → `'é ok'` ; un octet du corps changé → lève ;
     - `verifyVapid` sur les en-têtes de `webpush.getVapidHeaders('http://127.0.0.1:54321', 'mailto:push@example.invalid', pub, priv, 'aes128gcm')` → `aud` = `'http://127.0.0.1:54321'` ; avec une autre clé publique → lève.
-  - `lib/push.test.ts` (admin simulé comme `lib/route.test.ts:7-11`, `fetch` par `vi.stubGlobal`, `VAPID_*` posées par `vi.stubEnv`) :
-    - sans `VAPID_SUBJECT` → `null`, et `push_claim` n'est pas appelée ;
+  - `lib/push.test.ts` : `vi.mock('server-only', () => ({}))` en tête, puisque le paquet lève hors de la condition `react-server` et que `lib/push.ts` l'importe lui-même ; puis l'admin simulé comme `lib/route.test.ts:7-11`, `fetch` par `vi.stubGlobal`, `VAPID_*` posées par `vi.stubEnv` :
+    - sans `VAPID_SUBJECT` → `null`, et `push_claim` n'est pas appelée ; de même avec une `VAPID_PRIVATE` valide suivie de `\n`, puis avec `VAPID_SUBJECT` = `http://x` : `vapidConfig()` et `drainPush()` rendent `null` ;
     - `vapidConfig().publicKey` = le `publicKey` de `generateVAPIDKeys()` pour sa clé privée ;
     - 120 lignes → `fetch` appelé 120 fois, jamais plus de 50 en vol (compteur dans le faux `fetch`) ;
     - statuts 201, 404, 410, 500 et un rejet `AbortError` → `{sent: 1, gone: 2, failed: 2}`, et `push_gone` appelée une fois avec les deux ids ;
-    - chaque appel de `fetch` : `method` `POST`, en-têtes `Content-Encoding: aes128gcm`, `TTL: '86400'`, `Authorization` qui commence par `vapid t=`, aucun `Content-Length`, et un `signal` ;
+    - trois lignes, dont une au `p256dh` `'B' + 'A'.repeat(86)` (0x04 puis 64 zéros, hors de la courbe, mais conforme à l'expression), et `fetch` → 201 → `{sent: 2, gone: 0, failed: 1}`, et `fetch` appelé 2 fois ;
+    - chaque appel de `fetch` : `method` `POST`, `redirect` `'error'`, un `body` en `Uint8Array`, en-têtes `Content-Encoding: aes128gcm`, `TTL: '86400'`, `Authorization` qui commence par `vapid t=`, aucun `Content-Length`, et un `signal` ;
     - `pushPayload` d'une `chat_message` → `{title: brand.name, body: '<u> t\'a écrit', url: '/dms?with=<id>', tag: 'dm:<id>'}` ; d'un `trade_received` → `tag` = l'id de la notification.
-  - `lib/route.test.ts` (`vi.mock('next/server', …)` qui capture `after`, et `vi.mock('@/lib/push')`) :
+  - `lib/route.test.ts` : `vi.mock('next/server', async (importOriginal) => ({ ...(await importOriginal<typeof import('next/server')>()), after: vi.fn() }))`, qui garde le vrai `NextRequest` (`lib/route.test.ts:2`). `after` se lit par `import { NextRequest, after } from 'next/server'` et `vi.mocked(after)`, jamais par un `const` cité dans la fabrique, que l'import statique appellerait avant son initialisation. Puis `vi.mock('@/lib/push', () => ({ drainPush: vi.fn() }))`, avec une fabrique : sans elle, vitest importe le module d'origine, qui charge `server-only` et lève :
     - `push: true` et un succès → `after` une fois, puis `drainPush` appelé ;
     - un P0001 → `after` jamais ;
     - sans `push` → jamais ;
     - un `drainPush` rejeté ne lève pas.
-  - `app/api/cron/push/route.test.ts` : `CRON_SECRET` absent → 503 `cron_disabled` ; mauvais secret → 401 ; `drainPush` → `null` → 503 `{code: 'push_disabled', error: 'Notifications push non configurées.', message: …}` ; `{sent: 1, gone: 0, failed: 0}` → 200, ce corps. `app/api/cron/revalidate/route.test.ts` reste vert.
+  - `app/api/cron/push/route.test.ts` (le même `vi.mock('@/lib/push', () => ({ drainPush: vi.fn() }))`, par une fabrique) : `CRON_SECRET` absent → 503 `cron_disabled` ; mauvais secret → 401 ; `drainPush` → `null` → 503 `{code: 'push_disabled', error: 'Notifications push non configurées.', message: …}` ; `{sent: 1, gone: 0, failed: 0}` → 200, ce corps. `app/api/cron/revalidate/route.test.ts` reste vert.
   - `lib/notifications.test.ts` :
     - `chat_message` → `{text: 'Alice t\'a écrit', href: '/dms?with=<id>'}` ;
-    - `PUSH_FAMILIES` aplati et trié = `pushTypes()` = la liste littérale des 13 types, la même que `wm.config.push_types` (Task 2) ;
+    - `PUSH_FAMILIES` aplati et trié = `pushTypes()` = la valeur de `push_types` lue dans `supabase/migrations/1800_wm_social_core.sql` (`readFileSync(new URL('../supabase/migrations/1800_wm_social_core.sql', import.meta.url), 'utf8')`, comme `lib/contrast.test.ts:4`, puis `/'push_types',\s*'(\[[^']*\])'/` et `JSON.parse`) ;
     - chaque type a un texte autre que « Nouvelle notification ».
 - [ ] **Step 2: Specs de contrat qui échouent** (`contract/spec/push.ts`, la preuve de D:1083 ; séquentiel)
   - Préparation :
-    - l'origine `http://127.0.0.1:54321` est ajoutée à `push_origins.origins` par psql, si elle manque ;
-    - pour chaque abonné : `createECDH('prime256v1').generateKeys()`, et `auth` = `randomBytes(16)` ;
-    - les livraisons d'un endpoint s'ajoutent dans l'ordre : chaque cas attend que leur nombre augmente, puis lit la dernière.
+    - chaque cas crée ses joueurs (`makeUser`) et ses abonnés par une aide `subscriber(env, types, endpoint = \`${PUSH_SINK}/${randomUUID()}\`)`. Elle ajoute l'origine `http://127.0.0.1:54321` à `push_origins.origins` par psql si elle manque, crée un joueur et ses clés (`createECDH('prime256v1').generateKeys()`, `auth` = `randomBytes(16)`), l'abonne à cet endpoint neuf, puis active `types` par `POST /api/settings/notifications`. Aucun état ne passe d'un cas à l'autre, comme dans `contract/spec/friends.ts:44-56` : l'ordre des cas est libre, un cas lancé seul (`-t`) passe, et « exactement une livraison » se lit directement sur un endpoint neuf ;
+    - les cas qui appellent le cron (« Push par le cron », « 410 ») font `delete from wm.push_outbox where true` (psql ; le contrat est séquentiel) juste avant leur insertion psql, pour que `{sent, gone, failed}` soit exact.
   - `POST /api/push/subscribe` :
     - `noSession` ;
     - `{endpoint: \`${PUSH_SINK}/<uuid>\`, keys}` → `{ok: true}` ;
-    - `p256dh` de 64 octets → 400 « Abonnement push invalide » ;
-    - `https://fcm.googleapis.com@evil.example/x` → 400 « Service de notifications non pris en charge » ;
+    - `p256dh` de 64 octets → 400 « Abonnement push invalide » ; `p256dh` `'B' + 'A'.repeat(86)` (hors de la courbe) → 400, le même corps ;
+    - `https://fcm.googleapis.com@evil.example/x`, puis `'https://evil.example\\.notify.windows.com/x'` et `'https:evil.example/x://a.notify.windows.com/'` (littéraux TypeScript, qui passent zod) → 400 « Service de notifications non pris en charge », et aucune ligne (psql) ;
     - même clé deux fois → corps identiques.
   - `GET /api/settings/notifications` : `noSession` ; → `{push_types: [], vapid_public}`, où `vapid_public` est une chaîne base64url de 87 caractères.
-  - `POST /api/settings/notifications` : `{push_types: ['friend_request', 'auction_won']}` → `{push_types: ['auction_won', 'friend_request'], vapid_public}` ; `['nope']` → 400 exact.
+  - `POST /api/settings/notifications` : `{push_types: ['friend_request', 'auction_won']}` → `{push_types: ['auction_won', 'friend_request'], vapid_public}` ; `['nope']` → 400 exact ; même `Idempotency-Key` deux fois → corps identiques.
   - **Push reçu par `after()`** :
-    - Bob fait `POST /api/friends {addressee_id: alice}`, sans aucun appel au cron ;
+    - Alice = `subscriber(env, ['friend_request'])`, et Bob, neuf, fait `POST /api/friends {addressee_id: alice}`, sans aucun appel au cron ;
     - `GET ${PUSH_SINK}/<uuid>` relu toutes les 100 ms, au plus 5 s → exactement une livraison ;
     - en-têtes `content-encoding: aes128gcm`, `ttl: 86400`, `urgency: normal` ;
     - `verifyVapid(authorization, vapid_public)` → `aud` = `'http://127.0.0.1:54321'`, `sub` = `'mailto:push@example.invalid'`, `exp` dans `(now, now + 86 400]` ;
     - `JSON.parse(decryptPush(…))` = `{title: brand.name, body: '<pseudo de Bob> veut devenir ton ami', url: '/friends', tag: <id de la notification>}`.
-  - **Type non activé** : Carol fait `POST /api/friends` vers Dave, abonné sans `friend_request` → aucune livraison dans les 2 s, et aucune ligne d'outbox pour Dave (psql).
+  - **Type non activé** : Dave = `subscriber(env, ['auction_won'])` ; Carol, neuve, fait `POST /api/friends` vers Dave → aucune livraison dans les 2 s, et aucune ligne d'outbox pour Dave (psql).
   - **Push par le cron** :
-    - le dernier appel HTTP avant cette étape est `POST /api/settings/notifications` (sans `push`), pour qu'aucun `after()` ne réserve la ligne ;
-    - psql insère une `auction_won` pour Alice → une ligne d'outbox ;
+    - un abonné posé dans le cas, `subscriber(env, ['auction_won'])`, dont l'appel `POST /api/settings/notifications` (sans `push`) reste le dernier appel HTTP avant psql : aucun `after()` ne réserve la ligne ;
+    - l'outbox vidée, psql insère une `auction_won` pour cet abonné → une ligne d'outbox ;
     - `POST /api/cron/push` avec `x-cron-secret: CRON_SECRET` → 200 `{sent: 1, gone: 0, failed: 0}`, et la livraison déchiffrée a pour `body` « Tu as remporté … ».
-  - **410** : Erin s'abonne à `${PUSH_SINK}/gone/<uuid>` et active `auction_won` ; psql insère une notification ; le cron → `{sent: 0, gone: 1, failed: 0}`, et l'abonnement d'Erin a disparu (psql).
+  - **410** : Erin = `subscriber(env, ['auction_won'], \`${PUSH_SINK}/gone/${randomUUID()}\`)` ; l'outbox vidée, psql insère une notification ; le cron → `{sent: 0, gone: 1, failed: 0}`, et l'abonnement d'Erin a disparu (psql).
   - `POST /api/cron/push` : sans secret, puis avec un mauvais secret → 401 `cron_unauthorized` ; serveur à porte, sans cookie de porte, bon secret → 200.
-  - `DELETE /api/push/subscribe` : `noSession` ; `{endpoint}` d'Alice → `{ok: true}`, et la ligne a disparu ; un endpoint inconnu → `{ok: true}`.
+  - `DELETE /api/push/subscribe` : `noSession` ; l'endpoint d'un abonné posé dans le cas → `{ok: true}`, et sa ligne a disparu (psql) ; un endpoint inconnu → `{ok: true}` ; même `Idempotency-Key` deux fois → `{ok: true}` les deux fois, et la ligne a disparu.
   - Le contenu d'un message n'est jamais dans la charge :
-    - la demande de Bob est acceptée par psql (`update public.friendships set status = 'accepted'`), et Alice active `chat_message` ;
+    - Alice = `subscriber(env, ['chat_message'])` et Bob, neuf, sont amis par `befriend` (`contract/spec/friends.ts:28`) ;
     - Bob écrit « secret 42 » à Alice (`POST /api/chat/<alice>`, `push: true`) → une livraison, dont la charge déchiffrée a `body` « <Bob> t'a écrit », `tag` `dm:<bob>`, et ne contient pas « secret ».
   - `index.ts` ajoute `...push`.
 - [ ] **Step 3: `npm test && npm run build:test && npm run test:contract`** → échec.
 - [ ] **Step 4: Implémenter.** Installer par `npm install --save-exact web-push@3.6.7 && npm install --save-dev --save-exact @types/web-push@3.6.4`, puis vérifier que `package.json` n'a ni `^` ni `~`. `.env.example` :
-  - `VAPID_PUBLIC=` devient facultatif, avec le commentaire « dérivée de VAPID_PRIVATE si vide » ;
-  - `VAPID_SUBJECT=` s'ajoute, avec « https: ou mailto: ; sans lui, le push est coupé ».
+  - `VAPID_PUBLIC=` garde sa ligne, avec le commentaire « ignorée : la clé publique est toujours dérivée de VAPID_PRIVATE (M4b-14) » ;
+  - `VAPID_SUBJECT=` s'ajoute, avec « https: ou mailto: ; sans lui, ou mal formé, le push est coupé ».
   Si Turbopack ne parvient pas à empaqueter `web-push`, ajouter la ligne `serverExternalPackages: ['web-push']` à `next.config.ts` et la consigner.
 - [ ] **Step 5: Contrôles complets** → vert ; `coverage:recap` reste à 66 (routes ajoutées hors du récap).
 - [ ] **Step 6: Commit** — `feat(push): envoi Web Push (web-push 3.6.7, generateRequestDetails puis fetch, vagues de 50, 410 qui désabonne), drain par after() et par /api/cron/push, abonnement et préférences ; push reçu, déchiffré et signé vérifié sur le faux service du banc`
@@ -941,43 +1008,48 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 - Produces :
   - `formatMonthYear(iso: string): string` = `Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' })`.
   - `components/profile/types.ts` : `type Profile`, `type ProfileView = { profile: Profile; isOwn: boolean; isFriend: boolean; friendship: { id: string; status: 'pending' | 'accepted'; requester_id: string } | null }`, `type CopyFace`, `type ShowcaseItem`, et `copyFace(c: CopyFace): CardFace`, qui pose `rarity = snapshot_rarity` (un autre nom que le `faceOf` de `CardModal.tsx:48`, qui lit une copie à soi).
-  - `page.tsx` : coquille, `metadata.title` « Profil », `<Suspense fallback={<Loading label="Chargement du profil" />}>`. Le client lit `username` par `useParams()` et se monte avec `key={username}`, sur le modèle de `app/(game)/trades/[id]/page.tsx`.
+  - `page.tsx` : coquille, `metadata.title` « Profil », `<Suspense fallback={<Loading label="Chargement du profil" />}>` autour de `ProfileView`, **sans `key`**, sur le modèle de `app/(game)/trades/[id]/page.tsx`. Dans le navigateur, chaque pseudo a sa propre instance, gardée par Activity (`create-segment-key.browser.js:19-20` : clé d'état `username|<valeur>|d`). Cachée, une page se rend pourtant avec les paramètres de la page visible (`app-router.js:329-334`, `:442-443`) : `ProfileView` fige donc le sien au montage, `const { username: u } = useParams<{ username: string }>()` puis `const [username] = useState(u)`. Une `key={username}` remonterait à vide le profil caché, avec sa modale et les détails saisis, dès que la page visible change ; le motif du dernier `with` non vide (`TradeComposer.tsx:48-55`) ne suffit pas, puisqu'un autre profil visible a lui aussi un pseudo.
+  - `useParams()` rend le segment **encodé** (`get-dynamic-param.js:58`) : `Élise Ü` arrive en `%C3%89lise%20%C3%9C`, `a%b` en `a%25b` et `x?y#z` en `x%3Fy%23z`. Les URL de l'API le reprennent tel quel (`` `/api/profile/${username}` ``, `…/showcase`, `…/collection`), sans second `encodeURIComponent`, sinon c'est un 404. Le h1, les toasts et `ReportModal` prennent `profile.username` dans la réponse, jamais le paramètre.
   - `ProfileView` :
     - `PageHeader` avec le pseudo en h1 (icône `User`, `wrap-anywhere`) et les actions à droite ;
-    - un bloc d'identité en `card-frame p-6` : avatar de 96 px `alt=""`, sinon l'initiale ; « Membre depuis {mois année} » ; la bio en `whitespace-pre-line wrap-anywhere` ; les six raretés de `rarityCounts` (`?stats=1`) ;
+    - un bloc d'identité en `card-frame p-6` : avatar de 96 px `alt=""`, sinon l'initiale ; « Membre depuis {mois année} » ; la bio en `whitespace-pre-line wrap-anywhere` ; la ligne des six raretés, tirée de `rarityCounts`, seulement quand la vue est permise ;
+    - lectures après le profil, seulement si la vue est permise (`isOwn || isFriend || profile.is_public`) : `GET /api/profile/{u}/showcase` et `GET /api/profile/{u}/collection?page=0&stats=1`, en parallèle. La seconde ne sert qu'à `rarityCounts` ; l'onglet « Collection » lit ses propres pages, sans `stats`. Une 403 de l'une ou l'autre, arrivée après un profil lisible, montre « Ce profil est réservé aux amis. ». Une lecture de la vitrine en échec montre l'alerte et « Réessayer » dans le panneau « Vitrine », le bloc d'identité restant affiché ;
     - actions :
       - soi : un lien « Modifier mon profil » ;
       - ami : « Message » (`/dms?with=<id>`), « Proposer un échange » (`/trades/new?with=<id>`), « Signaler » ;
       - non-ami, selon `friendship` : « Ajouter en ami », « Demande envoyée » (un `p` à `tabIndex={-1}`) ou « Accepter sa demande », plus « Signaler » ;
     - vue permise (`isOwn || isFriend || profile.is_public`) : des onglets `[role=tablist][aria-label="Vues du profil"]` « Vitrine » et « Collection », un seul panneau monté. Sinon un `card-frame` « Ce profil est réservé aux amis. », sans lecture de la vitrine ni de la collection ;
+    - « Vitrine » : les emplacements triés par `position`, chacun en `Card size="grid"` sans `owned`, et `CardModal` en mode catalogue au clic (`item = user_card.card`, l'objet `card` de B2, qui porte `id` et `wikipedia_url`, `CardModal.tsx:21-27`). C'est la modale qui donne l'auteur et la licence de l'image (D:101, D:726). Une vitrine vide affiche « Aucune carte en vitrine. » ;
     - « Collection » : une recherche `input type="search"` (« Rechercher dans sa collection »), `Pagination` en base 0, `Card size="grid"` sans `owned`, et `CardModal` en mode catalogue au clic ;
-    - une 403 de vitrine ou de collection, arrivée après un profil lisible, montre le texte « réservé aux amis » ;
-    - 404 ou 400 → h1 « Joueur introuvable » et « Retour aux amis » ; autre échec → `LoadError` ;
+    - 404 ou 400 → h1 « Joueur introuvable » et « Retour aux amis » ; autre échec, ou un 2xx sans `profile` lisible → `LoadError` ;
     - écritures : intentions `add:<id>` et `accept:<friendshipId>`, toasts de P19, puis le profil relu ;
-    - focus : « Demande envoyée » après l'ajout, « Message » après l'acceptation ; `data-ready` une fois le profil lu, avec la vitrine quand elle est lisible ;
+    - focus : « Demande envoyée » après l'ajout, « Message » après l'acceptation, et « Réessayer » selon les Global Constraints ; `data-ready` une fois le profil lu, avec ses lectures quand la vue est permise, ou en échec ;
     - aucun polling.
   - `ReportModal({ user, onClose }: { user: { id: string; username: string }; onClose: () => void })` :
-    - `Modal` au titre « Signaler {pseudo} » ; `GET /api/reports?reportedUserId=` à l'ouverture, pour préremplir ;
-    - un `fieldset` « Motif » à trois radios natives ; « Détails (facultatif) » en `maxLength={500}`, avec le compteur ;
+    - `Modal` au titre « Signaler {pseudo} » ; `GET /api/reports?reportedUserId=` à l'ouverture, pour préremplir. Lecture en échec (erreur, ou 2xx sans clé `report`) : à la place du formulaire, l'alerte « Impossible de charger cette page. » et « Réessayer », qui ramène le focus sur le titre de la modale (modèle `NotificationPanel.tsx:78-93`) ;
+    - un `fieldset` « Motif » (`legend`) à trois radios natives de même `name` (`reason`), dans l'ordre Triche, Contenu inapproprié, Spam : un seul arrêt de tabulation, et les flèches pour choisir ; « Détails (facultatif) » en `maxLength={500}`, avec le compteur ;
     - « Envoyer le signalement » ou « Modifier le signalement », en `aria-disabled` sans motif ou pendant l'envoi, plus « Annuler » ;
     - intention `JSON.stringify(body)` ; pendant l'envoi, le formulaire est figé, avec une garde dans `onChange` des radios, et Échap est refusé ;
-    - succès → toast, fermeture, focus rendu à « Signaler » ; refus → `role="alert"` dans la modale.
+    - succès → toast, fermeture, focus rendu à « Signaler » ; refus → `role="alert"` dans la modale ; issue incertaine → le texte du B12 dans la modale, la clé gardée.
 
 - [ ] **Step 1: Tests unitaires qui échouent** : `formatMonthYear('2026-10-15T12:00:00Z')` = `'octobre 2026'`.
 - [ ] **Step 2: Tests E2E qui échouent** (`e2e/profile.spec.ts`)
   - Soi : h1 = son pseudo, « Membre depuis » suivi du mois et de l'année, un lien « Modifier mon profil » au `href` `/profile`, et ni « Ajouter en ami » ni « Signaler ».
   - Inconnu public, avec une copie en vitrine (sql) :
-    - le panneau « Vitrine » montre sa `Card` ; « Collection » montre la grille et « Page 1 » ;
+    - le panneau « Vitrine » montre sa `Card`. Entrée sur le bouton de la carte (nom = son titre) → `getByRole('dialog')` au titre de la carte ; Échap → le focus revient sur ce bouton. « Collection » montre la grille et « Page 1 » ;
     - « Ajouter en ami » au clavier → toast « Demande envoyée à <pseudo>. », et `document.activeElement` a le texte « Demande envoyée ».
   - Inconnu privé : « Ce profil est réservé aux amis. », aucun onglet ; aucune requête `/showcase` ni `/collection` observée ; « Ajouter en ami » présent.
-  - Demande reçue (sql) : « Accepter sa demande » → toast « <pseudo> fait maintenant partie de tes amis. », puis les onglets apparaissent, et le focus est sur « Message ».
+  - Demande reçue (sql), d'un joueur passé en profil privé par `sql` (`is_public = false`) : d'abord aucun onglet. « Accepter sa demande » → toast « <pseudo> fait maintenant partie de tes amis. », puis les onglets et la ligne des raretés apparaissent, et le focus est sur « Message ».
   - Ami : « Message » mène à `/dms?with=<id>`, « Proposer un échange » à `/trades/new?with=<id>`.
   - Signalement, au clavier :
-    - « Signaler » → modale « Signaler <pseudo> », Tab jusqu'à « Spam », Espace, détails « pub », « Envoyer le signalement » → toast « Signalement envoyé. », et le focus revient sur « Signaler » ;
+    - « Signaler » → modale « Signaler <pseudo> », et la réponse de `GET /api/reports` attendue (`waitForResponse`, posé avant le clic). Tab jusqu'au groupe « Motif » : aucun motif n'étant coché, le focus arrive sur « Triche », seul arrêt de tabulation du groupe. Flèche bas deux fois → « Spam » coché et focalisé (dans un groupe de radios de même `name`, les flèches déplacent le focus en cochant). Tab → « Détails (facultatif) », saisie « pub » ; Tab → « Envoyer le signalement », puis Entrée → toast « Signalement envoyé. », et le focus revient sur « Signaler » ;
     - rouvrir → « Spam » coché, « pub », et le bouton « Modifier le signalement ».
-  - ***Review Focus*, pseudo hérité** : un joueur renommé par sql en `Élise Ü` → `page.goto('/profile/' + encodeURIComponent('Élise Ü'))` → h1 « Élise Ü ».
+  - ***Review Focus*, pseudo hérité** : un joueur renommé par sql en `Élise Ü`, puis `a%b`, puis `x?y#z` → `page.goto('/profile/' + encodeURIComponent(nom))` → le h1 est ce nom.
   - `/profile/<pseudo inconnu>` → « Joueur introuvable » et « Retour aux amis ».
-  - Erreur : `routeOnce(page, '**/api/profile/*', (r) => r.fulfill({ status: 500 }))` → `LoadError`, puis « Réessayer » → le profil.
+  - Lectures en échec, même boucle (`500`, `200 illisible`) :
+    - `routeOnce(page, '**/api/profile/*', (r) => r.fulfill(reply))` → « Impossible de charger cette page. » et « Réessayer », sans « Joueur introuvable » ; « Réessayer » → le h1 au pseudo, focalisé ;
+    - profil public lisible, `routeOnce(page, '**/api/profile/*/showcase', (r) => r.fulfill(reply))` → l'alerte et « Réessayer » dans le panneau « Vitrine », le bloc d'identité reste, et `main [data-ready]` est posé ; « Réessayer » → la `Card` de la vitrine ;
+    - la modale de signalement, `routeOnce(page, '**/api/reports*', (r) => r.fulfill(reply), (r) => r.request().method() === 'GET')` → l'alerte et « Réessayer » à la place du formulaire ; « Réessayer » → le groupe « Motif », et le focus sur le titre de la modale.
   - 360 px, avec un pseudo de 24 caractères et une bio d'un seul mot de 280 caractères : aucun défilement horizontal ; boutons d'au moins 44 px.
   - `e2e/a11y.spec.ts` : `axe /profile/<soi>`, `/profile/<ami>`, `/profile/<privé>`, et la modale de signalement ouverte → 0 violation grave. `READY` : `'main [data-ready]'` pour ces chemins.
 - [ ] **Step 3: `npm test && npm run build:test && PW_CHROMIUM_PATH=/opt/pw-browsers/chromium npx playwright test e2e/profile.spec.ts e2e/a11y.spec.ts`** → échec.
@@ -994,13 +1066,13 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 - Modify: `app/(game)/profile/page.tsx` (une coquille au lieu de `ComingSoon`), `e2e/profile.spec.ts`, `e2e/shell.spec.ts:94` (+ `/profile`), `e2e/a11y.spec.ts`
 
 **Interfaces:**
-- Consumes : `PATCH /api/profile/{u}`, `GET`, `PUT` et `DELETE /api/showcase` (Task 8) ; `GET /api/my-collection?page=&q=` ; `createBrowserSupabase` (lecture de sa ligne `profiles`, modèle `settings-client.tsx:46-51`) ; `showsImage` (`Card.tsx:46-48`) ; `Section`, sur le modèle de `settings-client.tsx:173-180`.
+- Consumes : `PATCH /api/profile/{u}`, `GET`, `PUT` et `DELETE /api/showcase` (Task 8) ; `GET /api/my-collection?page=&q=` ; `createBrowserSupabase` (lecture de sa ligne `profiles`, modèle `settings-client.tsx:46-51`) ; `showsImage` (`Card.tsx:46-48`) ; `Section`, recopiée de `settings-client.tsx:173-180` dans `profile-editor.tsx`, avec un id tiré de `useId()` (aucun id fixe sur `/profile`), et dont « Réessayer » focalise le titre par une ref ; `type Profile`, `type ShowcaseItem`, `type CopyFace` et `copyFace` (`components/profile/types.ts`, Task 11) pour les emplacements ; `type OwnedItem` et `faceOf` (`CardModal.tsx:29-55`) pour les copies du sélecteur, lues dans `/api/my-collection`.
 - Produces :
-  - `page.tsx` : coquille statique, `metadata.title` « Profil » (`navEntry('/profile')`). `ProfileEditor` rend lui-même `PageHeader` « Profil », sur le modèle de `FriendsClient`, et y ajoute le lien « Voir comme les autres » (`/profile/<moi>`) une fois son pseudo lu.
-  - `ProfileEditor` : la ligne `profiles` lue en direct (`username, bio, is_public, avatar_url, created_at`), puis `GET /api/showcase`. Quatre sections `card-frame p-6`, chacune avec son chargement, son échec, sa génération et sa garde `inflight` :
+  - `page.tsx` : coquille statique, `metadata.title` « Profil » (`navEntry('/profile')`). `ProfileEditor` rend lui-même `PageHeader` « Profil », sur le modèle de `FriendsClient`, et y ajoute le lien « Voir comme les autres » (`` `/profile/${encodeURIComponent(username)}` ``) une fois son pseudo lu.
+  - `ProfileEditor` : la ligne `profiles` lue en direct (`username, bio, is_public, avatar_url, created_at`), puis `GET /api/showcase`. Une ligne absente ou en `error`, ou un 2xx sans `showcase` lisible (`api()` rend `null`), est une lecture en échec. Chaque `PATCH` part vers `` `/api/profile/${encodeURIComponent(username)}` ``, `username` étant celui de sa ligne `profiles`, lu en clair. Quatre sections `card-frame p-6`, chacune avec son chargement, son échec, sa génération et sa garde `inflight` :
     - « Avatar » : l'avatar actuel en 96 px, « Changer l'avatar » (le sélecteur en mode avatar), et « Retirer l'avatar » s'il y en a un (`{avatar_user_card_id: null}`) ; toasts « Avatar changé. » et « Avatar retiré. » ;
     - « À propos » : un `textarea` (label « À propos », `maxLength={280}`) avec le compteur `` `${formatInt(value.length)} / 280` ``, et « Enregistrer » en `aria-disabled` sans changement ou pendant l'envoi (intention `bio:<texte>`, `readOnly` pendant l'envoi) ; statut « Profil enregistré. » en `role="status"` ;
-    - « Visibilité » : une case native « Profil public », avec l'aide du B12, enregistrée tout de suite (`public:<bool>`) ; un refus la remet comme avant ;
+    - « Visibilité » : une case native « Profil public », avec l'aide du B12, enregistrée tout de suite (`public:<bool>`). Un refus (4xx) la remet comme avant ; une issue incertaine affiche le texte du B12, garde la clé (`apiOnce`), relit la ligne `profiles`, et la case prend la valeur lue ;
     - « Vitrine ({n}/4) » : les positions 0 à 3. Un emplacement rempli montre sa `Card` et « Changer » et « Retirer », décrits par le titre. Un vide est un `button` de la taille de la carte, au nom « Ajouter une carte à l'emplacement {n} » (n de 1 à 4), à bordure pointillée `/40`. Intentions `showcase:<position>:<user_card_id>` et `unshowcase:<position>`.
   - `CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showcase'; onPick: (userCardId: string) => Promise<void>; onClose: () => void })` :
     - `Modal` au titre « Choisir ton avatar » ou « Choisir une carte pour la vitrine » ;
@@ -1009,23 +1081,29 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - « Annuler » ; un refus de `onPick` s'affiche en `role="alert"`, et la modale reste ouverte.
   - Focus :
     - après un choix, sur « Changer » du même emplacement (effet après rendu, si `document.activeElement === document.body`) ;
-    - après « Retirer », sur « Ajouter une carte à l'emplacement {n} » ;
+    - après « Retirer », sur « Ajouter une carte à l'emplacement {n} » ; après « Retirer l'avatar », sur « Changer l'avatar » ;
     - « Réessayer » ramène le focus sur le titre de sa section.
   - `data-ready` quand la ligne et la vitrine sont lues, ou en échec.
 
 - [ ] **Step 1: Tests E2E qui échouent** (`e2e/profile.spec.ts`)
   - h1 « Profil » et titre `^Profil — ` (`shell.spec.ts`) ; `/profile` sort de la liste « Cette section arrive bientôt. ».
   - Bio : saisie, puis « Enregistrer » → « Profil enregistré. ». `sql` → la bio. Le compteur affiche « 7 / 280 » pour « Bonjour ».
-  - Visibilité : décocher → `sql` `is_public` faux ; `routeOnce` qui rend 500 au `PATCH` suivant → la case revient comme avant, avec l'alerte.
+  - Visibilité : décocher → `sql` `is_public` faux. Puis, au `PATCH` suivant (cocher), filtré sur la méthode (`(r) => r.request().method() === 'PATCH'`) :
+    - `routeOnce` qui rend 500 sans `r.fetch()` → l'alerte « L'action n'a pas été confirmée : elle a peut-être eu lieu. », puis la case relue décochée, et `sql` faux ;
+    - recocher, avec un `routeOnce` qui rend 500 après `r.fetch()` → la même alerte, puis la case relue cochée, et `sql` `is_public` vrai.
   - Avatar, au clavier :
     - « Changer l'avatar » → la modale, avec une `imageCopy` et une copie du seed (« Sans image », non cliquable) ;
     - Entrée sur la carte à image → toast « Avatar changé. », et l'`img` d'avatar a pour `src` le `data:` de B10 ;
-    - « Retirer l'avatar » → plus d'image.
+    - « Retirer l'avatar » → plus d'image, et le focus sur « Changer l'avatar ».
   - Vitrine, au clavier :
     - « Ajouter une carte à l'emplacement 1 » → choix → toast « Vitrine mise à jour. », « Vitrine (1/4) », et `document.activeElement` est « Changer » de l'emplacement 1 ;
     - « Retirer » → « Carte retirée de la vitrine. », et le focus est sur « Ajouter une carte à l'emplacement 1 » ;
     - la même copie posée par `sql` à l'emplacement 2, puis choisie pour l'emplacement 1 → l'alerte « Cette carte est déjà dans ta vitrine » dans la modale.
   - Copie partie : une copie en vitrine défaussée par `sql` (`wm.discard`), puis un retour sur `/profile` → « Vitrine (0/4) ».
+  - Lectures en échec, même boucle (`500`, `200 illisible`) :
+    - la ligne `profiles` : `routeOnce(page, (u) => u.pathname === '/rest/v1/profiles', (r) => r.fulfill(reply))` → une alerte et « Réessayer » dans la section « À propos » ; « Réessayer » → le `textarea` « À propos », et le focus sur le titre « À propos » ;
+    - la vitrine : `routeOnce(page, '**/api/showcase', (r) => r.fulfill(reply), (r) => r.request().method() === 'GET')` → une alerte et « Réessayer » dans la section dont le titre commence par « Vitrine », pendant que « À propos » montre la bio ; « Réessayer » → « Ajouter une carte à l'emplacement 1 », et le focus sur le titre de la section ;
+    - dans les deux cas, `main [data-ready]` est posé.
   - 360 px : aucun défilement horizontal ; emplacements et boutons d'au moins 44 px.
   - `e2e/a11y.spec.ts` : `axe /profile`, avec 2 emplacements remplis, puis avec le sélecteur ouvert → 0 violation grave.
 - [ ] **Step 2: `npm run build:test && PW_CHROMIUM_PATH=/opt/pw-browsers/chromium npx playwright test e2e/profile.spec.ts e2e/shell.spec.ts e2e/a11y.spec.ts`** → échec.
@@ -1051,20 +1129,26 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - la liste `GET /api/chat`, relue à chaque affichage, après chaque envoi, et à chaque version de `unreadStore()` (mécanisme de `/friends`) ;
     - `ul[aria-label="Conversations"]` de `Link` d'au moins 44 px vers `/dms?with=<peer_id>`, avec `aria-current="page"` sur le fil ouvert ; avatar de 40 px `alt=""`, pseudo, `last_message` en `line-clamp-1`, `formatShortDate`, une pastille `formatInt(unread_count)` et le texte `sr-only` « {n} message non lu » ou « {n} messages non lus » ; les non-lues en gras ;
     - deux colonnes dès `md` ; sous `md`, la liste sans `with`, le fil avec `with`, précédé de « ← Conversations » ;
-    - `<Thread key={peerId} peerId={peerId} me={uid} />`.
+    - le fil affiché, `peerId`, garde son `with` tant que la page n'est pas visible. Cachée par Activity, la page se rend avec l'adresse de la page visible (`app-router.js:442-447`, `TradeComposer.tsx:48-55`, DG:463), et le fil serait démonté avec son brouillon. `/dms` et `/dms?with=…` sont une seule instance, car la clé de page ignore la recherche (`render-tree.js:180-183`) : garder le dernier `with` non vide, comme le composer, figerait le fil sur « ← Conversations ». Concrètement : `const pathname = usePathname() ; const w = params.get('with') || null ; const [peerId, setPeerId] = useState(w) ; if (pathname === '/dms' && w !== peerId) setPeerId(w)` ;
+    - tout ce qui dépend du fil ouvert lit `peerId`, jamais `params.get('with')` : le fil rendu ou non, la colonne affichée sous `md`, `aria-current` et `data-ready` ;
+    - `DmsClient` lit la session du navigateur et ne monte `Thread` qu'une fois `me` lu : `{peerId && me && <Thread key={peerId} peerId={peerId} me={me} />}`.
   - `Thread` :
-    - `usePoll(read, 5_000)` ; un `h2` focalisable, le pseudo en lien vers `/profile/<encodeURIComponent(pseudo)>` ;
-    - `ol[role="log"][aria-label="Messages avec {pseudo}"]`, avec des séparateurs de jour (`formatLongDate`) ; des bulles en `whitespace-pre-wrap wrap-anywhere`, le préfixe `sr-only` « Toi : » ou « {pseudo} : », et un `time` (`formatTime`) ;
-    - défilement vers le dernier message, sans `smooth` sous `prefers-reduced-motion` ;
-    - marquage lu : quand une lecture appliquée contient des messages non lus du pair, `update({ read: true }).eq('sender_id', peer).eq('recipient_id', me).eq('read', false)`, puis `unreadStore().refresh()` ; un échec ne fait rien, le poll suivant réessaie ;
+    - `usePoll(read, 5_000, !missing)` : un fil introuvable n'est plus interrogé (`trade-client.tsx:76`) ; un `h2` focalisable, le pseudo en lien vers `/profile/<encodeURIComponent(pseudo)>` ;
+    - un 2xx sans `messages` lisible est une lecture en échec. Un passage du poll en échec garde les messages et la saisie, brouillon compris ; seule une première lecture en échec montre `LoadError` (`trade-client.tsx:137-142`, DG:471) ;
+    - un `div[role="log"][aria-label="Messages avec {pseudo}"]` qui contient un `ol` sans rôle : un `li` par bulle, et un `li` par séparateur de jour, dont le texte est la date (`formatLongDate`). Jamais de `role` sur l'`ol` ni sur ses `li` : un `ol` au rôle `log` perd sa sémantique de liste, et chaque `li` lève la règle axe `listitem` (*serious*, `node_modules/axe-core/axe.js:30570-30586`) ;
+    - des bulles en `whitespace-pre-wrap wrap-anywhere`, le préfixe `sr-only` « Toi : » ou « {pseudo} : », et un `time` (`formatTime`) ;
+    - le fil s'écoule dans `main`, seul conteneur qui défile (R:687), avec la saisie en `sticky bottom-0` : aucun conteneur interne ne défile, donc ni `tabIndex` sur le `div`, ni `scrollable-region-focusable` toléré dans `e2e/a11y.spec.ts` ;
+    - défilement vers le dernier message à l'ouverture, puis seulement quand un message nouveau arrive et que le joueur était déjà en bas ; sans `smooth` sous `prefers-reduced-motion` ;
+    - marquage lu, seulement si `document.visibilityState === 'visible'` (au retour en visible, le poll relit tout de suite, `lib/poll.ts:35`, et marque alors) : quand une lecture appliquée contient des messages non lus du pair, `update({ read: true }).eq('sender_id', peer).eq('recipient_id', me).eq('read', false)`, puis `unreadStore().refresh()` ; un échec ne fait rien, le poll suivant réessaie ;
     - envoi :
       - un `textarea` « Ton message », `maxLength={2000}`, avec le compteur `` `${formatInt(value.length)} / ${formatInt(2000)}` `` ;
       - Entrée envoie, sauf avec Maj ou pendant une composition IME (`e.nativeEvent.isComposing`) ; l'aide du B12 ;
       - « Envoyer » en `aria-disabled` si `value.trim()` est vide ou pendant l'envoi ;
-      - `apiOnce(keys, \`send:${peer}:${content}\`, …)` ; `readOnly` pendant l'envoi ; `hold = performance.now()` ;
-      - succès → le message ajouté, le champ vidé, le focus dans le champ ;
+      - `apiOnce(keys, \`send:${peer}:${content}\`, …)` ; `readOnly` pendant l'envoi ; `hold = performance.now()` posé à la réponse d'un envoi, succès ou refus, jamais au départ (`trade-client.tsx:105`, `:114`), ce qui jette un poll parti pendant le `POST` ;
+      - clés (B15) : aucune relecture du fil, poll compris, ne les oublie ; chaque modification du champ fait `keys.current.clear()` ;
+      - succès ou rejeu → le message rendu est fusionné par `id` dans la liste affichée : déjà montré par un poll, il ne fait pas de seconde bulle. Le champ est vidé, et le focus reste dans le champ ;
       - refus → `role="alert"`, et le texte reste ; issue incertaine → le texte du B12, effacé par le premier message nouveau lu ;
-    - `isFriend` faux → à la place de la saisie, « Vous devez être amis pour vous écrire » et un lien vers son profil ;
+    - `isFriend` faux → à la place de la saisie, « Vous devez être amis pour vous écrire » (un `p` à `tabIndex={-1}`, qui reçoit le focus si la saisie l'avait) et un lien vers son profil ;
     - 404 ou 400 → « Joueur introuvable » et « Retour aux messages ».
   - États : ceux de B12 et `LoadError`. `data-ready` quand la liste est lue, avec le fil quand `with` est présent, ou en échec.
 
@@ -1077,16 +1161,26 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - Maj+Entrée insère un saut de ligne sans envoyer.
   - **Poll** : `page.clock.install()` avant `goto` ; `sql` insère un message de l'ami ; `page.clock.runFor(5_000)` → la bulle apparaît. Le `PATCH /rest/v1/chat_messages` est observé, puis `sql` : le message est lu.
   - Liste : deux conversations, l'une avec 2 non lus → la pastille « 2 » et « 2 messages non lus » ; l'ouverture de ce fil, puis le retour → la pastille a disparu.
-  - Ancien ami (amitié supprimée par `sql`) : le fil reste lisible, et la saisie est remplacée par « Vous devez être amis pour vous écrire ».
-  - Refus 429 : `routeOnce` rend 429 `{error: 'Le site demande de ralentir', message: …, retry_after: 30}` au `POST` → l'alerte « Le site demande de ralentir », et le texte reste dans le champ.
-  - Issue incertaine : `routeOnce` rend 503 après `r.fetch()` → l'alerte d'incertitude ; « Envoyer » de nouveau → la même `Idempotency-Key`, et une seule bulle.
+  - Ancien ami (amitié supprimée par `sql`) : le fil reste lisible, et la saisie est remplacée par « Vous devez être amis pour vous écrire ». Sous `page.clock`, le champ ayant le focus, l'amitié supprimée par `sql` puis `runFor(5_000)` → ce texte est focalisé.
+  - Refus 429 : `routeOnce(page, '**/api/chat/*', …, (r) => r.request().method() === 'POST')` (`e2e/fixtures.ts:29-31`) rend 429 `{error: 'Le site demande de ralentir', message: …, retry_after: 30}` → l'alerte « Le site demande de ralentir », et le texte reste dans le champ. Sans le filtre, la lecture du fil, à la même adresse, prendrait la réponse forcée.
+  - Issue incertaine (B15) :
+    - `page.clock.install()` avant `goto` ; le même `routeOnce`, filtré sur `POST`, rend 503 après `r.fetch()` → l'alerte d'incertitude ;
+    - `page.clock.runFor(5_000)` → le poll montre la bulle « Salut », l'alerte tombe, et « Salut » reste dans le champ ;
+    - Entrée → la même `Idempotency-Key`, une seule bulle, le champ vide, et `sql` ne compte qu'un message ;
+    - clé périmée : une seconde issue incertaine sur « Bonjour », puis `runFor(5_000)` ; le champ remplacé par « Ça va ? », envoyé ; « Bonjour » retapé, puis Entrée → une clé neuve, deux bulles « Bonjour », et deux messages « Bonjour » en `sql`.
   - ***Review Focus*, contenu** :
     - « 😀 » × 2 000 collé → le champ en garde 1 000, puisque `maxLength` compte les unités UTF-16 ;
     - le compteur affiche `` `${formatInt(2000)} / ${formatInt(2000)}` ``, et l'envoi passe : l'UI est plus stricte que le serveur, jamais plus large ;
     - des espaces seuls → « Envoyer » reste en `aria-disabled`.
-  - Téléphone (390 px) : la liste seule sans `with` ; un lien, puis le fil seul, avec « ← Conversations », et le focus sur le `h2` du fil.
-  - 360 px, avec un message d'un seul mot de 300 caractères : aucun défilement horizontal.
-  - `e2e/a11y.spec.ts` : `axe /dms` (deux conversations) et `axe /dms?with=<ami>` (dix messages) → 0 violation grave, sans `scrollable-region-focusable`.
+  - Téléphone (390 px) : la liste seule sans `with` ; `await hydrated(lien)`, puis le clic du lien de conversation → le fil seul, avec « ← Conversations », et le focus sur le `h2` du fil ; « ← Conversations » → l'URL `/dms`, la liste seule, aucun `div[role="log"]` visible, et le focus sur l'entrée du pair.
+  - Activity : « brouillon » saisi dans le fil de `/dms?with=<ami>`, puis le lien « Amis » de la barre (`hydrated`, document marqué `__spa`), puis `page.goBack()` → l'URL `/dms?with=<ami>`, le document toujours marqué, le même fil, et « brouillon » toujours dans le champ.
+  - 360 px, avec un message d'un seul mot de 300 caractères : aucun défilement horizontal ; « ← Conversations » et « Envoyer » font au moins 44 px. Puis `/dms` sans `with`, à 360 px : chaque lien de conversation fait au moins 44 px (D§8.6).
+  - Lectures en échec, même boucle (`500`, `200 illisible`) :
+    - la liste : deux `routeOnce(page, '**/api/chat', (r) => r.fulfill(reply))`, pour les deux lectures de l'arrivée à froid (montage, puis première version de `unreadStore()`, `e2e/friends.spec.ts:336-337`) → « Impossible de charger cette page. » et « Réessayer », sans `ul[aria-label="Conversations"]` ; « Réessayer » → « Aucune conversation. », et le focus n'est pas sur `body` ;
+    - le fil : `routeOnce(page, '**/api/chat/*', (r) => r.fulfill(reply))`, puis `/dms?with=<ami>` → l'alerte et « Réessayer » à la place du fil, et la liste est lue ; avant le premier passage du poll, « Réessayer » → « Aucun message pour l'instant. » et le champ « Ton message » ;
+    - poll en échec : un message préparé par `sql`, puis `page.clock.install()` avant `goto` ; la bulle est lue ; ensuite `routeOnce(page, '**/api/chat/*', (r) => r.fulfill(reply))` et `page.clock.runFor(5_000)` → la bulle reste, sans alerte.
+  - ***Review Focus*, pseudo hérité** : un ami renommé par `sql` en `x?y#z` → le lien du `h2` du fil a le `href` `/profile/x%3Fy%23z`, et le suivre affiche le h1 « x?y#z ».
+  - `e2e/a11y.spec.ts` : `axe /dms` (deux conversations) et `axe /dms?with=<ami>` (dix messages) → 0 violation grave, sans règle tolérée.
 - [ ] **Step 3: `npm test && npm run build:test && PW_CHROMIUM_PATH=/opt/pw-browsers/chromium npx playwright test e2e/dms.spec.ts e2e/shell.spec.ts e2e/a11y.spec.ts`** → échec.
 - [ ] **Step 4: Implémenter.**
 - [ ] **Step 5: Contrôles complets** → vert.
@@ -1099,9 +1193,11 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
 **Files:**
 - Create: `public/sw.js`, `app/(game)/settings/push-section.tsx`, `lib/push-browser.ts`, `lib/push-browser.test.ts`, `e2e/push-stub.ts`
 - Modify :
-  - `app/(game)/settings/settings-client.tsx` (section entre « Préférences » et « Compte », aide de `:20`) ;
+  - `app/(game)/settings/settings-client.tsx` (section entre « Préférences » et « Compte », aide de `:20`, `SignOut` de `:311-319`) ;
   - `lib/gate.ts:4` (`'/sw.js'` dans `EXEMPT`), `lib/gate.test.ts:6`, `contract/spec/gate.ts` ;
-  - `app/(game)/friends/friends-client.tsx:285-287` (« Message »), `e2e/friends.spec.ts:316-329` ;
+  - `app/(game)/friends/friends-client.tsx:285-287` (« Message ») ;
+  - `e2e/friends.spec.ts:255-273` : après « Tout accepter », la cible n'a pas de `name` (`friends-client.tsx:259`), et l'effet focalise le premier contrôle de la ligne (`:121-122`), qui devient « Message » ;
+  - `e2e/friends.spec.ts:316-329` et `:400-402` ;
   - `app/(game)/trades/[id]/trade-client.tsx:147` (« Message à <pseudo> »), `e2e/trades.spec.ts` ;
   - `e2e/notifications.spec.ts`, `e2e/settings.spec.ts`, `e2e/a11y.spec.ts:35` (`READY` de `/settings`).
 
@@ -1113,38 +1209,57 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - `notificationclick` → fermer la notification, puis focaliser un onglet de même origine déjà sur cette URL, sinon `clients.openWindow`. L'URL est résolue sur `self.location.origin` et ramenée à `/` si son origine diffère.
   - `lib/push-browser.ts` :
     - `fromBase64Url(s: string): Uint8Array` ;
-    - `pushState(): Promise<'unsupported' | 'denied' | 'off' | 'on'>`, d'après `serviceWorker`, `PushManager`, `Notification.permission` et `getRegistration()?.pushManager.getSubscription()` ;
-    - `subscribePush(vapidPublic: string): Promise<PushSubscriptionJSON>`, qui fait `requestPermission` (dans le geste), `register('/sw.js', { scope: '/', updateViaCache: 'none' })`, puis `subscribe({ userVisibleOnly: true, applicationServerKey: fromBase64Url(vapidPublic) })` ;
-    - `unsubscribePush(): Promise<string | null>`, qui rend l'endpoint.
+    - `pushState(): Promise<{ state: 'unsupported' | 'denied' | 'off' | 'on'; sub: PushSubscriptionJSON | null }>`, d'après `serviceWorker`, `PushManager`, `Notification.permission` et `(await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription()`. `sub` est le `toJSON()` de l'abonnement local, non nul si et seulement si `state` vaut `'on'` ;
+    - `subscribePush(vapidPublic: string): Promise<PushSubscriptionJSON>` : `Notification.requestPermission()` en premier appel du geste, puis `navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })`, puis `const reg = await navigator.serviceWorker.ready` et `reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromBase64Url(vapidPublic) })` (`progressive-web-apps.md:171-172`), qui rend `toJSON()`. Jamais `subscribe()` sur la registration que rend `register()` : au premier enregistrement, son worker est encore `installing`, et Chromium refuse (« AbortError: … Subscription failed - no active Service Worker », mesuré sur `chromium-1194` et `chromium_headless_shell-1194`) ;
+    - `unsubscribePush(): Promise<string | null>` : l'abonnement de `(await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription()`, son `unsubscribe()`, puis son `endpoint` rendu, ou `null` sans abonnement.
   - `PushSection` :
-    - `section` « Notifications » (id `settings-notifications`), avec `data-ready` après `GET /api/settings/notifications` ;
-    - `vapid_public` nul → « Les notifications push ne sont pas disponibles pour l'instant. » ;
-    - selon `pushState()` : les textes du B12. « Activer sur cet appareil » fait `subscribePush`, `POST /api/push/subscribe` (intention `subscribe:<endpoint>`), puis, si `push_types` est vide, `POST {push_types: pushTypes()}`. « Désactiver sur cet appareil » fait `DELETE {endpoint}` (intention `unsubscribe:<endpoint>`), puis `unsubscribe()`. Tous passent par `apiOnce` (C6, D:131) ;
-    - une case native par famille (`PUSH_FAMILIES`) : cochée si tous ses types sont actifs ; chaque bascule `POST` la liste entière (intention `JSON.stringify(liste triée)`) ; un refus la remet comme avant ;
+    - son propre `section`, au balisage de `settings-client.tsx:175-178` (`aria-labelledby`, `h2` « Notifications » d'id `settings-notifications` et `tabIndex={-1}`), avec `data-ready` sur le `section` après `GET /api/settings/notifications`, lue ou en échec, et après le renvoi ci-dessous. Un 2xx sans `push_types` lisible est une lecture en échec, à l'inverse de `loadPrefs` (`settings-client.tsx:52-63`) ;
+    - les textes d'état dans un `p role="status"`, jamais en `role="alert"` ni dans `FormError` : « Ton navigateur ne gère pas les notifications push. », « Les notifications sont bloquées pour ce site : autorise-les dans les réglages de ton navigateur. », « Les notifications push ne sont pas disponibles pour l'instant. » (`vapid_public` nul) et « Notifications activées sur cet appareil. ». Seuls les échecs sont en `role="alert"` : lecture, activation, renvoi, désactivation, enregistrement d'une famille. Pourquoi : la CI lance le Chromium de `npx playwright install` en `chromium-headless-shell` (`ci.yml:74-75`, sans `PW_CHROMIUM_PATH`), où `Notification.permission` vaut `'denied'`, alors que le Chromium local vaut `'default'` (mesuré sur 1194 et 1248). Sans stub, `/settings` montre donc « bloquées » en CI seulement ; en alerte, ce texte casserait `e2e/settings.spec.ts:32`, `:40`, `:55`, `:60` et `:134` (`main` `getByRole('alert')`, en mode strict) ;
+    - une case native par famille (`PUSH_FAMILIES`), visible dans tous les états de `pushState()`, son `label` en `min-h-11` comme `settings-client.tsx:141` : cochée si tous ses types sont actifs. Chaque bascule `POST` la liste entière (intention `JSON.stringify(liste triée)`). Un refus (4xx) la remet comme avant ; une issue incertaine affiche le texte du B12, garde la clé (`apiOnce`), relit `GET /api/settings/notifications`, et la case prend la valeur lue (M4b-13) ;
     - l'aide « Ces choix valent pour tous tes appareils. » ;
-    - erreurs en `role="alert"` ; « Réessayer » ramène le focus sur le titre.
+    - « Activer sur cet appareil » fait `subscribePush`, puis `POST /api/push/subscribe` (intention `subscribe:<endpoint>`), et n'écrit aucune préférence. Tant que `push_types` est vide, il est en `aria-disabled` (garde dans le gestionnaire), avec l'aide « Coche d'abord au moins une famille. » reliée par `aria-describedby` (M4b-13, B17) ;
+    - « Désactiver sur cet appareil » fait d'abord `unsubscribePush()`, puis, si l'endpoint rendu n'est pas nul, `DELETE {endpoint}` (intention `unsubscribe:<endpoint>`, B18) ;
+    - **renvoi à chaque lecture de la section** (B18) : au montage, au retour d'Activity (`useEffectEvent` et `useEffect([])`, comme `trades-client.tsx:74-75`) et sur « Réessayer », jamais après « Activer », qui vient de l'envoyer. Après un `GET /api/settings/notifications` réussi, si `vapid_public` n'est pas nul et que l'état rendu par `pushState()` vaut `'on'`, la section renvoie `POST /api/push/subscribe` avec `sub`, par `apiOnce` et sous l'intention `subscribe:<endpoint>`, sans toucher à `push_types` : un joueur qui hérite d'un navigateur déjà abonné reste sans type (opt-in). « Notifications activées sur cet appareil. » attend la réponse du renvoi. Un refus ou une issue incertaine → « L'activation a échoué, réessaie. » (`role="alert"`) et « Activer sur cet appareil », qui reprend la même intention, donc la même clé si l'issue était incertaine ;
+    - tous les appels passent par `apiOnce` (C6, D:131) ; « Réessayer » ramène le focus sur le titre ; le focus des deux boutons d'activation suit les Global Constraints.
+  - `SignOut` (`settings-client.tsx:311-319`) : avant `auth.signOut()`, si `pushState()` rend un `sub`, `unsubscribePush()`, puis `api('/api/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }), idem: true })`, attendus l'un après l'autre. Chacun prend un `.catch(() => {})` : un échec ne bloque jamais la déconnexion, et le renvoi de `/settings` rattachera l'appareil au joueur suivant (B18).
   - `settings-client.tsx:20` : l'aide de « Profil public » devient celle du B12, « Décochée, seuls tes amis voient ta bio, ta vitrine et ta collection. » (U8).
   - `/friends` : un `Link` « Message » (`ghost`) vers `/dms?with=<id>`, avant « Échanger », avec `aria-describedby={desc}`.
   - `/trades/[id]` : un `Link` « Message à {pseudo de l'autre} » (icône `MessageCircle`, classe `link`) vers `/dms?with=<id de l'autre>`, sous « De {pseudo} à {pseudo} », pour les deux participants (l'identité vient de la session, P16).
-  - `e2e/push-stub.ts` : `stubPush(page, { permission?: NotificationPermission })` par `addInitScript`. Il remplace `Notification.requestPermission` et `Notification.permission`, `navigator.serviceWorker.register` et `getRegistration`, et `pushManager.subscribe` et `getSubscription`. L'abonnement simulé a `toJSON()` → `{endpoint: 'https://fcm.googleapis.com/fcm/send/e2e-<uuid>', keys: {p256dh, auth}}` (clés valides au regard de `PushSubscriptionBody`) et `unsubscribe()`.
+  - `e2e/push-stub.ts` : `stubPush(page, { permission = 'default', endpoint }: { permission?: NotificationPermission; endpoint?: string } = {}): Promise<string>`, par `addInitScript(fn, arg)` (B19) :
+    - côté Node : `p256dh` = `createECDH('prime256v1').generateKeys()` en base64url et `auth` = `randomBytes(16)` en base64url, puisque le `pre` de `POST /api/push/subscribe` refuse un point hors de la courbe ; l'endpoint vaut `endpoint ?? \`https://fcm.googleapis.com/fcm/send/e2e-${randomUUID()}\``, et la fonction le rend ;
+    - dans la page : un getter sur `Notification.permission`, toujours posé (`'granted'` avec `endpoint`, sinon `permission`), et `Notification.requestPermission`, qui rend `'granted'` et fait passer `permission` à `'granted'`, sauf sous `'denied'`, qui reste `'denied'` ;
+    - `PushManager.prototype.subscribe` et `PushManager.prototype.getSubscription` (décision 23 : « simule `PushManager` ») : l'abonnement simulé a son `endpoint`, `toJSON()` → `{endpoint, expirationTime: null, keys: {p256dh, auth}}`, et `unsubscribe()`, qui remet `getSubscription()` à `null` ;
+    - `navigator.serviceWorker.register` et `ready` restent réels : le vrai `public/sw.js` s'enregistre sur 3100, sans porte, et `ready` se résout (mesuré sur les deux Chromium du banc ; avec un `register` simulé, `ready` reste en attente et l'E2E se bloque) ;
+    - avec `endpoint`, le navigateur est déjà abonné : le stub lance `register('/sw.js', { scope: '/', updateViaCache: 'none' })` au chargement, `getRegistration()` attend cet enregistrement, et `getSubscription()` rend d'emblée l'abonnement simulé.
 
 - [ ] **Step 1: Tests qui échouent**
   - `lib/gate.test.ts` : `['/sw.js', 'pass']` dans la liste, et `'/sw.jsx'` → `redirect`.
   - `contract/spec/gate.ts` : serveur à porte, sans cookie : `GET /sw.js` → 200, `content-type` qui contient `javascript`, le corps contient `addEventListener('push'` et pas `addEventListener('fetch'`.
-  - `lib/push-browser.test.ts` : `fromBase64Url('BAEC')` = `Uint8Array [4, 1, 2]` ; `-` et `_` sont décodés comme `+` et `/`.
+  - `lib/push-browser.test.ts` : `fromBase64Url('BAEC')` = `Uint8Array [4, 1, 2]` ; `-` et `_` sont décodés comme `+` et `/`. Avec `vi.stubGlobal` d'un faux `Notification` (`requestPermission` → `'granted'`) et d'un faux `navigator.serviceWorker` dont `register` se résout tout de suite et dont `ready` est une promesse résolue à la main, `subscribePush('BAEC')` n'appelle pas `pushManager.subscribe` avant que `ready` soit résolu, puis l'appelle une seule fois, avec `userVisibleOnly: true`, sur la registration rendue par `ready`.
   - `e2e/settings.spec.ts`, sous `stubPush(page)` :
-    - la section « Notifications » et « Activer sur cet appareil » ;
-    - le clic → un `POST /api/push/subscribe` observé avec l'`endpoint` du stub, puis un `POST /api/settings/notifications` avec les 13 types ; les quatre cases cochées, et « Notifications activées sur cet appareil. » ;
-    - décocher « Marché » → un `POST` avec 8 types ; `sql` → `push_types` sans `auction_*` ni `wishlist_listed` ;
-    - « Désactiver sur cet appareil » → un `DELETE` avec l'endpoint ; `sql` → plus de ligne ;
-    - `stubPush(page, { permission: 'denied' })` → le texte « bloquées » et aucun bouton d'activation ;
+    - la section « Notifications », les quatre cases décochées, et « Activer sur cet appareil » en `aria-disabled` avec l'aide « Coche d'abord au moins une famille. ». Un clic n'envoie aucun `POST /api/push/subscribe` ;
+    - cocher « Messages » → un `POST /api/settings/notifications` avec `['chat_message']`. Puis le clic sur « Activer sur cet appareil » → un seul `POST /api/push/subscribe`, avec l'endpoint rendu par `stubPush`, et aucun autre `POST /api/settings/notifications`. Seule « Messages » est cochée, « Notifications activées sur cet appareil. » s'affiche, et le focus est sur « Désactiver sur cet appareil ». `sql` → `push_types` = `{chat_message}` ;
+    - cocher « Marché » → un `POST` avec 6 types (`chat_message` et les 5 du marché) ; le décocher → un `POST` avec `['chat_message']` ; `sql` → `push_types` sans `auction_*` ni `wishlist_listed` ;
+    - famille à l'issue incertaine : au `POST` de « Échanges », `routeOnce` qui rend 500 après `r.fetch()` → le texte d'incertitude du B12, puis la case relue cochée ;
+    - « Désactiver sur cet appareil » → un `DELETE` avec l'endpoint, et le focus sur « Activer sur cet appareil » ; `sql` → plus de ligne ;
+    - « Activer sur cet appareil », « Désactiver sur cet appareil » et le `label` de chacune des quatre cases font au moins 44 px ;
+    - `stubPush(page, { permission: 'denied' })` → le texte « bloquées » dans un `role="status"`, aucun bouton d'activation, et `page.locator('main').getByRole('alert')` en `toHaveCount(0)` (la garde de `:60`, ici prouvée en local) ;
+    - ***Review Focus*, navigateur partagé** :
+      - `sql` pose, pour un autre joueur (`makePlayer`), une ligne `push_subscriptions` à l'endpoint E = `https://fcm.googleapis.com/fcm/send/e2e-<uuid>` ;
+      - sous `stubPush(page, { endpoint: E })`, l'arrivée sur `/settings` envoie, sans clic, un seul `POST /api/push/subscribe`, avec E, et aucun `POST /api/settings/notifications` ;
+      - après `data-ready` : « Notifications activées sur cet appareil. », les quatre cases décochées, et `sql` → une seule ligne E, au joueur connecté ;
+      - même départ, avec le `POST /api/push/subscribe` en 500 par `routeOnce` → « L'activation a échoué, réessaie. » et « Activer sur cet appareil » ;
+      - sous `stubPush(page, { endpoint: E })`, E au joueur connecté : « Se déconnecter » → un `DELETE /api/push/subscribe` avec E, observé avant `/login` ; `sql` → plus de ligne pour E ;
+    - lecture en échec, même boucle (`500`, `200 illisible`) : `routeOnce(page, '**/api/settings/notifications', (r) => r.fulfill(reply))` → une alerte et « Réessayer » dans la section « Notifications », pendant que « Profil » et « Préférences » restent lues, et `section[data-ready]` est posé ; « Réessayer » → les quatre cases, et le focus sur le titre « Notifications » ;
     - le focus n'est jamais sur `body`.
   - `e2e/friends.spec.ts:316` devient : une ligne d'ami a « Message » (`href` `/dms?with=<id>`), « Échanger » et « Retirer ».
+  - `e2e/friends.spec.ts:270` devient `await expect(rows.nth(1).getByRole('link', { name: 'Message' })).toBeFocused()` : « Message » est le premier contrôle de la ligne du premier ami ajouté. Le titre du test (`:255`) ne change pas.
+  - `e2e/friends.spec.ts:400` : les cibles deviennent `page.locator('main').getByRole('button').or(page.locator('main').getByRole('link', { name: /^(Message|Échanger)$/ }))`, le commentaire de `:401` devient « Tout accepter, Accepter, Refuser, Retirer (envoyée), Message, Échanger, Retirer (ami). », et `:402` passe à `toHaveCount(7)`.
   - `e2e/trades.spec.ts` : au détail, le destinataire voit « Message à <initiateur> », et l'initiateur « Message à <destinataire> », chacun au `href` exact.
   - `e2e/notifications.spec.ts` : une `chat_message` (`username` « Alice ») → « Alice t'a écrit », au `href` `/dms?with=<user_id>`.
-  - `e2e/a11y.spec.ts` : `READY['/settings']` = `'main:has(#settings-username):has(input[name="sounds"]) section[data-ready]'` ; `axe /settings` sous `stubPush`, section active → 0 violation grave.
+  - `e2e/a11y.spec.ts` : `READY['/settings']` = `'main:has(#settings-username):has(input[name="sounds"]) section[data-ready]'` ; `axe /settings` sous `stubPush`, section active (« Messages » cochée, puis « Activer sur cet appareil ») → 0 violation grave.
 - [ ] **Step 2: `npm test && npm run build:test && npm run test:contract && PW_CHROMIUM_PATH=/opt/pw-browsers/chromium npx playwright test e2e/settings.spec.ts e2e/friends.spec.ts e2e/trades.spec.ts e2e/notifications.spec.ts e2e/a11y.spec.ts`** → échec.
-- [ ] **Step 3: Implémenter.** `components/trades/TradeCard.test.tsx:40-45` (aucun « Message » dans la carte de liste) reste vrai.
+- [ ] **Step 3: Implémenter.** `components/trades/TradeCard.test.tsx:40-45` (aucun « Message » dans la carte de liste) reste vrai. La cible de focus de « Tout accepter » (`friends-client.tsx:259`) reste sans `name` : le premier contrôle de la ligne la reçoit, comme le dit le B13.
 - [ ] **Step 4: Contrôles complets** → vert.
 - [ ] **Step 5: Commit** — `feat(ui): notifications push dans /settings (activer sur cet appareil, familles en opt-in), service worker exempté de la porte, boutons Message et Message à, lien de la cloche vers le fil`
 
@@ -1224,6 +1339,7 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   - `current_setting('shared_preload_libraries')` contient `pg_net` ;
   - `pg_available_extensions` : `pg_net` 0.20.4, `installed_version` nul ; `to_regnamespace('net')` nul ;
   - `select name from vault.secrets where name = 'CRON_SECRET'` → une ligne (la valeur n'est jamais lue) ;
+  - `select has_table_privilege('postgres', 'vault.decrypted_secrets', 'select')` → vrai (la valeur n'est jamais lue ; la preuve entière reste la sonde du Step 6) ;
   - `max_worker_processes` = 6 ; `cron.job` liste quatre jobs du M3 et `wm-trade-expire`.
   Un écart se consigne, puis on décide avant d'aller plus loin.
 - [ ] **Step 3 (contrôleur): Préparer `deploy-m4b.sql`** par `make-deploy-m4b.sh`, sur le modèle de `make-deploy-m4a.sh` :
@@ -1246,23 +1362,30 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
   - `cron.job` : `wm-push-wake`, `15 seconds`, `select wm.push_wake()`, actif ; une minute plus tard, des runs `succeeded` dans `cron.job_run_details` ; `net._http_response` sans ligne neuve tant que l'outbox est vide (C19) ;
   - droits : `role_table_grants` sur les quatre tables pour `anon` et `authenticated` → seulement `authenticated SELECT` sur `chat_messages`, plus la colonne `read` en `UPDATE` (`column_privileges`) ;
   - sondes avec la clé publiable : `GET /rest/v1/reports` → 401 `42501` ; `POST /rest/v1/rpc/push_claim` avec `Content-Profile: wm` → 401 `42501` ;
-  - `wm.check_invariants()` = `[]` ; `get_advisors` `security` → aucune nouvelle alerte à nous ; `performance` → au plus des INFO « unused index » sur les index du M4b ;
+  - `wm.check_invariants()` = `[]` ;
+  - **`net`** : `has_function_privilege` d'`anon` et d'`authenticated` sur `net.http_post(text, jsonb, jsonb, jsonb, integer)`, relevé et consigné ; sonde `POST /rest/v1/rpc/http_post` avec `Content-Profile: net` et la clé publiable → 406 `PGRST106` (`net` non exposé) ; `pg_extension.extnamespace` de `pg_net` = `extensions` ;
+  - **conseillers** : `get_advisors` `security` → aucune nouvelle alerte à nous, hors trois INFO « RLS Enabled No Policy » (0008) sur `showcase`, `reports` et `push_subscriptions`, voulues (M4b-28) ; `performance` → au plus des INFO « unused index » sur les index du M4b ;
   - taille de la base et du WAL, avant et après.
 - [ ] **Step 6 (contrôleur): Fusion `--no-ff` dans `develop`** de la tête validée au Step 1, push, déploiement READY.
   - `/api/health` → 200 avec `push_lag_s` nul ; `health.yml` en `workflow_dispatch` → vert.
-  - **Sonde du réveil** (M4b-17) : un abonnement d'essai pour un compte de démo choisi par l'utilisateur (`https://fcm.googleapis.com/fcm/send/probe-<uuid>`, clés valides générées hors du dépôt), `push_types` `['auction_won']`, et une notification d'essai insérée par le MCP. Attendu : dans les 15 s, une ligne de `net._http_response` au `status_code` 200 ; la réponse `{sent, gone, failed}` est consignée, avec l'abonnement factice compté `gone` ou `failed`. Un 401 signale une valeur du Vault différente de celle de Vercel.
+  - **Sonde du réveil** (M4b-17) :
+    - mise en place : un abonnement d'essai pour un compte de démo choisi par l'utilisateur (`https://fcm.googleapis.com/fcm/send/probe-<uuid>`, clés valides générées hors du dépôt) et `push_types` `['auction_won']`, puis une notification d'essai insérée par le MCP avec `read = true` : elle ne compte pas dans le badge, mais la cloche liste aussi les lues (`1740:27-33`) jusqu'au nettoyage. Le trigger ne filtre pas `read` ;
+    - attendu : dans les 15 s, une ligne de `net._http_response` au `status_code` 200, et la réponse `{sent, gone, failed}` consignée, l'abonnement factice compté `gone` ou `failed` ;
+    - sans cette ligne : si la ligne d'outbox a disparu sans appel, un `after()` de trafic réel l'a prise (une ligne `{"push":…}` d'une autre route dans `get_runtime_logs`), et on relance la sonde ; sinon, les journaux Postgres du projet (MCP Supabase) montrent le `warning` « wm.push_wake : … » d'une lecture du Vault en échec, et `cron.job_run_details` du job `wm-push-wake` montre tout autre échec ;
+    - un 401 signale une valeur du Vault différente de celle de Vercel ;
+    - enfin, le MCP supprime, par leurs id, l'abonnement d'essai (s'il reste) et la notification d'essai, et remet la ligne de `notification_prefs` du compte comme avant la sonde. Une ligne d'outbox orpheline est jetée à la réservation suivante, ou purgée après 1 h.
   - Facultatif : l'utilisateur active le push sur son navigateur, et une action d'un autre compte (demande d'ami) le fait recevoir, ce qui est consigné.
 - [ ] **Step 7: Passation**
   - `HANDOFF.md` :
     - l'état du M4b ;
-    - chaque critère du D§13 pour le M4 entier, et sa preuve : 100 ↔ 100 (Task 16 et M4a), atomicité et rejeu (M4a), push en CI (Task 10), §3.6 et §3.7 (66/90) ;
+    - chaque critère du D§13 pour le M4 entier, et sa preuve : 100 ↔ 100 (Task 16 et M4a), atomicité (M4a, plus la vitrine, l'avatar et l'outbox : Tasks 2 et 6) et rejeu (M4a), push en CI (Task 10), §3.6 et §3.7 (66/90) ;
     - une section « Exploitation du push » : arrêt d'urgence `select cron.alter_job(jobid, active := false) from cron.job where jobname = 'wm-push-wake'`, et son effet (`after()` continue, la cloche reste juste) ; rotation des clés VAPID (tous les abonnements tombent) ;
     - l'étape suivante : le M5.
   - `docs/suivi.md` : la section M4b soldée ; S:40-44 rayés. Reportés :
-    - au M6 : la file staff des signalements, la suppression des messages par le staff, l'effacement des abonnements à la suppression de compte ;
-    - au M7 : la seconde cloche et `selectors.spec.ts` ;
+    - au M6 : la file staff des signalements, la suppression des messages par le staff, l'effacement des abonnements à la suppression de compte, et, quand la modération masque une image (`hide_image` ou `nsfw_image`, à la main ou à 10 signaleurs), la remise à null de l'avatar et de l'`avatar_url` des profils qui la montrent (D:594, M4b-6) ;
+    - au M7 : la seconde cloche, `selectors.spec.ts`, et le crédit de l'avatar (écart D§3.4 du M4b). Dans « Écarts permis à consigner dans `allowed-diffs.yaml` » (D:696) : « Message à <pseudo> » sur le détail `/trades/[id]` et non sur l'offre de la liste (M4b-24, R:127) ; le profil privé d'un tiers rendu en 200 réduit, sans `bio`, au lieu d'être masqué, et `lastSeenAt` jamais rendu (M4b-5, R:246) ; l'avatar en `nsfw_image` refusé en 400 (M4b-6, R:247) ;
     - au M8 : une table de conversations si `chat_conversations` pèse, `profile_collection` qui calcule `pendingTradeCardIds` pour rien, l'image de catalogue changée qui reste en avatar (M4b-6).
-  - `docs/decisions-graphify.md` : M4b-1 à M4b-33, les écarts, B1 à B14.
+  - `docs/decisions-graphify.md` : M4b-1 à M4b-33, les écarts (au spec et aux décisions du contrôleur), B1 à B21.
   - `docs/verifications.md` : la répétition, PG17, les contrôles MCP, la sonde, le renvoi au bench de la Task 16.
 - [ ] **Step 8: Commit** — `docs: M4b livré — profil, vitrine, messages, signalements et Web Push sur la démo, réveil pg_net sondé, passation`
 - [ ] **Step 9 (contrôleur): Push et CI.** Pousser, lancer `ci.yml` → vert, fusion `--no-ff` dans `develop`, push.
@@ -1285,22 +1408,24 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
       - notification dans la transaction (Tasks 4, 6).
   - D§7.0 : `actor`, verrous C4, idempotence, erreurs, C17 (Tasks 3 à 6, et scénarios de `18_social_concurrency`).
   - D§7.12 : signalements stockés, file staff au M6.
-  - D§8 : 12 routes du §3.7 (Tasks 8, 9) et routes ajoutées (Task 10) ; 429 du D§8.2 (Tasks 4, 9) ; axe par route, clavier, 44 px, `alt=""` (Tasks 11 à 15).
+  - D§8 : 12 routes du §3.7 (Tasks 8, 9) et routes ajoutées (Task 10) ; 429 du D§8.2 (Tasks 4, 9) ; axe par route, clavier, 44 px, `alt=""` (Tasks 7, 11 à 15) ; lecture en échec éprouvée par page (Tasks 11 à 14).
   - D§9 : index du D:811 et deux de plus (Task 2) ; poll de 5 s (Task 13) ; bench 100 ↔ 100 avec vitrine et push (Task 16).
   - D§12.3 : retard de l'outbox dans `/api/health` (Task 6).
   - D§13 (D:1083) : push en CI (Task 10), §3.7 vert (Task 9), §3.6 inchangé (Tasks 2 et 9).
+  - D§3.4 : crédit de l'image par `CardModal` depuis la vitrine (Task 11) ; avatar sans crédit, écart consigné et reporté au M7.
   - Héritages S:40-44 : Tasks 1, 2, 3, 6, 7 et 14.
-- **Scan des étapes.** Chaque étape de test donne ses valeurs, et chaque étape de code sa signature, son fichier et ses valeurs. Corrigé pendant la relecture :
-  - l'E2E des émojis de la Task 13 : `maxLength` garde 1 000 émojis, pas 2 000 ;
-  - le badge de B à l'étape 6 du parcours : il reste la `friend_request`, donc « 1 » ;
-  - le trigger d'avatar gagne une clause `when`, qui protège un `avatar_url` migré sans copie, avec ses deux tests (Tasks 2 et 3) ;
-  - le scénario 3 du signalement se joue dans les deux sens, faute de connaître l'ordre des triggers de clé étrangère ;
-  - l'expression de `p256dh` : le dernier caractère porte 4 bits, donc `[AEIMQUYcgkosw048]`, et non 2 bits ;
-  - la pastille passe en `relative z-10` au-dessus du bouton du `h3` ;
-  - les abonnements du bench sont posés après les échanges ;
-  - `maskPath` est éprouvé par un test unitaire, et non par la lecture d'un journal ;
-  - les lignes citées de `1600`, `1740` et `28_trades` sont recalées sur le code.
-  Les corps de code n'apparaissent que pour l'ordre des refus, les expressions de `p256dh` et `auth`, et le rappel d'`after()`, que les tests ne fixent pas seuls.
+- **Scan des étapes.** Chaque étape de test donne ses valeurs, et chaque étape de code sa signature, son fichier et ses valeurs.
+  - Corrigé à la première relecture : l'E2E des émojis (`maxLength` garde 1 000 émojis) ; le badge de B à l'étape 6 du parcours (« 1 ») ; la clause `when` du trigger d'avatar et ses deux tests ; le scénario 3 joué dans les deux sens ; l'expression de `p256dh` (`[AEIMQUYcgkosw048]`) ; les abonnements du bench posés après les échanges ; `maskPath` éprouvé par un test unitaire ; les lignes citées de `1600`, `1740` et `28_trades`.
+  - Corrigé à la seconde relecture (85 défauts confirmés) : la règle d'origine des endpoints (B9) et `redirect: 'error'` ; les égalités strictes de `list_caps` et de `wm.health()` recalées dans la tâche qui ajoute la clé (B16, B21) ; le fil en `div[role="log"]` ; le focus de `/friends` après « Tout accepter » ; `subscribePush` qui attend `ready` ; le renvoi de l'abonnement et l'ordre du désabonnement (B18) ; les familles choisies avant l'activation (B17) ; les aides `hold`, `sleeping` et `released` du M4a au lieu de sommeils fixes ; les erreurs injectées sur la vitrine, l'avatar et l'outbox ; la course entre envoi et marquage lu (B20) ; la pastille en boîte de 44 × 44 px au moins (`min-h-11 min-w-11 -mt-7`), éprouvée par axe avec une pastille ; une lecture en échec éprouvée par page.
+  Les corps de code n'apparaissent que pour l'ordre des refus, les expressions de `p256dh`, `auth` et de l'origine, le rappel d'`after()` et le peerId figé de `/dms`, que les tests ne fixent pas seuls.
+- **Tests existants dits inchangés, vérifiés par grep sur le dépôt.**
+  - `list_caps` : une seule égalité stricte, `28_trades.test.sql:58-60`, recalée à la Task 2 (B21).
+  - `wm.health()` : trois égalités strictes, `10_wm_core.test.sql:126-129`, `27_market.test.sql:1195` et `:1201`, élargies à la Task 6 (B16). Les autres assertions (`27_market.test.sql:1153`, `:1172-1185` et `:1198` ; `10_wm_core.test.sql:159-165`) ne lisent que des clés.
+  - `get_prefs` : `20_accounts.test.sql:120` reste vrai, puisque le M4b ne touche ni `get_prefs` ni `wm.user_prefs` (M4b-13).
+  - Compte de tables : `02_mirror_rls.test.sql:28-30` passe à `{16, 0}` à la Task 1. Aucune table `wm` n'est comptée : le scan de `10_wm_core.test.sql:139-155` n'y voit que des droits, et `notification_prefs` et `push_outbox` n'en ont aucun.
+  - `tests.trade_snapshot`, comparé à lui-même (`28_trades.test.sql:647-680`, `:803-842` ; `17_trades_concurrency.test.sh:167-180`, `:269-281`) : les clés ajoutées valent les mêmes `[]`, 0 et `null` des deux côtés.
+  - Restent vrais aussi : `24_catalog.test.sql:189-194` et `contract/spec/catalog.ts:42` (joueurs sans ami), `23_collection.test.sql:209-210` (sans amitié), `contract/spec/health.ts` (`z.object`, clés en plus permises), `app/api/cron/revalidate/route.test.ts` (`lib/push` chargé seulement dans `after()`), `lib/notifications.test.ts` et `NotificationPanel.tsx:12` (réexports), `TradeCard.test.tsx:40-45`, et `e2e/trades.spec.ts:49` (`actions` ne compte que des boutons et « Contre-offre »). Les alertes strictes d'`e2e/settings.spec.ts` tiennent, puisque les textes d'état de la section push sont en `role="status"`.
+  - Modifiés dans la tâche qui les casse : `e2e/friends.spec.ts:270`, `:316-329` et `:400-402` (Task 14), `e2e/shell.spec.ts:94` (Tasks 12 et 13), `e2e/a11y.spec.ts:35` (Task 14).
 - **Cohérence des noms.**
   - Les fonctions consommées par les routes (Tasks 8 à 10) sont définies aux Tasks 3 à 6, avec les mêmes paramètres :
     - `profile_update(p_uid, p_username, p_bio, p_is_public, p_avatar_user_card_id, p_avatar_set, p_idem)` ;
@@ -1308,11 +1433,15 @@ Numérotées Bn, pour ne pas se confondre avec les P1 à P30 cités ici tels qu'
     - `chat_send(p_uid, p_peer_id, p_content, p_idem)`, `chat_thread(p_uid, p_peer_id)` ;
     - `report_get(p_uid, p_reported_user_id)` et `report_upsert(p_uid, p_reported_user_id, p_reason, p_details, p_idem)` ;
     - `push_subscribe(p_uid, p_endpoint, p_p256dh, p_auth, p_idem)`, `push_unsubscribe(p_uid, p_endpoint, p_idem)`, `notification_prefs_set(p_uid, p_push_types, p_idem)`, `push_claim(p_limit)`, `push_gone(p_subscription_ids)`.
-  - `tests.image_card` (Task 2) sert aux Tasks 3, 8 et 11, et `imageCopy` porte le même nom dans le contrat et dans les E2E, en deux modules distincts.
-  - `PUSH_FAMILIES` et `pushTypes` (Task 10) servent à la Task 14 et répondent à `wm.config.push_types` (Task 2), ce que vérifie un test.
+  - Les scénarios de `18_social_concurrency.test.sh` sont 1 (Task 3), 2, 2 b et 2 c (Task 4), 3 (Task 5) et 4 (Task 6), dans cet ordre dans la liste de tête, et M4b-31 renvoie bien au 3.
+  - `tests.image_card` (Task 2) sert aux Tasks 3, 8 et 11 ; `imageCopy` porte le même nom dans le contrat et dans les E2E, en deux modules distincts, avec les titres uniques du B11.
+  - `PUSH_FAMILIES` et `pushTypes` (Task 10) servent à la Task 14 et répondent à `wm.config.push_types` (Task 2) : `lib/notifications.test.ts` les compare au littéral de `1800`.
+  - `pushState()` rend `{state, sub}`, et ses deux lecteurs, `PushSection` et `SignOut` (Task 14), lisent `sub`. `unsubscribePush()` passe avant le `DELETE` aux deux endroits (B18). `stubPush` n'a qu'une définition (Task 14, B19), et son option `endpoint` sert au navigateur partagé.
+  - `subscriber(env, types, endpoint)` n'existe que dans `contract/spec/push.ts` ; `created()` est local à `contract/spec/chat.ts`.
+  - `copyFace` et les types de `components/profile/types.ts` (Task 11) sont consommés par la Task 12 ; `Section` est recopiée dans `profile-editor.tsx` avec `useId()`, et `PushSection` rend son propre `section`.
   - `friendOwner` reste une chaîne dans `Card` (Task 7).
 - **Review Focus.** Chaque ligne a son test dans la tâche qui possède le code :
-  - endpoints et navigateur partagé : Task 6 ;
+  - endpoints : Tasks 6 et 10 ; navigateur partagé : Tasks 6 et 14 ;
   - débit et contenu : Tasks 4, 9 et 13 ;
-  - pseudo hérité : Tasks 8 et 11.
-- **Proportion.** Dix-sept tâches, pour douze routes du §3.7, cinq routes ajoutées, trois pages, la section push et le bench. Les tableaux d'interface tiennent lieu de code. Le plan fait environ 1,2 fois le design (1 119 lignes), un peu plus que le M4a (1 032 lignes), pour une tâche de plus et le push. Aucune tâche ne transcrit un corps de fonction.
+  - pseudo hérité : Tasks 7, 8, 11 et 13.
+- **Proportion.** Dix-sept tâches, pour douze routes du §3.7, cinq routes ajoutées, trois pages, la section push et le bench. Les tableaux d'interface tiennent lieu de code, et aucune tâche ne transcrit un corps de fonction. Le plan fait environ 1,3 fois le design (1 119 lignes), contre 0,9 fois pour le M4a (1 032 lignes). La seconde relecture a ajouté surtout des tests : les boucles de lecture en échec, les scénarios 2 b et 2 c, la liste des endpoints hostiles, et les décisions B15 à B21 qui tranchent entre des corrections contradictoires. Les Tasks 10 et 14 restent les plus lourdes : la Task 10 garde la preuve serveur d'un seul tenant (M4b-33), et la Task 14 réunit ce qui touche `/settings`.
