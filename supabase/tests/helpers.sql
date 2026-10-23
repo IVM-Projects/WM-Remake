@@ -47,8 +47,9 @@ begin
   reset role;
 end $$;
 
--- État complet d'un échange (P23, M4-7), comparé avant et après un échec : la ligne, les copies, étiquettes et profils de ses deux joueurs,
--- ses lignes de grand livre et ses notifications, les clés d'idempotence des deux joueurs, les invariants. Exige public.trades (M4a).
+-- État complet d'un échange (P23, M4-7), comparé avant et après un échec : la ligne, les copies, étiquettes, profils et vitrines de ses deux
+-- joueurs, ses lignes de grand livre, ses notifications et leur outbox, les clés d'idempotence des deux joueurs, les invariants. Exige
+-- public.trades (M4a), public.showcase et wm.push_outbox (M4b, B10).
 create or replace function tests.trade_snapshot(p_trade uuid) returns jsonb
 language sql security definer set search_path = '' as $$
   select jsonb_build_object('trade', to_jsonb(t),
@@ -56,13 +57,26 @@ language sql security definer set search_path = '' as $$
       order by uc.id), '[]') from public.user_cards uc where uc.user_id in (t.initiator_id, t.recipient_id)),
     'tags', (select coalesce(jsonb_agg(jsonb_build_array(ut.user_card_id, ut.tag_id) order by ut.user_card_id, ut.tag_id), '[]')
       from public.user_card_tags ut join public.user_cards uc on uc.id = ut.user_card_id where uc.user_id in (t.initiator_id, t.recipient_id)),
-    'profiles', (select jsonb_agg(jsonb_build_object('id', p.id, 'avatar_user_card_id', p.avatar_user_card_id,
+    'profiles', (select jsonb_agg(jsonb_build_object('id', p.id, 'avatar_user_card_id', p.avatar_user_card_id, 'avatar_url', p.avatar_url,
       'wikibidous_balance', p.wikibidous_balance) order by p.id) from public.profiles p where p.id in (t.initiator_id, t.recipient_id)),
+    'showcase', (select coalesce(jsonb_agg(jsonb_build_array(s.user_id, s.position, s.user_card_id) order by s.user_id, s.position), '[]')
+      from public.showcase s where s.user_id in (t.initiator_id, t.recipient_id)),
     'ledger', (select count(*) from wm.wb_ledger where ref = 'trade:' || t.id),
     'notifications', (select count(*) from public.notifications where data ->> 'trade_id' = t.id::text),
+    'push_outbox', (select count(*) from wm.push_outbox o join public.notifications n on n.id = o.notification_id
+      where n.data ->> 'trade_id' = t.id::text),
     'idem', (select count(*) from wm.idempotency_keys where user_id in (t.initiator_id, t.recipient_id)),
     'invariants', wm.check_invariants())
   from public.trades t where t.id = p_trade
+$$;
+
+-- Carte R à image (B10), absente du seed : avatar et vitrine des tests SQL, du contrat (psql) et des E2E (imageCopy).
+create or replace function tests.image_card(p_title text) returns uuid
+language sql security definer set search_path = '' as $$
+  insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, image_url)
+  values (p_title, 'https://fr.wikipedia.org/wiki/' || replace(p_title, ' ', '_'), 'R', 10, 10,
+    'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
+  returning id
 $$;
 
 -- Faute injectée (P23, M4-7) : posée par un trigger de test filtré sur un échange, elle annule toute la transaction qui l'atteint.
