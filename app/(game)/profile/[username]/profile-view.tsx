@@ -15,7 +15,7 @@ import { Loading } from '@/components/ui/Loading'
 import { Pagination } from '@/components/ui/Pagination'
 import { tabKey } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
-import { api, ApiError, apiOnce, unsure, userMessage } from '@/lib/api'
+import { api, ApiError, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatInt, formatMonthYear } from '@/lib/format'
 import { RARITY, type RarityCode } from '@/lib/rarity'
 
@@ -24,7 +24,6 @@ const TABS = ['showcase', 'collection'] as const
 type Tab = (typeof TABS)[number]
 const LABELS: Record<Tab, string> = { showcase: 'Vitrine', collection: 'Collection' }
 const LIMIT = 50
-const UNSURE = 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.'
 const grid = 'flex flex-wrap justify-center gap-3 sm:gap-[22px] md:gap-[26px]'
 const field = 'min-h-11 w-full rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm'
 

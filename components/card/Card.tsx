@@ -36,7 +36,8 @@ type Props = {
   excerpt?: string | null
 }
 
-const SIZES = {
+// Dimensions par taille ; root sert aussi à un emplacement vide de la taille d'une carte (vitrine de /profile).
+export const SIZES = {
   lg: { root: 'w-72 h-[420px]', h3: 'text-base', p: 'text-[11px] line-clamp-3', stats: 'text-sm', icon: 'size-4', star: 'size-7' },
   grid: {
     root: 'w-[clamp(8.4rem,43vw,10rem)] h-[clamp(11.8rem,60vw,14rem)]',

@@ -39,6 +39,8 @@ const READY: Record<string, string> = {
   '/trades/new': 'main [data-ready]',
   // Profil lu, avec sa vitrine et ses raretés quand la vue est permise (ou l'échec).
   '/profile/[username]': 'main [data-ready]',
+  // Ligne du profil et vitrine lues (ou l'échec).
+  '/profile': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -252,6 +254,27 @@ test('axe /profile/<pseudo> : soi, un ami à la vitrine garnie, un profil privé
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'f', :'h')`, { me: me.uid, f: friend.uid, h: hidden.uid })
+  }
+})
+
+test('axe /profile : deux emplacements remplis, puis le sélecteur d\'avatar ouvert (une copie à image, une « Sans image »)', async ({ page, login }) => {
+  const me = await login()
+  try {
+    for (const position of ['0', '1']) {
+      sql(`insert into public.showcase (user_id, position, user_card_id) values (:'uid', :'p'::int, :'copy')`, { uid: me.uid, p: position, copy: imageCopy(me) })
+    }
+    giveCopies(me, 'C')
+    await page.goto('/profile')
+    await page.locator(READY['/profile']).waitFor()
+    await expect(page.getByRole('region', { name: 'Vitrine (2/4)' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Changer l\'avatar' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Choisir ton avatar' })
+    await expect(dialog.locator('div[class*="glow-"]')).toHaveCount(3)
+    await expect(dialog.getByText('Sans image', { exact: true })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'me'`, { me: me.uid })
   }
 })
 

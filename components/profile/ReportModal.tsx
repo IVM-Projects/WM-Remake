@@ -6,15 +6,13 @@ import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
-import { api, apiOnce, unsure, userMessage } from '@/lib/api'
+import { api, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 
 // Motifs du D (enum report_reason, M4b-10), dans l'ordre affiché.
 const REASONS = [['cheating', 'Triche'], ['inappropriate_content', 'Contenu inapproprié'], ['spam', 'Spam']] as const
 type Reason = (typeof REASONS)[number][0]
 type Report = { reason: Reason; details: string | null }
-// Réponse perdue, 5xx ou corps illisible (B12) : relancé avec le même corps, l'envoi garde sa clé (apiOnce) et le serveur rejoue sa réponse.
-const UNSURE = 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.'
 
 // Signalement d'un joueur (M4b-24) : un par couple, prérempli par le sien à l'ouverture, modifiable.
 export function ReportModal({ user, onClose }: { user: { id: string; username: string }; onClose: () => void }) {
@@ -63,6 +61,7 @@ export function ReportModal({ user, onClose }: { user: { id: string; username: s
     setError(null)
     try {
       const r = await apiOnce<{ report: Report } | null>(keys.current, body, '/api/reports', { method: 'POST', body })
+      // Réponse perdue, 5xx ou corps illisible (B12) : relancé avec le même corps, l'envoi garde sa clé (apiOnce) et le serveur rejoue sa réponse.
       if (!r?.report) return setError(UNSURE)
       toast(report ? 'Signalement modifié.' : 'Signalement envoyé.')
       // Démontée, la modale rend le focus à « Signaler ».

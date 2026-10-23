@@ -1,11 +1,12 @@
 'use client'
 
 import { LogOut } from 'lucide-react'
-import { useEffect, useEffectEvent, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react'
 import { Field, FormError } from '@/components/auth/Field'
 import { useHydrated } from '@/components/auth/Submit'
 import { ghost as ghostBase } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
+import { ReadError, Section } from '@/components/ui/Section'
 import { api, ApiError, userMessage } from '@/lib/api'
 import { authErrorMessage, usernameProblem } from '@/lib/auth'
 import { setPrefs } from '@/lib/prefs'
@@ -17,7 +18,7 @@ type Key = keyof Prefs
 const TOGGLES: [Key, string, string][] = [
   ['sounds', 'Sons', 'Ouverture des paquets et révélation des cartes.'],
   ['hide_sensitive', 'Masquer les images sensibles', 'Une image signalée comme sensible laisse place à l\'emblème du jeu.'],
-  ['is_public', 'Profil public', 'Les autres joueurs peuvent voir ton profil et ta collection.'],
+  ['is_public', 'Profil public', 'Décochée, seuls tes amis voient ta bio, ta vitrine et ta collection.'],
 ]
 
 // Jamais disabled sur un bouton qui peut garder le focus : aria-disabled et une garde (le navigateur poserait le focus sur body).
@@ -167,24 +168,6 @@ export function SettingsClient() {
         </Section>
       </div>
     </>
-  )
-}
-
-function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
-  return (
-    <section aria-labelledby={id} className="card-frame space-y-4 p-6">
-      <h2 id={id} tabIndex={-1} className="text-lg font-bold outline-none">{title}</h2>
-      {children}
-    </section>
-  )
-}
-
-function ReadError({ onRetry, children }: { onRetry: () => void; children: string }) {
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      <FormError>{children}</FormError>
-      <button type="button" onClick={onRetry} className={ghost}>Réessayer</button>
-    </div>
   )
 }
 

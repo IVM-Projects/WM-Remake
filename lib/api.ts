@@ -36,6 +36,9 @@ export async function api<T>(path: string, init: RequestInit & { idem?: boolean 
 // Nos 503 codés (BUSY…) y tombent aussi : clé gardée et relectures sans danger, le serveur a tout annulé (texte : userMessage).
 export const unsure = (e: unknown): boolean => !(e instanceof ApiError) || e.status >= 500
 
+// Texte de l'issue incertaine d'une écriture (B12, P19) ; repli connu : « L'action n'a pas abouti. ».
+export const UNSURE = 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.'
+
 // Texte pour l'écran : nos routes répondent en français ; ≥ 500, seulement avec leur code (BUSY, maintenance, catalog_empty :
 // refus net, tout annulé côté serveur). Réseau, 500 interne sans code ou corps non JSON → le repli.
 export function userMessage(e: unknown, fallback: string): string {

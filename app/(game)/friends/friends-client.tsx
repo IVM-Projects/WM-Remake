@@ -9,7 +9,7 @@ import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
-import { api, apiOnce, unsure, userMessage } from '@/lib/api'
+import { api, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 import { unreadStore } from '@/lib/notifications'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -153,7 +153,7 @@ export function FriendsClient() {
     try {
       toast(done(await apiOnce<T>(keys.current, intent, path, init)))
     } catch (e) {
-      toast(userMessage(e, unsure(e) ? 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.' : 'L\'action n\'a pas abouti.'))
+      toast(userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'))
     }
     // Modale démontée avant la relecture : elle rend le focus au « Retirer » de la ligne, que la relecture retire ensuite.
     setConfirm(null)
