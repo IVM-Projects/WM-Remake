@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { test as base, expect, type Page, type Route } from '@playwright/test'
+import { test as base, expect, type Locator, type Page, type Route } from '@playwright/test'
 import type { Backend } from '../contract/harness.ts'
-import { authCookie, makeUser, psql } from '../contract/users.ts'
+import { authCookie, giveCards, makeUser, psql } from '../contract/users.ts'
 
 type User = ReturnType<typeof makeUser>
 
@@ -15,14 +15,23 @@ export const makePlayer = (opts?: Parameters<typeof makeUser>[1]): User => makeU
 // psql sur la base du banc (variables :'nom', jamais de concaténation).
 export const sql = (query: string, vars?: Record<string, string>): string => psql(backend().databaseUrl, query, vars)
 
+// n copies des n premières cartes du seed de cette rareté (P20) ; renvoie les ids des copies.
+export const giveCopies = (u: User, rarity: string, n = 1): string[] => giveCards(backend().databaseUrl, u.uid, rarity, n)
+
+// Amis par SQL (P20) : une ligne accepted, `a` demandeur ; renvoie son id.
+export const befriend = (a: User, b: User): string =>
+  sql(`insert into public.friendships (requester_id, addressee_id, status) values (:'a', :'b', 'accepted') returning id`, { a: a.uid, b: b.uid })
+
 // Cookie de session d'un joueur de makePlayer, pour son propre contexte de navigateur (P22).
 export const cookieFor = (u: User) => authCookie(backend(), u.uid)
 
 // { times: 1 } qui reste tout le test (les requêtes suivantes : fallback) : son expiration envoie Fetch.disable, et Chromium perd parfois une requête en vol.
-export async function routeOnce(page: Page, url: Parameters<Page['route']>[0], handler: (route: Route) => unknown): Promise<void> {
+// `when` : seule la première requête qui le vérifie est prise (une méthode sur une adresse partagée par GET et PATCH).
+export async function routeOnce(page: Page, url: Parameters<Page['route']>[0], handler: (route: Route) => unknown,
+  when: (route: Route) => boolean = () => true): Promise<void> {
   let used = false
   await page.route(url, (route) => {
-    if (used) return route.fallback()
+    if (used || !when(route)) return route.fallback()
     used = true
     return handler(route)
   })
@@ -42,6 +51,11 @@ export const test = base.extend<{ login: (opts?: Parameters<typeof makeUser>[1])
     })
   },
 })
+
+// Un <Link> de Next cliqué avant l'hydratation est un <a> nu : rechargement complet, qui sort de l'historique SPA (Activity perdue).
+export async function hydrated(link: Locator): Promise<void> {
+  await expect.poll(() => link.evaluate((a) => Object.keys(a).some((k) => k.startsWith('__reactProps')))).toBe(true)
+}
 
 export type Account = { username: string; email: string; password: string }
 

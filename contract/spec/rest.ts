@@ -5,10 +5,11 @@ import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
 import { accessToken, giveCards, makeUser, psql } from '../users.ts'
 import { Card, CARD_COLUMNS } from './catalog.ts'
 import { listed, seller } from './market.ts'
+import { pair, proposed } from './trades.ts'
 
 const KEY = 'sb_publishable_test'
 
-function rest(env: ContractEnv, path: string, init: { method?: string; uid?: string; body?: unknown; headers?: Record<string, string> } = {}) {
+export function rest(env: ContractEnv, path: string, init: { method?: string; uid?: string; body?: unknown; headers?: Record<string, string> } = {}) {
   return fetch(`${env.backend.supabaseUrl}/rest/v1/${path}`, {
     method: init.method ?? 'GET',
     headers: {
@@ -48,8 +49,11 @@ const Synced = z.strictObject({
   packs_last_regen_at: z.string().nullable(), wikibidous_balance: z.int(), next_regen_at: z.string().nullable(),
 })
 
-const spec = (method: RouteSpec['method'], path: string, source: string, cases: RouteSpec['cases']): RouteSpec =>
-  ({ method, path: `rest/v1/${path}`, source, confidence: 'conf.', cases })
+const spec = (method: RouteSpec['method'], path: string, source: string, cases: RouteSpec['cases'],
+  confidence: RouteSpec['confidence'] = 'conf.'): RouteSpec => ({ method, path: `rest/v1/${path}`, source, confidence, cases })
+// Les échanges de ce joueur : le seul, toujours en attente (0005 n'accorde que select à authenticated : « aucun client n'y écrit »).
+const onlyPending = (env: ContractEnv, uid: string, id: string) => assert.equal(sql(env, `select string_agg(id || ':' || status, ',')
+from public.trades where :'uid' in (initiator_id, recipient_id)`, { uid }), `${id}:pending`)
 
 export const restSpecs: RouteSpec[] = [
   spec('POST', 'rpc/sync_profile_packs', 'R§3.1', [
@@ -291,4 +295,45 @@ where a.id = :'id'`, { id: kept }))
       },
     },
   ]),
+  spec('POST', 'trades', 'R§3.6', [
+    {
+      name: 'en participant → 403 42501 ; anon → 401 ; aucune ligne créée ; authenticated sans insert, update ni delete',
+      run: async (env) => {
+        const [a, b] = pair(env)
+        const id = proposed(env, a, b)
+        const row = { initiator_id: a.uid, recipient_id: b.uid, expires_at: new Date(Date.now() + 3_600_000).toISOString() }
+        await pgError(await rest(env, 'trades', { method: 'POST', uid: a.uid, body: row, headers: MINIMAL }), 403, '42501')
+        await status(await rest(env, 'trades', { method: 'POST', body: row, headers: MINIMAL }), 401)
+        onlyPending(env, a.uid, id)
+        // Aucun droit d'écriture (0005) : le 42501 seul ne le distingue pas d'un droit accordé que la RLS refuserait aussi.
+        assert.equal(sql(env, `select not has_table_privilege('authenticated', 'public.trades', 'INSERT')
+  and not has_table_privilege('authenticated', 'public.trades', 'UPDATE') and not has_table_privilege('authenticated', 'public.trades', 'DELETE')`), 't')
+      },
+    },
+  ], 'inc.'),
+  spec('PATCH', 'trades', 'R§3.6', [
+    {
+      name: 'id=eq.<id> { status: accepted } en participant, puis en non-participant → 403 42501 ; anon → 401 ; l\'échange reste pending',
+      run: async (env) => {
+        const [a, b] = pair(env)
+        const id = proposed(env, a, b)
+        const patch = (uid?: string) => rest(env, `trades?id=eq.${id}`, { method: 'PATCH', uid, body: { status: 'accepted' }, headers: MINIMAL })
+        for (const uid of [b.uid, makeUser(env.backend.databaseUrl).uid]) await pgError(await patch(uid), 403, '42501')
+        await status(await patch(), 401)
+        onlyPending(env, a.uid, id)
+      },
+    },
+  ], 'inc.'),
+  spec('DELETE', 'trades', 'R§3.6', [
+    {
+      name: 'id=eq.<id> en participant → 403 42501 ; anon → 401 ; l\'échange reste pending',
+      run: async (env) => {
+        const [a, b] = pair(env)
+        const id = proposed(env, a, b)
+        await pgError(await rest(env, `trades?id=eq.${id}`, { method: 'DELETE', uid: a.uid }), 403, '42501')
+        await status(await rest(env, `trades?id=eq.${id}`, { method: 'DELETE' }), 401)
+        onlyPending(env, a.uid, id)
+      },
+    },
+  ], 'inc.'),
 ]

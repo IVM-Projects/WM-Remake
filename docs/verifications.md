@@ -251,3 +251,35 @@ Répétition et CI le 2026-10-22 avant 08:05Z ; fichier lancé par l'utilisateur
 | Délai de règlement, relevé final | `cron.job_run_details` de `wm-settle` de 08:09:49Z à 09:29:06Z (1 h 19) ; `public.auctions` | 475 runs, 0 échec ; p99 de l'écart entre deux départs 10,305 s (max 10,363 s) ; p99 de la durée 0,071 s (max 0,149 s) : borne du cron seul 10,38 s < 15 s. Deux ventes réelles du joueur de démo, réglées toutes deux par le cron : l'invendue en 4,50 s, la vendue (une mise, 80 wikibidous) en 2,60 s après l'échéance, par le run de 08:45:27,526Z ; invariants `[]` | 2026-10-22 |
 | Jobs horaires | `cron.job_run_details` de `wm-purge` et `wm-cron-history` | `wm-cron-history` 08:17Z et 09:17Z `succeeded`, `wm-purge` 09:07Z `succeeded` | 2026-10-22 |
 | Taille et WAL à +80 min | `SIZE_SQL`, `pg_ls_waldir()`, `pg_total_relation_size('cron.job_run_details')`, `pg_replication_slots` (09:29Z) | Base 186 961 781 o (+1,2 Mo depuis 07:05Z) ; WAL 134 218 094 o ; historique du cron 221 184 o pour 953 lignes ; aucun slot | 2026-10-22 |
+
+## M4a — Task 15 : acceptation d'échange en tables journalisées
+
+Bac à sable, 2026-10-22, branche `claude/clever-cannon-59x0dj` (sur 9f52b2d) ; **chiffres indicatifs (A5) ; le M8 mesure S5 sur Pro.**
+
+Méthode (M4-6, P13) :
+
+- PG 16.15 local, 4 vCPU, la machine du M3 ; `fsync=on` et `synchronous_commit=on`, relevés par `run.sh`, qui refuse sinon ; vraies migrations, tables journalisées. Même cluster et même run que les benchs du M3 (section ci-dessus), après le règlement ;
+- `trade_setup.sql` : 20 joueurs au solde de 10⁹, en 10 paires amies ; par paire, taille (100 et 10) et tour (1 à 10), un échange créé par `wm.create_trade`, l'initiateur alternant à chaque tour, sur des copies propres au tour (aucune attente de verrou entre clients) ;
+- par côté à 100 : 70 copies seules (dont 10 `starred`, chacune avec une étiquette), 10 piles de 3 favorites (2 éléments chacune), 10 piles de 2 (1 élément) ; à 10 : 7 copies seules (dont 1 favorite étiquetée), une pile de 3 favorite (2 éléments), une pile de 2 (1 élément). WB : 500 de l'initiateur, 300 du destinataire ;
+- avatar : `bench.accept_next` pose celui de chaque joueur sur une de ses copies seules de l'échange, dans la transaction mesurée, avant `wm.trade_action(…, 'accept')` ; pas de vitrine (P13) ;
+- fond : 100 autres joueurs amis deux à deux, 5 000 échanges en attente d'un élément par côté, posés directement ;
+- `analyze` à la fin de la préparation (ligne « Statistiques » ci-dessous) ;
+- `pgbench -n -c 10 -j 10 -t 10 -D size=100`, puis `size=10` : 10 acceptations parallèles × 10 tours. Latence par transaction en 3e colonne des journaux `-l` (µs) ; p50, p95 et max au rang le plus proche. Échec si le p95 atteint 500 ms, si une transaction échoue ou si moins de 100 échanges sont acceptés à la taille ;
+- expiration : les 5 000 échanges de fond échus depuis une seconde, puis un seul `wm.expire_trades(5000)` chronométré par `\timing`.
+
+```bash
+bash load/bench/run.sh
+```
+
+Deux runs (A et B), chacun sur un banc neuf, après la correction des statistiques. Un troisième, après une retouche de mise en forme de
+`run.sh`, donne les mêmes ordres de grandeur (p95 102,3 et 50,3 ms, expiration en 66,9 ms).
+
+| Élément | Méthode | Résultat | Date |
+|---|---|---|---|
+| Acceptation 100 ↔ 100 | `trade_accept.sql`, `size=100` | p50 51,6 et 49,2 ms ; **p95 112,6 et 105,2 ms** ; max 140,0 et 134,9 ms ; 164,3 et 170,9 tps ; 100 acceptés aux deux runs. À côté, les 2,3 ms de D§9.6 (`UNLOGGED`, optimiste). Ici, 100 éléments par côté et toute la transaction : `wm.trade_move` seul prend 20 ms (ligne « Décomposition ») | 2026-10-22 |
+| Acceptation 10 ↔ 10 (témoin) | `trade_accept.sql`, `size=10` | p50 17,2 et 12,6 ms ; p95 63,7 et 45,1 ms ; max 76,6 et 54,4 ms ; 395,3 et 572,3 tps ; 100 acceptés | 2026-10-22 |
+| Rapport des p95 | 100 ↔ 100 sur 10 ↔ 10 | 1,8 et 2,3 : dix fois plus d'éléments pour environ le double de la latence | 2026-10-22 |
+| Expiration de 5 000 échanges | `wm.expire_trades(5000)`, un lot | 73,3 et 53,6 ms (sous 1 s : rien au suivi). Le lot tient ses 5 000 verrous de ligne jusqu'à son commit | 2026-10-22 |
+| Décomposition d'une acceptation | mesure ponctuelle, `auto_explain` (instructions imbriquées), une acceptation 100 ↔ 100 seule, sur les étapes de `run.sh` rejouées jusqu'à `trade_setup.sql`, après `analyze` | 46 ms au total : `wm.trade_action` 33 ms, dont `wm.trade_move` 20 ms (`update … set user_id` des 140 copies seules 6,3 ms, lecture des copies 5,8 ms, 40 lignes neuves 3,3 ms, décrément des piles 1,7 ms) ; l'avatar posé par le banc 10 ms | 2026-10-22 |
+| Statistiques | runs de mise au point, `pg_stat_activity` échantillonné toutes les 0,2 s, `auto_explain` | Sans `analyze`, 2 runs sur 3 échouaient : 100 ↔ 100 en 3 404 et 3 699 ms de moyenne (p95 3 796 et 4 148 ms), clients sur CPU, sans attente de verrou ni checkpoint. Cause : un autovacuum passé sur `user_cards` pendant les insertions non validées de `trade_setup.sql` l'a laissée à `reltuples = 0` pour 174 pages (687 réelles). Le planificateur y voit 1 ligne et parcourt toute la table pour les 200 éléments de l'échange : 6 millions de lignes filtrées par instruction, une acceptation seule en 2 441 ms. Le même état, après `analyze` : 47,6 ms. Artefact du banc, qui charge la table et la mesure dans la même minute | 2026-10-22 |
+| Interblocages et invariants | `pg_stat_database.deadlocks` avant et après ; `wm.check_invariants()` | 0 interblocage et `[]` aux deux runs ; aucune transaction en échec dans pgbench | 2026-10-22 |

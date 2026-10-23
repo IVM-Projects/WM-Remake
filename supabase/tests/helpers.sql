@@ -47,4 +47,28 @@ begin
   reset role;
 end $$;
 
+-- État complet d'un échange (P23, M4-7), comparé avant et après un échec : la ligne, les copies, étiquettes et profils de ses deux joueurs,
+-- ses lignes de grand livre et ses notifications, les clés d'idempotence des deux joueurs, les invariants. Exige public.trades (M4a).
+create or replace function tests.trade_snapshot(p_trade uuid) returns jsonb
+language sql security definer set search_path = '' as $$
+  select jsonb_build_object('trade', to_jsonb(t),
+    'copies', (select coalesce(jsonb_agg(jsonb_build_object('id', uc.id, 'user_id', uc.user_id, 'count', uc.count, 'starred', uc.starred)
+      order by uc.id), '[]') from public.user_cards uc where uc.user_id in (t.initiator_id, t.recipient_id)),
+    'tags', (select coalesce(jsonb_agg(jsonb_build_array(ut.user_card_id, ut.tag_id) order by ut.user_card_id, ut.tag_id), '[]')
+      from public.user_card_tags ut join public.user_cards uc on uc.id = ut.user_card_id where uc.user_id in (t.initiator_id, t.recipient_id)),
+    'profiles', (select jsonb_agg(jsonb_build_object('id', p.id, 'avatar_user_card_id', p.avatar_user_card_id,
+      'wikibidous_balance', p.wikibidous_balance) order by p.id) from public.profiles p where p.id in (t.initiator_id, t.recipient_id)),
+    'ledger', (select count(*) from wm.wb_ledger where ref = 'trade:' || t.id),
+    'notifications', (select count(*) from public.notifications where data ->> 'trade_id' = t.id::text),
+    'idem', (select count(*) from wm.idempotency_keys where user_id in (t.initiator_id, t.recipient_id)),
+    'invariants', wm.check_invariants())
+  from public.trades t where t.id = p_trade
+$$;
+
+-- Faute injectée (P23, M4-7) : posée par un trigger de test filtré sur un échange, elle annule toute la transaction qui l'atteint.
+create or replace function tests.boom() returns trigger language plpgsql as $$
+begin
+  raise exception 'erreur injectée' using errcode = 'XX000';
+end $$;
+
 \endif

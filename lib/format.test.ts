@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { formatCountdown, formatInt, formatRemaining, wikibidous } from './format'
+import { formatCountdown, formatInt, formatRemaining, formatShortDate, wikibidous } from './format'
 
 test('formatInt : fr-FR, espace fine insécable U+202F entre les milliers', () => {
   expect(formatInt(6974)).toBe('6 974')
@@ -26,4 +26,8 @@ test('formatRemaining : « 3m 18s » (R§2.2), minutes et secondes sur deux chif
 
 test('wikibidous : 0 et 1 au singulier, au-delà au pluriel (« 1 wikibidou », « 1 234 wikibidous »)', () => {
   expect([0, 1, 2, 1234].map((n) => `${formatInt(n)} ${wikibidous(n)}`)).toEqual(['0 wikibidou', '1 wikibidou', '2 wikibidous', '1\u202f234 wikibidous'])
+})
+
+test('formatShortDate : date courte fr-FR des offres (R§6.8) : « 20 sept. »', () => {
+  expect(formatShortDate('2026-09-20T12:00:00Z')).toBe('20 sept.')
 })

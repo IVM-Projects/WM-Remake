@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { boolParam, CollectionQuery, filterArgs, pageParam, rarityList } from '@/lib/schemas'
+import { boolParam, CollectionQuery, filterArgs, pageParam, pgText, rarityList } from '@/lib/schemas'
 
 describe('schémas de query', () => {
+  it('pgText : \\0 et demi-paire UTF-16 seule (haute ou basse) refusés, « Caractère invalide » ; paire d\'émoji acceptée', () => {
+    for (const bad of ['a\0b', '\ud800', 'a\udc00b', '\ud83d']) {
+      expect(pgText.safeParse(bad).error?.issues[0].message, JSON.stringify(bad)).toBe('Caractère invalide')
+    }
+    expect(pgText.parse('ami 😀')).toBe('ami 😀')
+  })
+
   it('boolParam : 1/true → true ; 0/false/absent → false ; autre → erreur', () => {
     expect(['1', 'true', '0', 'false', undefined].map((v) => boolParam.parse(v))).toEqual([true, true, false, false, false])
     expect(boolParam.safeParse('oui').success).toBe(false)

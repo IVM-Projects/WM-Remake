@@ -76,7 +76,7 @@ do $$ declare bad text; begin
     'settle_due_auctions']) f, lateral (select prosrc s from pg_proc where oid = to_regproc('wm.' || f)) p,
     lateral (select strpos(s, 'perform set_config(''lock_timeout'', ''2s'', true);') t,
       (select min(i) from unnest(array[strpos(s, 'for update'), strpos(s, 'wm.lock_users('), strpos(s, 'wm.seller_auction(')]) i where i > 0) l) x
-  where not (t > 0 and t < l);
+  where not coalesce(t > 0 and t < l, false);
   assert bad is null, 'lock_timeout absent ou posé après un verrou : ' || bad;
   assert (select count(*) from unnest(array['create_auction', 'place_bid', 'cancel_auction', 'reprice_auction', 'settle_auction',
     'settle_due_auctions']) f where to_regproc('wm.' || f) is not null) = 6, 'fonction absente';

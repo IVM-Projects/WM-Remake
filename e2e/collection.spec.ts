@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test'
-import { expect, routeOnce, sql, test } from './fixtures'
+import { expect, hydrated, routeOnce, sql, test } from './fixtures'
 
 // 60 copies des cartes n° 0001 à 0060 du seed (L 1–6, UR 7–30, SR 31–60), la plus récente = le plus grand numéro.
 // Tri par rareté : page 1 = L 6…1, UR 30…7, SR 60…41 ; page 2 = SR 40…31, dont n° 0031 en 3 exemplaires.
@@ -804,6 +804,9 @@ test('modale réaffichée par Activity : Échap rend le focus à la tuile d\'ori
   seed60(uid)
   await page.goto('/pulls')
   const nav = page.locator('nav a[href="/collection"]').first()
+  await hydrated(nav)
+  // Marqueur du document : un rechargement complet l'efface, et la page gardée par Activity avec lui.
+  await page.evaluate(() => void Object.assign(window, { __spa: true }))
   await nav.click()
   await expect(tiles(page)).toHaveCount(50)
   await opener(page, 6).click()
@@ -812,6 +815,8 @@ test('modale réaffichée par Activity : Échap rend le focus à la tuile d\'ori
   await page.goBack()
   await expect(page).toHaveURL('/pulls')
   await nav.click()
+  await expect(page).toHaveURL('/collection')
+  expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
   // Effets repris (panneau focalisé, Échap écouté) : la page réaffichée est prête.
   await expect(dialog).toBeFocused()
   await page.keyboard.press('Escape')

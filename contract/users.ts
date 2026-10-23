@@ -59,6 +59,11 @@ export function api(
   })
 }
 
+// api() en arguments positionnels ; idem() : une Idempotency-Key neuve à passer en `headers`.
+export const send = (env: ContractEnv, method: string, path: string, uid?: string, body?: unknown, headers?: Record<string, string>) =>
+  api(env, path, { method, uid, body, headers })
+export const idem = () => ({ 'Idempotency-Key': randomUUID() })
+
 export const RARITIES = ['C', 'PC', 'R', 'SR', 'UR', 'L'] as const
 export const Rarity = z.enum(RARITIES)
 export const Iso = z.iso.datetime({ offset: true })
@@ -77,6 +82,11 @@ export async function failed(res: Response, status: number, code?: string): Prom
   assert.equal(body.message, body.error)
   assert.equal(body.code, code)
   return body
+}
+
+// Corps entier de l'erreur (wm.raise_err ou zod via route()) : code s'il est donné, error = message, aucune autre clé.
+export async function refused(res: Response, status: number, error: string, code?: string): Promise<void> {
+  assert.deepEqual(await failed(res, status, code), { ...(code && { code }), error, message: error })
 }
 
 export async function ok<T>(res: Response, schema: z.ZodType<T>): Promise<T> {

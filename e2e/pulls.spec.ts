@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, routeOnce, sql, test } from './fixtures'
+import { expect, hydrated, routeOnce, sql, test } from './fixtures'
 
 const RARITY_LABEL = '(Légendaire|Ultra rare|Super rare|Rare|Peu commune|Commune)'
 
@@ -196,9 +196,15 @@ test('une relecture du stock partie avant l\'ouverture n\'écrase pas le stock q
     await route.fulfill({ response: res })
     delivered()
   })
-  await page.locator('nav a[href="/collection"]').first().click()
+  const nav = page.locator('nav a[href="/collection"]').first()
+  await hydrated(nav)
+  // Marqueur du document : un rechargement complet l'efface. Sans lui, un retour par rechargement attendait 30 s (stock retenu, release() après openPack).
+  await page.evaluate(() => void Object.assign(window, { __spa: true }))
+  await nav.click()
   await expect(page).toHaveURL('/collection')
   await page.locator('nav a[href="/pulls"]').first().click()
+  await expect(page).toHaveURL('/pulls')
+  expect(await page.evaluate(() => '__spa' in window), 'rechargement complet : la page n\'est plus celle gardée par Activity').toBe(true)
   await read
   await openPack(page)
   release()

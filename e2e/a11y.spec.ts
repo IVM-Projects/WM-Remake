@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { expect, makePlayer, sql, test } from './fixtures'
+import { befriend, expect, giveCopies, makePlayer, sql, test } from './fixtures'
 
 type Known = { rule: string; selector: string }
 
@@ -33,6 +33,10 @@ const READY: Record<string, string> = {
   '/collection': 'main a[href="/pulls"]', '/global-collection': 'main nav[aria-label="Pagination"]',
   // Les deux lectures de /settings finies : pseudo et préférences.
   '/settings': 'main:has(#settings-username) input[name="sounds"]',
+  // Première lecture de /api/friends finie (sections ou erreur).
+  '/friends': 'main [data-ready]',
+  // Ami, collections et parent lus (composer, blocage ou erreur).
+  '/trades/new': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -41,9 +45,9 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
-  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/settings']) {
+  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings']) {
   test(`axe ${path}`, async ({ page, login }) => {
-    if (['/pulls', '/collection', '/global-collection', '/settings'].includes(path)) await login()
+    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings'].includes(path)) await login()
     // Adresse posée par /login (compte non confirmé) dans sessionStorage, jamais dans l'URL.
     if (path === '/verify-email') await page.addInitScript(() => sessionStorage.setItem('wm.verifyEmail', 'a11y@test.local'))
     await page.goto(path)
@@ -59,6 +63,22 @@ test('axe /pulls mobile, feuille « Plus » ouverte', async ({ page, login }) =>
   await page.getByRole('button', { name: 'Plus' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await expectNoSeriousViolations(page)
+})
+
+test('axe /pulls, panneau des notifications ouvert (3 notifications, dont une lue)', async ({ page, login }) => {
+  const { uid } = await login()
+  try {
+    sql(`insert into public.notifications (user_id, type, data, read)
+select :'uid', 'trade_received', jsonb_build_object('trade_id', gen_random_uuid(), 'user_id', gen_random_uuid(), 'username', 'Alice'), i = 3
+from generate_series(1, 3) i`, { uid })
+    await page.goto('/pulls')
+    await expect(page.locator('button[aria-label="Notifications"] + span')).toHaveText('2')
+    await page.locator('button[aria-label="Notifications"]').click()
+    await expect(page.getByRole('dialog', { name: 'Notifications' }).getByRole('listitem')).toHaveCount(3)
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
+  }
 })
 
 test('axe /pulls en révélation', async ({ page, login }) => {
@@ -175,6 +195,86 @@ select from wm.place_bid(:'b', :'id', 10) \\g /dev/null
   } finally {
     sql(`delete from auth.users where id in (:'uid', :'s', :'b');
 delete from public.cards where id = :'card'`, { uid, s: seller.uid, b: bidder.uid, card })
+  }
+})
+
+test('axe /friends : une demande reçue et un ami, puis la modale de retrait', async ({ page, login }) => {
+  const me = await login()
+  const [asker, friend] = [makePlayer(), makePlayer()]
+  try {
+    sql(`insert into public.friendships (requester_id, addressee_id) values (:'a', :'me')`, { a: asker.uid, me: me.uid })
+    befriend(friend, me)
+    await page.goto('/friends')
+    await page.locator(READY['/friends']).waitFor()
+    await expect(page.locator('main section li')).toHaveCount(2)
+    await expectNoSeriousViolations(page)
+    await page.locator('main section li').filter({ hasText: friend.username }).getByRole('button', { name: 'Retirer' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'a', :'f')`, { me: me.uid, a: asker.uid, f: friend.uid })
+  }
+})
+
+// Écart de contrat connu, comme R21 (à consigner pour le M7) : l'offre de R§6.8 garde le nom figé « Voir le détail de l'échange » sur un
+// bouton qui contient « De <pseudo> », le statut, la date et les colonnes ; axe y lève label-content-name-mismatch (WCAG 2.5.3). Les
+// offres se distinguent par aria-describedby (M4-15).
+const TRADE_OFFER: Known = { rule: 'label-content-name-mismatch', selector: 'div.card-frame.p-4 > button[aria-label="Voir le détail de l\'échange"]' }
+
+// Échange de `from` vers `to` par wm.create_trade : une copie de chacun ; renvoie son id.
+const trade = (from: { uid: string; username: string }, to: { uid: string; username: string }) =>
+  sql(`select wm.create_trade(:'a', :'b', (select jsonb_agg(jsonb_build_object('user_card_id', id, 'card_id', card_id, 'offered_by', user_id))
+from public.user_cards where id in (:'x', :'y'))) ->> 'id'`, { a: from.uid, b: to.uid, x: giveCopies(from, 'SR')[0], y: giveCopies(to, 'C')[0] })
+
+test('axe /trades : une offre par onglet (reçue, envoyée, refusée)', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(me, friend)
+    trade(friend, me)
+    trade(me, friend)
+    sql(`select wm.trade_action(:'me', :'t', 'decline')`, { me: me.uid, t: trade(friend, me) })
+    await page.goto('/trades')
+    await page.locator('main [data-ready]').waitFor()
+    for (const name of ['Reçues', 'Envoyées', 'Historique']) {
+      await page.getByRole('tab', { name }).click()
+      await expect(page.getByRole('tabpanel').locator('div.card-frame.p-4')).toHaveCount(1)
+      await expectNoSeriousViolations(page, TRADE_OFFER)
+    }
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
+test('axe /trades/<id> : détail d\'une offre reçue, ses actions', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(me, friend)
+    await page.goto(`/trades/${trade(friend, me)}`)
+    await page.locator('main [data-ready]').waitFor()
+    await expect(page.getByRole('button', { name: 'Accepter' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
+test('axe /trades/new?with=<id> : deux panneaux garnis, une copie engagée, un choix', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(me, friend)
+    trade(me, friend)
+    await page.goto(`/trades/new?with=${friend.uid}`)
+    await page.locator(READY['/trades/new']).waitFor()
+    await expect(page.locator('main').getByText('Déjà dans un échange')).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('region', { name: /^Tu demandes/ }).getByRole('spinbutton').fill('1')
+    await expect(page.getByRole('list', { name: 'Tes choix' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
   }
 })
 

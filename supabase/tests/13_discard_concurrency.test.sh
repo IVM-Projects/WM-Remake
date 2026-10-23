@@ -18,8 +18,27 @@ one="$(q -c "select (wm.grant_copy('$uid', '$card', false)).id")"
 many="$(q -c "select (wm.grant_copy('$uid', '$card', true)).id")"
 q -c "update public.user_cards set count = 25 where id = '$many'" >/dev/null
 
-# Le profil est verrouillé le temps de lancer les 50 appels : ils se disputent tous le même verrou à sa libération.
-q -c "begin; select from public.profiles where id = '$uid' for update; select pg_sleep(2); commit;" >/dev/null &
+# Le profil est verrouillé jusqu'à ce que les 50 appels attendent derrière lui, 1 s au plus après le premier vu (la moitié du lock_timeout de
+# bulk_discard, M4-2, même si les connexions arrivent lentement), 5 s au plus en tout : ils se disputent tous le même verrou à sa libération.
+# Le bloqueur imprime le nombre maximal d'appels vus en attente.
+cat >"$tmp/b.sql" <<SQL
+begin;
+do \$\$ declare n int; m int := 0; t timestamptz; t1 timestamptz := clock_timestamp(); begin
+  perform from public.profiles where id = '$uid' for update;
+  loop
+    perform pg_stat_clear_snapshot();  -- sinon pg_stat_activity reste figé pour toute la transaction
+    n := (select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query like '%discard%');
+    m := greatest(m, n);
+    if t is null and n > 0 then t := clock_timestamp(); end if;
+    exit when n >= 50 or clock_timestamp() > t + interval '1 second' or clock_timestamp() > t1 + interval '5 seconds';
+    perform pg_sleep(0.05);
+  end loop;
+  perform set_config('wm_test.max_waiters', m::text, true);
+end \$\$;
+select current_setting('wm_test.max_waiters');
+commit;
+SQL
+q -f "$tmp/b.sql" >"$tmp/b.out" 2>"$tmp/b.err" &
 blocker=$!
 until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do kill -0 "$blocker"; done
 
@@ -28,7 +47,11 @@ for i in $(seq 25); do
   q -c "set role service_role; select wm.discard('$uid', '$one')" >/dev/null 2>"$tmp/o$i" & pids+=($!)
   q -c "set role service_role; select wm.discard('$uid', '$many')" >/dev/null 2>"$tmp/m$i" & pids+=($!)
 done
-wait "$blocker"
+wait "$blocker" || { echo "bloqueur en erreur" >&2; cat "$tmp/b.err" >&2; exit 1; }
+max="$(cat "$tmp/b.out")"
+echo "13_discard_concurrency : $max appels au plus en attente derrière le bloqueur" >&2
+# Au moins 25 : la contention est prouvée, même si, sur un runner lent, quelques appels partent après la libération.
+(( max >= 25 )) || { echo "contention insuffisante : $max appels en attente (25 attendus au moins)" >&2; exit 1; }
 fails=0
 for p in "${pids[@]}"; do wait "$p" || fails=$((fails + 1)); done
 
