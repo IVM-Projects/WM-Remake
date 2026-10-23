@@ -107,7 +107,7 @@ select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards
     await hydrated(chip)
     await chip.click()
     await expect(page).toHaveURL(href)
-    // goBack() puis toujours aucun role="dialog" : dans l'E2E de la Task 11, quand /profile/[username] existe (PF2).
+    // goBack() puis toujours aucun role="dialog" : dans e2e/profile.spec.ts, où la page du profil existe (PF2).
   } finally {
     sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
   }

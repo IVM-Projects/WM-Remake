@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { befriend, expect, giveCopies, makePlayer, sql, test } from './fixtures'
+import { befriend, expect, giveCopies, imageCopy, makePlayer, sql, test } from './fixtures'
 
 type Known = { rule: string; selector: string }
 
@@ -37,6 +37,8 @@ const READY: Record<string, string> = {
   '/friends': 'main [data-ready]',
   // Ami, collections et parent lus (composer, blocage ou erreur).
   '/trades/new': 'main [data-ready]',
+  // Profil lu, avec sa vitrine et ses raretés quand la vue est permise (ou l'échec).
+  '/profile/[username]': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -229,6 +231,27 @@ test('axe /friends : une demande reçue et un ami, puis la modale de retrait', a
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'a', :'f')`, { me: me.uid, a: asker.uid, f: friend.uid })
+  }
+})
+
+test('axe /profile/<pseudo> : soi, un ami à la vitrine garnie, un profil privé, puis la modale de signalement ouverte', async ({ page, login }) => {
+  const me = await login()
+  const [friend, hidden] = [makePlayer(), makePlayer()]
+  try {
+    befriend(me, friend)
+    sql(`insert into public.showcase (user_id, position, user_card_id) values (:'uid', 0, :'copy')`, { uid: friend.uid, copy: imageCopy(friend) })
+    sql(`update public.profiles set is_public = false where id = :'uid'`, { uid: hidden.uid })
+    for (const u of [me, friend, hidden]) {
+      await page.goto(`/profile/${encodeURIComponent(u.username)}`)
+      await page.locator(READY['/profile/[username]']).waitFor()
+      await expect(page.locator('main h1')).toHaveText(u.username)
+      await expectNoSeriousViolations(page)
+    }
+    await page.getByRole('button', { name: 'Signaler' }).click()
+    await expect(page.getByRole('dialog').getByRole('group', { name: 'Motif' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f', :'h')`, { me: me.uid, f: friend.uid, h: hidden.uid })
   }
 })
 
