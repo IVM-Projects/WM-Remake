@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
-import { api, failed, giveCards, Iso, makeUser, noSession, ok, psql, Rarity } from '../users.ts'
+import { api, created, failed, giveCards, Iso, makeUser, noSession, ok, psql, Rarity } from '../users.ts'
 
 // Objet Auction de wm.auction_json (M3-19, P5) : les 21 colonnes de public.auctions et 7 clés calculées.
 const Auction = z.object({
@@ -46,13 +46,6 @@ async function refused(res: Response, status: number, error: string, code?: stri
   return body
 }
 
-// ok() attend 200 (users.ts) ; la mise en vente répond 201 (M3-14).
-async function created(res: Response) {
-  const text = await res.text()
-  assert.equal(res.status, 201, text.slice(0, 500))
-  return Created.parse(JSON.parse(text))
-}
-
 // Joueur vérifié (anti-bot levé) et ses copies C, des cartes différentes (giveCards).
 export function seller(env: ContractEnv, { cards = 1, ...user }: Parameters<typeof makeUser>[1] & { cards?: number } = {}) {
   const { uid } = makeUser(db(env), { ...user, humanVerified: true })
@@ -91,14 +84,14 @@ export const createAuction: RouteSpec = {
         const denied = await refused(await sell(env, uid, offer(copy), key), 403, HUMAN, 'human_verification_required')
         assert.equal(denied.human_verification_required, true)
         await humanCheck(env, uid)
-        await created(await sell(env, uid, offer(copy), key))
+        await created(await sell(env, uid, offer(copy), key), Created)
       },
     },
     {
       name: 'id de copie → 201 { auction_id, id, end_at } (fin dans 60 min) ; la copie quitte /api/my-collection',
       run: async (env) => {
         const { uid, copies: [copy] } = seller(env)
-        const res = await created(await sell(env, uid, offer(copy)))
+        const res = await created(await sell(env, uid, offer(copy)), Created)
         assert.equal(res.id, res.auction_id)
         assert.ok(Math.abs(Date.parse(res.end_at) - Date.now() - 3_600_000) < 60_000, res.end_at)
         assert.deepEqual(await copies(env, uid), [])
@@ -115,7 +108,7 @@ select :'uid', id, wikipedia_title, rarity, category, atk, def, now() - make_int
 returning id`, { uid, card, days: String(days) })
         const newer = copy(1)
         const older = copy(2)
-        const { id } = await created(await sell(env, uid, offer(card)))
+        const { id } = await created(await sell(env, uid, offer(card)), Created)
         assert.equal(sql(env, `select user_card_id from public.auctions where id = :'id'`, { id }), older)
         assert.deepEqual((await copies(env, uid)).map((c) => c.id), [newer])
       },
@@ -151,8 +144,8 @@ returning id`, { uid, card, days: String(days) })
       run: async (env) => {
         const { uid, copies: [copy] } = seller(env)
         const key = idem()
-        const first = await created(await sell(env, uid, offer(copy), key))
-        assert.deepEqual(await created(await sell(env, uid, offer(copy), key)), first)
+        const first = await created(await sell(env, uid, offer(copy), key), Created)
+        assert.deepEqual(await created(await sell(env, uid, offer(copy), key), Created), first)
         assert.equal(sql(env, `select count(*) from public.auctions where seller_id = :'uid'`, { uid }), '1')
       },
     },

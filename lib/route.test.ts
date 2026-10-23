@@ -294,6 +294,18 @@ describe('route()', () => {
     expect(mask('/api/profile/%E0%A4%A/collection', 'x')).toBeNull()
     expect(mask('/api/profile/jean/collection', 'jeanne')).toBeNull()
   })
+
+  it('maskPath, pseudo hérité aux caractères spéciaux (Review Focus) : masqué, absent du journal', async () => {
+    expect(maskPath('/api/profile/%C3%89lise%20%C3%9C', { username: 'Élise Ü' })).toBe('/api/profile/[username]')
+    expect(maskPath('/api/profile/x%3Fy%23z/showcase', { username: 'x?y#z' })).toBe('/api/profile/[username]/showcase')
+    for (const [path, username] of [['/api/profile/a%25b', 'a%b'], ['/api/profile/x%3Fy%23z/showcase', 'x?y#z']]) {
+      vi.mocked(console.log).mockClear()
+      await route({ fn: 'fn', auth: false })(new NextRequest(`http://localhost${path}`), { params: Promise.resolve({ username }) })
+      const line = vi.mocked(console.log).mock.calls[0][0] as string
+      expect(JSON.parse(line).route).toBe(path.replace(/\/profile\/[^/]+/, '/profile/[username]'))
+      expect(line).not.toContain(username)
+    }
+  })
 })
 
 describe('fail', () => {

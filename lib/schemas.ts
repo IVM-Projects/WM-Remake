@@ -46,3 +46,11 @@ export const filterArgs = (i: z.infer<typeof CollectionFilters>) => ({
   p_q: i.q || i.search,
   p_rarity: i.rarity, p_tag_id: i.tag_id, p_untagged: i.untagged, p_wishlisted_by: i.wishlisted_by, p_owned_by: i.owned_by,
 })
+
+// Corps de PATCH /api/profile/{username} : avatar_user_card_id à null retire l'avatar, absent le garde (p_avatar_set).
+export const ProfilePatch = z.object({ bio: pgText.optional(), is_public: z.boolean().optional(), avatar_user_card_id: z.uuid().nullable().optional() })
+// Vitrine : l'emplacement 0 à 3 est une règle SQL (« Emplacement de vitrine inconnu (0 à 3) ») ; int32 pour éviter un 22003.
+export const ShowcaseBody = z.object({ position: z.int32(), user_card_id: z.uuid() })
+export const ShowcasePosition = z.object({ position: z.int32() })
+// Motif et longueur des détails validés en SQL.
+export const ReportBody = z.object({ reportedUserId: z.uuid(), reason: pgText, details: pgText.optional() })
