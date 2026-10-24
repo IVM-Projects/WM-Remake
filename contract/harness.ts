@@ -39,11 +39,18 @@ export type Backend = {
 }
 type Stop = () => Promise<void>
 
-function assertFree(port: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const probe = createTcpServer().once('error', () => reject(new Error(`port ${port} occupé (processus d'un run précédent ?)`)))
-    probe.listen(port, '127.0.0.1', () => probe.close(() => resolve()))
-  })
+// Un client psql d'un run précédent laisse sa socket en TIME_WAIT 60 s sur un port du banc (plage éphémère) : réessayé jusqu'à 65 s.
+export async function assertFree(port: number): Promise<void> {
+  const deadline = Date.now() + 65_000
+  for (;;) {
+    const free = await new Promise<boolean>((resolve) => {
+      const probe = createTcpServer().once('error', () => resolve(false))
+      probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)))
+    })
+    if (free) return
+    if (Date.now() >= deadline) throw new Error(`port ${port} occupé depuis 65 s : processus d'un run précédent (TIME_WAIT dure 60 s) ?`)
+    await sleep(1_000)
+  }
 }
 
 function spawnLogged(name: string, command: string, args: string[], env: NodeJS.ProcessEnv, cwd = root): ChildProcess {

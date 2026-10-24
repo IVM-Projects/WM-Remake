@@ -103,7 +103,8 @@ select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards
     await expect(cards(page).getByRole('link')).toHaveCount(1)
     // Cible d'au moins 44 px dans les deux sens (D:751), comme les liens de la barre (e2e/shell.spec.ts).
     expect(await chip.evaluate((a) => Math.min(a.getBoundingClientRect().width, a.getBoundingClientRect().height))).toBeGreaterThanOrEqual(44)
-    // Sans hydratation, le clic recharge la page sans gestionnaire : ni Link ni stopPropagation ne seraient éprouvés.
+    // Sans hydratation, le clic recharge la page sans gestionnaire : Link ne serait pas éprouvé. Le stopPropagation de la pastille l'est
+    // dans e2e/profile.spec.ts (goBack(), puis aucune modale : PF2).
     await hydrated(chip)
     await chip.click()
     await expect(page).toHaveURL(href)

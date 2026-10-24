@@ -307,7 +307,7 @@ Répétition et CI le 2026-10-22 ; fichier lancé par l'utilisateur le 2026-10-2
 
 ## M4b — Task 16 : acceptation avec vitrine et push, overlay des amis
 
-Bac à sable, 2026-10-24, branche `claude/clever-cannon-59x0dj` (sur 8232e0d, `friendOwners` réécrit en arrêt précoce) ; **chiffres indicatifs (A5) ; le M8 mesure S5 sur Pro.**
+Bac à sable, 2026-10-24, branche `claude/clever-cannon-59x0dj` (run de la vague finale de la revue de branche, sur 2fbff63) ; **chiffres indicatifs (A5) ; le M8 mesure S5 sur Pro.**
 
 Méthode (M4b-26, B14) :
 
@@ -321,17 +321,18 @@ Méthode (M4b-26, B14) :
 bash load/bench/run.sh
 ```
 
-Deux runs du `run.sh` commité, chacun sur un banc neuf, verts de bout en bout.
+Un run du `run.sh` commité, sur un banc neuf, vert de bout en bout. Chaque chiffre ci-dessous est recopié de son résumé (`== Résumé`, collé
+tel quel dans le rapport de la vague finale) ; les chiffres du M4a sont dans la section « M4a — Task 15 ».
 
 | Élément | Méthode | Résultat | Date |
 |---|---|---|---|
-| Acceptation 100 ↔ 100, vitrine et push | `trade_accept.sql`, `size=100` | p50 55,9 et 57,8 ms ; **p95 120,3 et 144,2 ms** ; max 163,6 et 173,4 ms ; 145,3 et 146,8 tps ; 100 acceptés. M4a, sans vitrine ni abonnement : p50 51,6 et 49,2 ms, p95 112,6 et 105,2 ms. Sous les 500 ms (D:1083) | 2026-10-24 |
-| Acceptation 10 ↔ 10 (témoin) | `trade_accept.sql`, `size=10` | p50 17,8 et 20,1 ms ; p95 62,0 et 81,2 ms ; max 105,5 et 97,0 ms ; 397,4 et 365,2 tps ; 100 acceptés. M4a : p95 63,7 et 45,1 ms | 2026-10-24 |
-| Rapport des p95 | 100 ↔ 100 sur 10 ↔ 10 | 1,9 et 1,8 (M4a : 1,8 et 2,3) | 2026-10-24 |
-| Vitrine et outbox | `public.showcase` des 20 joueurs, `count(*)` de `wm.push_outbox`, après chaque taille | 0 emplacement restant et 100 lignes d'outbox à chaque taille, aux deux runs | 2026-10-24 |
-| Expiration de 5 000 échanges | `wm.expire_trades(5000)`, un lot | 69,4 et 80,1 ms (M4a : 73,3 et 53,6 ms) | 2026-10-24 |
-| Plan de l'overlay | `auto_explain` de `wm.cards_overlay(O, <50 ids>)`, après `analyze` | 4,3 et 4,0 ms sous `log_analyze`. Aucun `Seq Scan on user_cards` ; `user_cards_card_user_idx` dans 2 nœuds. `ownedCardIds` : `Index Only Scan using user_cards_card_user_idx`, 50 boucles. `friendOwners` : CTE `s` calculée une fois (deux `Bitmap Index Scan` sur `friendships_requester_idx` et `friendships_addressee_idx`, 1 000 lignes, `profiles_pkey`, un tri par `lower(username), id`) ; puis par carte (50) `Limit` sur `Nested Loop Semi Join` : `Function Scan` de l'`unnest … with ordinality`, sans tri, et `Index Only Scan using user_cards_card_user_idx`, 150 sondes en tout (3 par carte) | 2026-10-24 |
-| p95 de l'overlay (B14) | `pgbench -n -c 1 -t 200` du même appel | p50 4,5 et 5,0 ms ; **p95 5,3 et 8,7 ms** ; max 11,3 et 16,2 ms, pour < 50 ms | 2026-10-24 |
-| Page qu'aucun ami ne possède (indicatif) | 200 appels sur les 50 cartes suivantes, aucune possédée par les amis (contrôlé par `overlay.sql`) | p50 51,6 et 52,6 ms ; p95 66,5 et 82,4 ms ; max 103,5 et 103,2 ms : 50 × 1 000 sondes vaines. Hors du seuil de B14, qui vise la page possédée ; `shortcut:` dans `1850` (passer par les possesseurs de la carte quand ils sont moins nombreux que les amis, M8) | 2026-10-24 |
-| Choix de la forme | mesures ponctuelles, script jetable non commité, sur la forme d'avant (ensemble des amis inliné et relu par carte : p95 195,0 à 199,2 ms) ; variantes de `friendOwners` seul, même résultat vérifié, 200 appels | Carte de visibilité posée (`vacuum analyze`) : p95 177,3 ms ; ensemble des amis `materialized` : 182,9 ms ; `row_number()` sur la jointure : 195,0 ms ; arrêt précoce (retenu) : 5,5 ms sur la page possédée, 73,6 ms sur la page sans ami possesseur (forme d'avant : 61,1 ms sur cette page). Le coût d'avant suivait cartes × amis, quel que soit le plan | 2026-10-24 |
-| Interblocages et invariants | `pg_stat_database.deadlocks` avant et après ; `wm.check_invariants()` | 0 interblocage et `[]` aux deux runs ; aucune transaction en échec dans pgbench | 2026-10-24 |
+| Acceptation 100 ↔ 100, vitrine et push | `trade_accept.sql`, `size=100` | p50 51,7 ms ; **p95 118,3 ms** ; max 141,4 ms ; 155,1 tps ; 100 acceptés. Sous les 500 ms (D:1083) | 2026-10-24 |
+| Acceptation 10 ↔ 10 (témoin) | `trade_accept.sql`, `size=10` | p50 16,4 ms ; p95 67,0 ms ; max 85,9 ms ; 409,5 tps ; 100 acceptés | 2026-10-24 |
+| Rapport des p95 | 100 ↔ 100 sur 10 ↔ 10 | 1,8 | 2026-10-24 |
+| Vitrine et outbox | `public.showcase` des 20 joueurs, `count(*)` de `wm.push_outbox`, après chaque taille | vitrines vidées et 100 lignes d'outbox à chaque taille | 2026-10-24 |
+| Expiration de 5 000 échanges | `wm.expire_trades(5000)`, un lot | 102,6 ms | 2026-10-24 |
+| Plan de l'overlay | `auto_explain` de `wm.cards_overlay(O, <50 ids>)`, après `analyze` | `user_cards_card_user_idx` dans 2 nœuds (`ownedCardIds` et `friendOwners`), aucun `Seq Scan on user_cards` | 2026-10-24 |
+| p95 de l'overlay (B14) | `pgbench -n -c 1 -t 200` du même appel | p50 4,3 ms ; **p95 5,0 ms** ; max 9,7 ms, pour < 50 ms | 2026-10-24 |
+| Page qu'aucun ami ne possède (indicatif) | 200 appels sur les 50 cartes suivantes, aucune possédée par les amis (contrôlé par `overlay.sql`) | p50 53,0 ms ; p95 84,0 ms ; max 110,9 ms : 50 × 1 000 sondes vaines. Hors du seuil de B14, qui vise la page possédée ; `shortcut:` dans `1850` (passer par les possesseurs de la carte quand ils sont moins nombreux que les amis, M8) | 2026-10-24 |
+| Choix de la forme | mesures ponctuelles de la Task 16, script jetable non commité | arrêt précoce retenu ; les chiffres des autres formes restent dans le rapport de la Task 16, aucun résumé de `run.sh` ne les trace | 2026-10-24 |
+| Interblocages et invariants | `pg_stat_database.deadlocks` avant et après ; `wm.check_invariants()` | 0 interblocage et `[]` ; aucune transaction en échec dans pgbench | 2026-10-24 |
