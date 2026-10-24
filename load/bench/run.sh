@@ -95,21 +95,28 @@ q -c '\timing on' -c 'select wm.expire_trades(5000)' | tee "$tmp/expire"
 xms="$(sed -n 's/^Time: \([0-9.]*\) ms.*/\1/p' "$tmp/expire")"
 [[ -n $xms ]] || fail "durée de l'expiration illisible"
 
-# Overlay des amis (B14) : plan lu par auto_explain sur les sorties LOG d'overlay.sql, puis 200 appels d'un client ; échec si le p95 atteint
-# 50 ms.
+# Overlay des amis (B14) : plan lu par auto_explain sur les sorties LOG d'overlay.sql (l'index au moins deux fois : ownedCardIds et
+# friendOwners), puis 200 appels d'un client ; échec si le p95 atteint 50 ms. Page qu'aucun ami ne possède : p95 imprimé seulement.
+# Nœuds du plan seuls : le Query Text recopie le corps de la fonction, commentaires compris.
 q -f "$here/overlay.sql" 2>&1 >/dev/null | tee "$tmp/overlay_plan"
-grep -q 'user_cards_card_user_idx' "$tmp/overlay_plan" || fail "overlay : user_cards_card_user_idx absent du plan"
+ix="$(grep -Ec 'Scan (using|on) user_cards_card_user_idx' "$tmp/overlay_plan" || true)"
+((ix >= 2)) || fail "overlay : user_cards_card_user_idx $ix fois dans le plan (2 au moins exigées)"
 if grep -q 'Seq Scan on user_cards' "$tmp/overlay_plan"; then fail "overlay : Seq Scan on user_cards dans le plan"; fi
-echo 'select wm.cards_overlay(uid, ids) from bench.overlay;' >"$tmp/overlay_call.sql"
-"$pgbench" -n -c 1 -t 200 -l --log-prefix="$tmp/ovl" -f "$tmp/overlay_call.sql" "$DATABASE_URL" | tee "$tmp/overlay"
-grep -q '^number of failed transactions: 0 ' "$tmp/overlay" || fail "overlay : transactions en échec"
-read -r n us p50 p95ms max < <(lat "$tmp/ovl".*)
-[[ $n == 200 ]] || fail "overlay : $n lignes de journal sur 200"
-((us < 50000)) || fail "overlay : p95 de $us µs (moins de 50 000 exigés)"
-overlay="overlay des amis (1 000 amis, 50 cartes) : p50 $p50 ms, p95 $p95ms ms, max $max ms ; user_cards_card_user_idx, aucun Seq Scan on user_cards"
+overlay=()
+for page in ids ids_none; do
+  echo "select wm.cards_overlay(uid, $page) from bench.overlay;" >"$tmp/call_$page.sql"
+  "$pgbench" -n -c 1 -t 200 -l --log-prefix="$tmp/lat_$page" -f "$tmp/call_$page.sql" "$DATABASE_URL" | tee "$tmp/$page"
+  grep -q '^number of failed transactions: 0 ' "$tmp/$page" || fail "overlay $page : transactions en échec"
+  read -r n us p50 p95ms max < <(lat "$tmp/lat_$page".*)
+  [[ $n == 200 ]] || fail "overlay $page : $n lignes de journal sur 200"
+  overlay+=("p50 $p50 ms, p95 $p95ms ms, max $max ms")
+  if [[ $page == ids ]] && ((us >= 50000)); then fail "overlay : p95 de $us µs (moins de 50 000 exigés)"; fi
+done
+overlay=("overlay des amis (1 000 amis, 50 cartes possédées) : ${overlay[0]} ; user_cards_card_user_idx $ix fois, aucun Seq Scan on user_cards"
+  "overlay, page qu'aucun ami ne possède (indicatif) : ${overlay[1]}")
 
 [[ "$(deadlocks)" == "$dl0" ]] || fail "interblocages : $dl0 avant, $(deadlocks) après"
 inv="$(q -c 'select wm.check_invariants()')"
 [[ $inv == '[]' ]] || fail "invariants violés : $inv"
 printf '%s\n' '' '== Résumé' "${summary[@]}" "règlement de 5 000 enchères : $ms ms" 'lectures (wm.market_list), seconde par seconde :' \
-  "$reads" "${accept[@]}" "expiration de 5 000 échanges en attente : $xms ms" "$overlay" "interblocages : 0 ; invariants : $inv"
+  "$reads" "${accept[@]}" "expiration de 5 000 échanges en attente : $xms ms" "${overlay[@]}" "interblocages : 0 ; invariants : $inv"

@@ -8,9 +8,11 @@ do $$ begin
   end if;
 end $$;
 
--- O et une page de 50 cartes ; amis des deux sens de la ligne, un sur deux, pour les deux branches de l'union de friendOwners.
-create table bench.overlay (uid uuid, ids uuid[]);
-insert into bench.overlay values (bench.player('bench_overlay', 0), array(select id from public.cards order by id limit 50));
+-- O, une page de 50 cartes que chaque ami possède (ids) et une qu'aucun ne possède (ids_none, mesure indicative du pire cas) ; amis des
+-- deux sens de la ligne, un sur deux, pour les deux branches de l'union de friendOwners.
+create table bench.overlay (uid uuid, ids uuid[], ids_none uuid[]);
+insert into bench.overlay values (bench.player('bench_overlay', 0), array(select id from public.cards order by id limit 50),
+  array(select id from public.cards order by id offset 50 limit 50));
 create table bench.overlay_friends (n int primary key, uid uuid);
 insert into bench.overlay_friends select n, bench.player('bench_ami_' || n, 0) from generate_series(1, 1000) n;
 insert into public.friendships (requester_id, addressee_id, status)
@@ -23,10 +25,11 @@ from bench.overlay_friends f, bench.overlay o join public.cards c on c.id = any 
 -- Statistiques avant la mesure (DG:467) : sans elles, des boucles imbriquées sur toute user_cards.
 analyze;
 
--- Contrôle : 50 cartes, chacune avec list_caps.friend_owners (3) amis possesseurs.
+-- Contrôle : 50 cartes, chacune avec list_caps.friend_owners (3) amis possesseurs ; aucun sur l'autre page.
 do $$ begin
   if (select count(*) filter (where jsonb_array_length(e.value) = 3) from bench.overlay o,
-      jsonb_each(wm.cards_overlay(o.uid, o.ids) -> 'friendOwners') e) <> 50 then
+      jsonb_each(wm.cards_overlay(o.uid, o.ids) -> 'friendOwners') e) <> 50
+     or (select wm.cards_overlay(uid, ids_none) -> 'friendOwners' from bench.overlay) <> '{}' then
     raise exception 'overlay.sql : friendOwners inattendu';
   end if;
 end $$;
