@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Benchs du marché en tables journalisées (M3-4, P14), sur le banc local seulement, jamais sur la démo : mises sur une enchère disputée,
 # mises réparties sur 50 enchères, puis règlement de 5 000 enchères sous des lectures de la liste (P9), puis acceptations d'échange
-# 100 ↔ 100 et 10 ↔ 10 sur 5 000 échanges en attente, et leur expiration (M4-6). Chiffres indicatifs (A5), le M8 mesure sur Pro.
+# 100 ↔ 100 et 10 ↔ 10 sur 5 000 échanges en attente, vitrine pleine et abonnements push des deux côtés (M4b-26), et leur expiration
+# (M4-6), puis overlay des amis d'un joueur à 1 000 amis (B14). Chiffres indicatifs (A5), le M8 mesure sur Pro.
 # Jamais pendant un banc de contrat ou d'E2E : il reprend .cache/pg et le port 54329, que db-test.sh:25-26 efface au démarrage.
 set -euo pipefail
 export LC_ALL=C  # « Time: » de psql et sorties de pgbench non traduits : sinon les durées se lisent vides
@@ -56,8 +57,12 @@ ms="$(sed -n 's/^Time: \([0-9.]*\) ms.*/\1/p' "$tmp/settle")"
 # Une ligne de progression couvre la seconde qui finit à son horodatage : marquée si elle recouvre [t0, t0 + durée du lot].
 reads="$(awk -v t0="$t0" -v ms="$ms" '/^progress:/ { print $0 ($2 > t0 && $2 - 1 < t0 + ms / 1000 ? "  <- règlement" : "") }' "$tmp/read")"
 
-# Acceptations (M4-6) : 10 clients × 10 tours, 100 ↔ 100 puis 10 ↔ 10 en témoin. Latence par transaction en 3e colonne des journaux de
-# pgbench (µs) ; p50, p95 et max au rang le plus proche. Échec si le p95 atteint 500 ms.
+# Latence par transaction en 3e colonne des journaux de pgbench (µs) : nombre, p95 en µs, puis p50, p95 et max en ms, au rang le plus proche.
+lat() { cut -d' ' -f3 "$@" | sort -n | awk '{ v[NR] = $1 } END { p50 = v[int((50 * NR + 99) / 100)]
+  p95 = v[int((95 * NR + 99) / 100)]; printf "%d %d %.1f %.1f %.1f\n", NR, p95, p50 / 1000, p95 / 1000, v[NR] / 1000 }'; }
+
+# Acceptations (M4-6, M4b-26) : 10 clients × 10 tours, 100 ↔ 100 puis 10 ↔ 10 en témoin, vitrine pleine et un abonnement push par joueur.
+# Échec si le p95 atteint 500 ms.
 q -f "$here/trade_setup.sql" >/dev/null
 accept=()
 declare -A p95
@@ -67,12 +72,19 @@ for size in 100 10; do
   grep -q '^number of failed transactions: 0 ' "$tmp/trade$size" || fail "acceptation $size : transactions en échec"
   ok="$(q -c "select count(*) from bench.trades b join public.trades t using (id) where b.size = $size and t.status = 'accepted'")"
   [[ $ok == 100 ]] || fail "acceptation $size : $ok échanges acceptés sur 100"
-  read -r n us p50 p95ms max < <(cut -d' ' -f3 "$tmp/acc$size".* | sort -n | awk '{ v[NR] = $1 } END { p50 = v[int((50 * NR + 99) / 100)]
-    p95 = v[int((95 * NR + 99) / 100)]; printf "%d %d %.1f %.1f %.1f\n", NR, p95, p50 / 1000, p95 / 1000, v[NR] / 1000 }')
+  read -r n us p50 p95ms max < <(lat "$tmp/acc$size".*)
   [[ $n == 100 ]] || fail "acceptation $size : $n lignes de journal sur 100"
   p95[$size]=$us
-  accept+=("acceptation $size ↔ $size : p50 $p50 ms, p95 $p95ms ms, max $max ms ; $ok acceptés, $(grep -o 'tps = [0-9.]*' "$tmp/trade$size")")
+  # Les 8 emplacements posés à chaque tour pointaient vers des copies déplacées : trade_move les a vidés. Outbox vide au départ
+  # (trade_setup.sql) et vidée après chaque taille : une trade_accepted par acceptation, pour l'abonnement de l'initiateur.
+  sc="$(q -c 'select count(*) from public.showcase where user_id in (select uid from bench.trade_players)')"
+  [[ $sc == 0 ]] || fail "acceptation $size : $sc emplacements de vitrine restants sur 0"
+  ob="$(q -c 'select count(*) from wm.push_outbox')"
+  [[ $ob == 100 ]] || fail "acceptation $size : $ob lignes d'outbox sur 100"
+  accept+=("acceptation $size ↔ $size : p50 $p50 ms, p95 $p95ms ms, max $max ms ; $ok acceptés, $(grep -o 'tps = [0-9.]*' "$tmp/trade$size") ;\
+ vitrines vidées, $ob lignes d'outbox")
   ((us < 500000)) || fail "acceptation $size : p95 de $us µs (moins de 500 000 exigés)"
+  q -c 'delete from wm.push_outbox where true'
 done
 accept+=("rapport des p95 (100 ↔ 100 sur 10 ↔ 10) : $(awk -v a="${p95[100]}" -v b="${p95[10]}" 'BEGIN { printf "%.1f", a / b }')")
 
@@ -83,8 +95,21 @@ q -c '\timing on' -c 'select wm.expire_trades(5000)' | tee "$tmp/expire"
 xms="$(sed -n 's/^Time: \([0-9.]*\) ms.*/\1/p' "$tmp/expire")"
 [[ -n $xms ]] || fail "durée de l'expiration illisible"
 
+# Overlay des amis (B14) : plan lu par auto_explain sur les sorties LOG d'overlay.sql, puis 200 appels d'un client ; échec si le p95 atteint
+# 50 ms.
+q -f "$here/overlay.sql" 2>&1 >/dev/null | tee "$tmp/overlay_plan"
+grep -q 'user_cards_card_user_idx' "$tmp/overlay_plan" || fail "overlay : user_cards_card_user_idx absent du plan"
+if grep -q 'Seq Scan on user_cards' "$tmp/overlay_plan"; then fail "overlay : Seq Scan on user_cards dans le plan"; fi
+echo 'select wm.cards_overlay(uid, ids) from bench.overlay;' >"$tmp/overlay_call.sql"
+"$pgbench" -n -c 1 -t 200 -l --log-prefix="$tmp/ovl" -f "$tmp/overlay_call.sql" "$DATABASE_URL" | tee "$tmp/overlay"
+grep -q '^number of failed transactions: 0 ' "$tmp/overlay" || fail "overlay : transactions en échec"
+read -r n us p50 p95ms max < <(lat "$tmp/ovl".*)
+[[ $n == 200 ]] || fail "overlay : $n lignes de journal sur 200"
+((us < 50000)) || fail "overlay : p95 de $us µs (moins de 50 000 exigés)"
+overlay="overlay des amis (1 000 amis, 50 cartes) : p50 $p50 ms, p95 $p95ms ms, max $max ms ; user_cards_card_user_idx, aucun Seq Scan on user_cards"
+
 [[ "$(deadlocks)" == "$dl0" ]] || fail "interblocages : $dl0 avant, $(deadlocks) après"
 inv="$(q -c 'select wm.check_invariants()')"
 [[ $inv == '[]' ]] || fail "invariants violés : $inv"
 printf '%s\n' '' '== Résumé' "${summary[@]}" "règlement de 5 000 enchères : $ms ms" 'lectures (wm.market_list), seconde par seconde :' \
-  "$reads" "${accept[@]}" "expiration de 5 000 échanges en attente : $xms ms" "interblocages : 0 ; invariants : $inv"
+  "$reads" "${accept[@]}" "expiration de 5 000 échanges en attente : $xms ms" "$overlay" "interblocages : 0 ; invariants : $inv"

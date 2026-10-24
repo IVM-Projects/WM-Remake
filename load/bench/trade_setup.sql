@@ -1,6 +1,6 @@
 -- Données du bench d'acceptation d'échange (load/bench/run.sh, M4-6), sur la base du banc seulement, après setup.sql (schéma bench,
 -- bench.player) : aucune migration ne crée ces objets. 10 paires amies × 2 tailles × 10 tours d'échanges créés par wm.create_trade, sur
--- des copies propres au tour, et 5 000 échanges en attente en fond.
+-- des copies propres au tour, 5 000 échanges en attente en fond, et un abonnement push par joueur des paires (M4b-26).
 \set ON_ERROR_STOP on
 do $$ begin
   if current_database() <> 'wm_test' then
@@ -74,7 +74,8 @@ begin
   end loop;
 end $$;
 
--- Une acceptation : le premier tour non fait de (client, taille), tenu jusqu'au commit, ses avatars, puis l'acceptation du destinataire.
+-- Une acceptation : le premier tour non fait de (client, taille), tenu jusqu'au commit, ses avatars et vitrines, puis l'acceptation du
+-- destinataire.
 -- Aucun refus avalé : un P0001 fait échouer la transaction, et pgbench arrête le client.
 create function bench.accept_next(p_client int, p_size int) returns boolean language plpgsql as $$
 declare
@@ -96,6 +97,16 @@ begin
   get diagnostics v = row_count;
   if v <> 2 then
     raise exception 'bench.accept_next : % avatar(s) posé(s) sur 2', v;
+  end if;
+  -- Vitrine pleine (M4b-26) : les 4 emplacements de chaque joueur sur 4 de ses copies seules de l'échange, que trade_move vide.
+  insert into public.showcase (user_id, position, user_card_id)
+  select u, p, k from (select i.offered_by u, i.user_card_id k, row_number() over (partition by i.offered_by order by i.user_card_id) - 1 p
+    from public.trade_items i join public.user_cards uc on uc.id = i.user_card_id and uc.count = 1 where i.trade_id = r.id) s
+  where p < 4
+  on conflict (user_id, position) do update set user_card_id = excluded.user_card_id;
+  get diagnostics v = row_count;
+  if v <> 8 then
+    raise exception 'bench.accept_next : % emplacement(s) de vitrine posé(s) sur 8', v;
   end if;
   perform wm.trade_action(r.recipient, r.id, 'accept');
   return true;
@@ -119,6 +130,13 @@ begin
     raise exception 'trade_setup.sql : préparation inattendue %', v;
   end if;
 end $$;
+
+-- Un abonnement push par joueur des paires, types d'échange activés (M4b-26) : le trigger d'outbox tourne dans chaque acceptation. Posés
+-- après la création des échanges, dont les trade_received n'ont donc rien mis dans l'outbox, vide au départ.
+insert into public.push_subscriptions (user_id, endpoint, p256dh, auth)
+select uid, 'https://fcm.googleapis.com/fcm/send/bench-' || n, 'bench', 'bench' from bench.trade_players;
+insert into wm.notification_prefs (user_id, push_types)
+select uid, '{trade_accepted,trade_cancelled,trade_countered,trade_declined,trade_received}' from bench.trade_players;
 
 -- Statistiques d'une base installée avant la mesure : un autovacuum passé pendant les insertions ci-dessus (non validées, donc pas comptées
 -- vivantes) a laissé user_cards à reltuples = 0 au banc ; le planificateur y voit 1 ligne, et chaque acceptation 100 ↔ 100 prenait ≈ 2,4 s.
