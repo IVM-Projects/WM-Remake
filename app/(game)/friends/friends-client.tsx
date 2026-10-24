@@ -9,7 +9,7 @@ import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
-import { api, apiOnce, unsure, userMessage } from '@/lib/api'
+import { api, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 import { unreadStore } from '@/lib/notifications'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -144,16 +144,17 @@ export function FriendsClient() {
     }
   }
 
-  // Relue même après un refus : la demande a pu changer ailleurs. Une issue inconnue garde sa clé (apiOnce) : la relance rejoue, jusqu'à la
-  // prochaine relecture réussie.
+  // Relue même après un refus : la demande a pu changer ailleurs. Une issue inconnue (2xx au corps illisible compris : apiOnce rend null)
+  // garde sa clé : la relance rejoue, jusqu'à la prochaine relecture réussie.
   async function act<T>(intent: string, path: string, init: RequestInit, done: (r: T) => string, focus: Focus | null = null) {
     if (inflight.current) return
     inflight.current = true
     setBusy(true)
     try {
-      toast(done(await apiOnce<T>(keys.current, intent, path, init)))
+      const r = await apiOnce<T | null>(keys.current, intent, path, init)
+      toast(r === null ? UNSURE : done(r))
     } catch (e) {
-      toast(userMessage(e, unsure(e) ? 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.' : 'L\'action n\'a pas abouti.'))
+      toast(userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'))
     }
     // Modale démontée avant la relecture : elle rend le focus au « Retirer » de la ligne, que la relecture retire ensuite.
     setConfirm(null)
@@ -284,6 +285,7 @@ export function FriendsClient() {
           <Section part="friends" title="Amis" empty="Tu n'as pas encore d'amis. Cherche un joueur par son pseudo." rows={s.friends} other={other}>
             {(f, i, desc) => (
               <>
+                <Link href={`/dms?with=${other(f).id}`} aria-describedby={desc} className={ghost}>Message</Link>
                 <Link href={`/trades/new?with=${other(f).id}`} aria-describedby={desc} className={ghost}>Échanger</Link>
                 {/* Inactif pendant une action : sa fin ferme la modale (act). */}
                 <button type="button" aria-disabled={busy || undefined} aria-describedby={desc} onClick={() => { if (!busy) setConfirm({ f, i }) }} className={ghost}>

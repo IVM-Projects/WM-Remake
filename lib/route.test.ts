@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextRequest } from 'next/server'
+import { NextRequest, after } from 'next/server'
 import { z } from 'zod'
 import type { RpcResult } from '@/lib/route'
 
@@ -8,8 +8,13 @@ const rpc = vi.fn()
 const schema = vi.fn(() => ({ rpc }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ auth: { getClaims } }) }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => ({ schema }) }))
+// Le vrai NextRequest reste ; after() simulé, son rappel appelé à la main.
+vi.mock('next/server', async (importOriginal) => ({ ...(await importOriginal<typeof import('next/server')>()), after: vi.fn() }))
+// Fabrique exigée : le module d'origine charge server-only, qui lève ici.
+vi.mock('@/lib/push', () => ({ drainPush: vi.fn() }))
 
 const { route, toHttpError, fail, maskPath, UNAUTHORIZED, BUSY, INTERNAL } = await import('@/lib/route')
+const { drainPush } = await import('@/lib/push')
 
 const ctx = { params: Promise.resolve({}) }
 const req = (init: { method?: string; body?: string; headers?: Record<string, string>; query?: string } = {}) =>
@@ -293,6 +298,50 @@ describe('route()', () => {
     expect(mask('/api/profile/%6Aean/collection', 'jean')).toBe('/api/profile/[username]/collection')
     expect(mask('/api/profile/%E0%A4%A/collection', 'x')).toBeNull()
     expect(mask('/api/profile/jean/collection', 'jeanne')).toBeNull()
+  })
+
+  it('maskPath, pseudo hérité aux caractères spéciaux (Review Focus) : masqué, absent du journal', async () => {
+    expect(maskPath('/api/profile/%C3%89lise%20%C3%9C', { username: 'Élise Ü' })).toBe('/api/profile/[username]')
+    expect(maskPath('/api/profile/x%3Fy%23z/showcase', { username: 'x?y#z' })).toBe('/api/profile/[username]/showcase')
+    for (const [path, username] of [['/api/profile/a%25b', 'a%b'], ['/api/profile/x%3Fy%23z/showcase', 'x?y#z']]) {
+      vi.mocked(console.log).mockClear()
+      await route({ fn: 'fn', auth: false })(new NextRequest(`http://localhost${path}`), { params: Promise.resolve({ username }) })
+      const line = vi.mocked(console.log).mock.calls[0][0] as string
+      expect(JSON.parse(line).route).toBe(path.replace(/\/profile\/[^/]+/, '/profile/[username]'))
+      expect(line).not.toContain(username)
+    }
+  })
+})
+
+describe('route({ push: true }) (B6)', () => {
+  const task = () => vi.mocked(after).mock.calls[0][0] as () => Promise<void>
+
+  it('un succès (201 compris) → after une fois, et son rappel appelle drainPush', async () => {
+    signedIn()
+    const res = await route({ fn: 'fn', status: 201, push: true })(req({ method: 'POST' }), ctx)
+    expect(res.status).toBe(201)
+    expect(after).toHaveBeenCalledTimes(1)
+    expect(drainPush).not.toHaveBeenCalled()
+    await task()()
+    expect(drainPush).toHaveBeenCalledTimes(1)
+  })
+
+  it('un P0001, une session absente, ou une route sans push → after jamais', async () => {
+    await route({ fn: 'fn', push: true })(req({ method: 'POST' }), ctx)
+    signedIn()
+    await route({ fn: 'fn' })(req({ method: 'POST' }), ctx)
+    pgError({ code: 'P0001', details: '{"status":409,"error":"m","message":"m"}' })
+    expect((await route({ fn: 'fn', push: true })(req({ method: 'POST' }), ctx)).status).toBe(409)
+    expect(after).not.toHaveBeenCalled()
+  })
+
+  it('un drainPush rejeté ne lève pas : une ligne drain_failed, sans détail', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(drainPush).mockRejectedValueOnce(new Error('relation secrète'))
+    signedIn()
+    await route({ fn: 'fn', push: true })(req({ method: 'POST' }), ctx)
+    await expect(task()()).resolves.toBeUndefined()
+    expect(vi.mocked(console.error).mock.calls).toStrictEqual([['{"push":"drain_failed"}']])
   })
 })
 

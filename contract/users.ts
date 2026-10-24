@@ -93,6 +93,11 @@ export async function ok<T>(res: Response, schema: z.ZodType<T>): Promise<T> {
   return schema.parse(await bodyOf(res, 200))
 }
 
+// ok() d'une création (201).
+export async function created<T>(res: Response, schema: z.ZodType<T>): Promise<T> {
+  return schema.parse(await bodyOf(res, 201))
+}
+
 // Cas commun des routes authentifiées.
 export const noSession = (method: string, path: string) => ({
   name: 'sans session → 401 unauthorized (D§8.2)',

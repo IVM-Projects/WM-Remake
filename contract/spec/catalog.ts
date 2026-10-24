@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
 import { CRON_SECRET } from '../harness.ts'
 import { api, failed, Iso, makeUser, noSession, ok, psql, Rarity } from '../users.ts'
+import { befriend } from './friends.ts'
 
 // Colonnes de `rest/v1/cards` lues par les clients (R§3.4) : aussi les clés de chaque carte de /api/cards.
 export const CARD_COLUMNS = 'id,atk,def,lang,rarity,q_score,category,image_url,pageviews,hide_image,nsfw_image,wikipedia_url,wikipedia_title,summary,pageviews_refreshed_at,qscore_refreshed_at'
@@ -13,7 +14,9 @@ export const Card = z.strictObject({
   image_url: z.string().nullable(), pageviews: z.int(), hide_image: z.boolean(), nsfw_image: z.boolean(), wikipedia_url: z.string(),
   wikipedia_title: z.string(), summary: z.string().nullable(), pageviews_refreshed_at: Iso.nullable(), qscore_refreshed_at: Iso.nullable(),
 })
-const Overlay = { cards: z.array(Card).max(50), ownedCardIds: z.array(z.uuid()), wishlistCardIds: z.array(z.uuid()), friendOwners: z.record(z.string(), z.unknown()) }
+// friendOwners (M4b-21) : sous l'id d'une carte, 1 à list_caps.friend_owners amis possesseurs.
+const FriendOwners = z.record(z.uuid(), z.array(z.strictObject({ id: z.uuid(), username: z.string() })).min(1).max(3))
+const Overlay = { cards: z.array(Card).max(50), ownedCardIds: z.array(z.uuid()), wishlistCardIds: z.array(z.uuid()), friendOwners: FriendOwners }
 const Page = z.strictObject({ ...Overlay, total: z.int(), rarityCounts: z.record(Rarity, z.int()) })
 const Search = z.strictObject({ ...Overlay, total: z.null(), searchHasMore: z.boolean() })
 const Filtered = z.strictObject({ ...Overlay, total: z.int() })
@@ -81,6 +84,22 @@ insert into public.wishlist_items (user_id, card_id) values (:'uid', :'wished')`
         assert.deepEqual([page.ownedCardIds, page.wishlistCardIds], [[owned], [wished]])
         const wish = await ok(await api(env, '/api/cards?wishlist=1', { uid }), Filtered)
         assert.deepEqual([wish.total, wish.cards.map((c) => c.id), wish.wishlistCardIds], [1, [wished], [wished]])
+      },
+    },
+    {
+      name: 'friendOwners : un ami reçoit sa première carte, prise en page 0 → [{id, username}] de l\'ami sous son id, le reste de la page inchangé (M4b-21)',
+      run: async (env) => {
+        const me = makeUser(env.backend.databaseUrl)
+        const friend = makeUser(env.backend.databaseUrl)
+        befriend(env, me.uid, friend.uid)
+        const { friendOwners: none, ...before } = await ok(await api(env, '/api/cards', { uid: me.uid }), Page)
+        assert.deepEqual(none, {})
+        const { id } = before.cards[0]
+        psql(env.backend.databaseUrl, `insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards where id = :'id'`, { uid: friend.uid, id })
+        const { friendOwners, ...after } = await ok(await api(env, '/api/cards', { uid: me.uid }), Page)
+        assert.deepEqual(friendOwners, { [id]: [{ id: friend.uid, username: friend.username }] })
+        assert.deepEqual(after, before)
       },
     },
     {

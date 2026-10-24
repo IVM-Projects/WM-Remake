@@ -10,11 +10,13 @@ export const CollectionSort = z.enum(['rarity', 'obtained_at', 'added', 'name', 
 export const boolParam = z.enum(['1', 'true', '0', 'false']).optional().transform((v) => v === '1' || v === 'true')
 // Postgres refuse \0 dans un texte (22P05), PostgREST une demi-paire UTF-16 seule (PGRST102) : sans ce refus, un 500 au lieu d'un 400.
 // Tout texte libre qui atteint le SQL passe par lui. \p{Cs} sous `u` ne voit que les demi-paires seules (isWellFormed manque aux Firefox d'avant 119).
-export const pgText = z.string().refine((s) => !s.includes('\0') && !/\p{Cs}/u.test(s), 'Caractère invalide')
+const pgOk = (s: string) => !s.includes('\0') && !/\p{Cs}/u.test(s)
+export const pgText = z.string().refine(pgOk, 'Caractère invalide')
 export const Username = pgText.min(1).max(64)
 export const AuctionParams = z.object({ auctionId: z.uuid() })
 export const FriendshipParams = z.object({ friendshipId: z.uuid() })
 export const TradeParams = z.object({ tradeId: z.uuid() })
+export const PeerParams = z.object({ peerId: z.uuid() })
 // Corps de POST /api/trades, partagé avec le composer. items : une unité par élément, deux côtés × 100 ; les plafonds par côté et leurs
 // messages français sont des règles SQL (P11).
 export const TradeBody = z.object({
@@ -46,3 +48,29 @@ export const filterArgs = (i: z.infer<typeof CollectionFilters>) => ({
   p_q: i.q || i.search,
   p_rarity: i.rarity, p_tag_id: i.tag_id, p_untagged: i.untagged, p_wishlisted_by: i.wishlisted_by, p_owned_by: i.owned_by,
 })
+
+// Corps de PATCH /api/profile/{username} : avatar_user_card_id à null retire l'avatar, absent le garde (p_avatar_set).
+export const ProfilePatch = z.object({ bio: pgText.optional(), is_public: z.boolean().optional(), avatar_user_card_id: z.uuid().nullable().optional() })
+// Vitrine : l'emplacement 0 à 3 est une règle SQL (« Emplacement de vitrine inconnu (0 à 3) ») ; int32 pour éviter un 22003.
+export const ShowcaseBody = z.object({ position: z.int32(), user_card_id: z.uuid() })
+export const ShowcasePosition = z.object({ position: z.int32() })
+// Motif et longueur des détails validés en SQL.
+export const ReportBody = z.object({ reportedUserId: z.uuid(), reason: pgText, details: pgText.optional() })
+// Message privé : vide, blancs seuls et plus de 2 000 caractères (points de code) refusés en SQL ; le contenu part tel quel, sans rognage.
+export const ChatBody = z.object({ content: pgText })
+
+// Abonnement push (M4b-12) : la forme seulement, chaque refus en « Abonnement push invalide » ; l'origine est contrôlée en SQL (B9), le
+// point sur la courbe dans la route (node:crypto). Tailles sans Buffer, ce fichier partant au navigateur : 65 octets en base64url sans
+// remplissage font 87 caractères, le premier B (0x04) et le dernier porteur de 4 bits ; 16 octets font 22 caractères, le dernier porteur de 2.
+// z.url() laisse passer \0 et une demi-paire dans le chemin : le refus de pgText, sinon un 500 de PostgREST.
+const INVALID_PUSH = 'Abonnement push invalide'
+const pushUrl = z.url({ error: INVALID_PUSH }).max(2048, INVALID_PUSH).refine(pgOk, INVALID_PUSH)
+export const PushEndpoint = z.object({ endpoint: pushUrl }, { error: INVALID_PUSH })
+export const PushSubscriptionBody = PushEndpoint.extend({
+  keys: z.object({
+    p256dh: z.string({ error: INVALID_PUSH }).regex(/^B[A-Za-z0-9_-]{85}[AEIMQUYcgkosw048]$/, INVALID_PUSH),
+    auth: z.string({ error: INVALID_PUSH }).regex(/^[A-Za-z0-9_-]{21}[AQgw]$/, INVALID_PUSH),
+  }, { error: INVALID_PUSH }),
+})
+// Types validés en SQL (« Type de notification inconnu ») ; 13 aujourd'hui.
+export const PushTypes = z.object({ push_types: z.array(pgText).max(20) })

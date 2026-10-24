@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
 import { api, failed, giveCards, Iso, makeUser, noSession, ok, psql, Rarity } from '../users.ts'
+import { befriend } from './friends.ts'
 
 // Item du R§3.3, clés sûres de l'union (tags en {id, name, color}).
 const Item = z.object({
@@ -162,6 +163,18 @@ export const profileCollection: RouteSpec = {
         const { uid } = makeUser(env.backend.databaseUrl)
         sql(env, `update public.profiles set is_public = false where id = :'uid'`, { uid: owner.uid })
         await failed(await api(env, `/api/profile/${owner.username}/collection`, { uid }), 403, 'FORBIDDEN')
+      },
+    },
+    {
+      name: 'profil privé lu par un ami → 200 { collection, total } (P21 c)',
+      run: async (env) => {
+        const owner = makeUser(env.backend.databaseUrl)
+        giveCards(env.backend.databaseUrl, owner.uid, 'C', 2)
+        const { uid } = makeUser(env.backend.databaseUrl)
+        sql(env, `update public.profiles set is_public = false where id = :'uid'`, { uid: owner.uid })
+        befriend(env, owner.uid, uid)
+        const { collection, total } = await ok(await api(env, `/api/profile/${owner.username}/collection`, { uid }), ProfileCollection)
+        assert.deepEqual([collection.length, total], [2, 2])
       },
     },
     {

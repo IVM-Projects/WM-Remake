@@ -7,7 +7,7 @@ import { ghost } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
-import { api, unsure, userMessage } from '@/lib/api'
+import { api, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { notificationView, unreadStore, type Notification } from '@/lib/notifications'
 
@@ -55,7 +55,7 @@ export function NotificationPanel({ onClose }: { onClose: () => void }) {
       // l'ancien compte, renverrait un PATCH {} sous une clé neuve.
       await store.refresh()
     } catch (e) {
-      toast(userMessage(e, unsure(e) ? 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.' : 'L\'action n\'a pas abouti.'))
+      toast(userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'))
     } finally {
       inflight.current = false
       setBusy(false)

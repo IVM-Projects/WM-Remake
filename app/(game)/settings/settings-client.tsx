@@ -1,15 +1,18 @@
 'use client'
 
 import { LogOut } from 'lucide-react'
-import { useEffect, useEffectEvent, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react'
 import { Field, FormError } from '@/components/auth/Field'
 import { useHydrated } from '@/components/auth/Submit'
 import { ghost as ghostBase } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
-import { api, ApiError, userMessage } from '@/lib/api'
+import { ReadError, Section } from '@/components/ui/Section'
+import { api, ApiError, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { authErrorMessage, usernameProblem } from '@/lib/auth'
 import { setPrefs } from '@/lib/prefs'
+import { pushState, unsubscribePush } from '@/lib/push-browser'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
+import { PushSection } from './push-section'
 
 type Prefs = { sounds: boolean; hide_sensitive: boolean; is_public: boolean }
 type Key = keyof Prefs
@@ -17,7 +20,7 @@ type Key = keyof Prefs
 const TOGGLES: [Key, string, string][] = [
   ['sounds', 'Sons', 'Ouverture des paquets et révélation des cartes.'],
   ['hide_sensitive', 'Masquer les images sensibles', 'Une image signalée comme sensible laisse place à l\'emblème du jeu.'],
-  ['is_public', 'Profil public', 'Les autres joueurs peuvent voir ton profil et ta collection.'],
+  ['is_public', 'Profil public', 'Décochée, seuls tes amis voient ta bio, ta vitrine et ta collection.'],
 ]
 
 // Jamais disabled sur un bouton qui peut garder le focus : aria-disabled et une garde (le navigateur poserait le focus sur body).
@@ -29,7 +32,7 @@ const ok = 'text-sm font-medium text-[var(--color-accent-light)]'
 const dateFr = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long' })
 const nextChange = (iso: unknown) => (typeof iso === 'string' ? ` Prochain changement possible le ${dateFr.format(new Date(iso))}.` : '')
 
-// Onglet « Général » (R§2.2) : profil, préférences, compte. Page jamais capturée (D§8.5) : chaque section a ses états
+// Onglet « Général » (R§2.2) : profil, préférences, notifications, compte. Page jamais capturée (D§8.5) : chaque section a ses états
 // de chargement, d'échec avec « Réessayer » et d'enregistrement ; une section en échec ne bloque pas les autres.
 export function SettingsClient() {
   // null : en lecture ; false : lecture en échec.
@@ -77,6 +80,14 @@ export function SettingsClient() {
     fn()
   }
 
+  // Seule la clé k : la réponse d'un autre interrupteur, partie avant, n'écrase pas une valeur plus fraîche.
+  const settle = (k: Key, v: boolean) => {
+    confirmed.current = { ...(confirmed.current as Prefs), [k]: v }
+    setPrefs({ sounds: confirmed.current.sounds, hideSensitive: confirmed.current.hide_sensitive })
+  }
+
+  // Refus, ou valeur que le serveur n'a pas retenue : le message connu. Issue inconnue (réseau, ≥ 500, 2xx illisible) : le texte du B12
+  // et la valeur relue, comme « Profil public » de /profile.
   async function toggle(k: Key) {
     if (!prefs || !confirmed.current || saving.current.has(k)) return
     saving.current.add(k)
@@ -86,15 +97,17 @@ export function SettingsClient() {
     setPrefError(null)
     setPrefSaved('')
     try {
-      const r = await api<Prefs>('/api/settings/preferences', { method: 'POST', body: JSON.stringify({ [k]: next }) })
-      // Seule la clé envoyée : la réponse d'un autre interrupteur, partie avant, n'écrase pas une valeur plus fraîche.
-      confirmed.current = { ...confirmed.current, [k]: r[k] }
-      setPrefs({ sounds: confirmed.current.sounds, hideSensitive: confirmed.current.hide_sensitive })
-      // Le serveur a gardé une autre valeur : c'est elle qui s'affiche, et ce n'est pas un succès.
-      if (r[k] !== next) throw new Error('préférence non retenue')
-      setPrefSaved('Préférence enregistrée.')
-    } catch {
-      setPrefError('Ta préférence n\'a pas pu être enregistrée.')
+      const r = await api<Prefs | null>('/api/settings/preferences', { method: 'POST', body: JSON.stringify({ [k]: next }) })
+      if (typeof r?.[k] !== 'boolean') throw new Error('Réponse illisible')
+      settle(k, r[k])
+      if (r[k] === next) setPrefSaved('Préférence enregistrée.')
+      else setPrefError('Ta préférence n\'a pas pu être enregistrée.')
+    } catch (e) {
+      if (unsure(e)) {
+        const p = await api<Prefs | null>('/api/settings/preferences').catch(() => null)
+        if (typeof p?.[k] === 'boolean') settle(k, p[k])
+      }
+      setPrefError(unsure(e) ? UNSURE : 'Ta préférence n\'a pas pu être enregistrée.')
     }
     const now = confirmed.current[k]
     setPrefsView((p) => p && { ...p, [k]: now })
@@ -159,6 +172,8 @@ export function SettingsClient() {
           <p role="status" className={ok}>{prefSaved}</p>
         </Section>
 
+        <PushSection />
+
         <Section id="settings-account" title="Compte">
           <PasswordForm />
           <div className="border-t border-[var(--color-border)] pt-4">
@@ -167,24 +182,6 @@ export function SettingsClient() {
         </Section>
       </div>
     </>
-  )
-}
-
-function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
-  return (
-    <section aria-labelledby={id} className="card-frame space-y-4 p-6">
-      <h2 id={id} tabIndex={-1} className="text-lg font-bold outline-none">{title}</h2>
-      {children}
-    </section>
-  )
-}
-
-function ReadError({ onRetry, children }: { onRetry: () => void; children: string }) {
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      <FormError>{children}</FormError>
-      <button type="button" onClick={onRetry} className={ghost}>Réessayer</button>
-    </div>
   )
 }
 
@@ -307,11 +304,21 @@ function PasswordForm() {
 function SignOut() {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const keys = useRef(new Map<string, string>())
 
   async function signOut() {
     if (pending) return
     setPending(true)
     setError(null)
+    // Appareil désabonné d'abord, puis sa ligne (B18, PF12) : deux étapes indépendantes, le DELETE part même si le désabonnement du
+    // navigateur échoue (navigateur partagé). Un échec ne bloque jamais la déconnexion : le renvoi de la section push rattachera
+    // l'appareil au joueur suivant.
+    const { sub } = await pushState().catch(() => ({ sub: null }))
+    if (sub?.endpoint) {
+      await unsubscribePush().catch(() => null)
+      await apiOnce(keys.current, `unsubscribe:${sub.endpoint}`, '/api/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint: sub.endpoint }) })
+        .catch(() => {})
+    }
     const { error } = await createBrowserSupabase().auth.signOut()
     // Chargement complet : les pages gardées en mémoire (Activity) ne survivent pas à la session.
     if (!error) return window.location.replace('/login')

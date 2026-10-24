@@ -57,7 +57,7 @@ end $$;
 do $$ begin
   assert (select jsonb_object_agg(key, value) from wm.config where key in ('trade_limits', 'friend_limit', 'list_caps'))
     = '{"trade_limits":{"cards":100,"wb":10000,"expiry_h":168},"friend_limit":null,
-    "list_caps":{"trades_closed":200,"notifications":50,"friend_search":20}}'::jsonb, 'config des échanges';
+    "list_caps":{"conversations":50,"friend_owners":3,"friend_search":20,"messages":100,"notifications":50,"trades_closed":200}}'::jsonb, 'config des échanges';
   assert not exists (select from wm.config where key in ('trade_limits', 'friend_limit', 'list_caps') and coalesce(note, '') = ''),
     'note manquante';
 end $$;

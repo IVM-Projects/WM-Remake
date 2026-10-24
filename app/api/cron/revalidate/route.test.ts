@@ -19,10 +19,11 @@ beforeEach(() => {
 })
 
 describe('POST /api/cron/revalidate', () => {
-  it.each([undefined, ''])('CRON_SECRET %j → 503 cron_disabled, rien revalidé', async (value) => {
+  it.each([undefined, ''])('CRON_SECRET %j → 503 cron_disabled avec Retry-After, rien revalidé', async (value) => {
     vi.stubEnv('CRON_SECRET', value)
     const res = await post('bon-secret')
     expect(res.status).toBe(503)
+    expect(res.headers.get('retry-after')).toBe('1')
     expect(await res.json()).toEqual({ code: 'cron_disabled', error: 'Tâche planifiée non configurée.', message: 'Tâche planifiée non configurée.' })
     expect(revalidateTag).not.toHaveBeenCalled()
   })

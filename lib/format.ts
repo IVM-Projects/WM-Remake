@@ -27,3 +27,15 @@ export const formatDateTime = (iso: string): string => when.format(new Date(iso)
 // Date courte fr-FR d'une offre (R§6.8) : « 20 sept. », heure locale du joueur.
 const day = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' })
 export const formatShortDate = (iso: string): string => day.format(new Date(iso))
+
+// Mois en toutes lettres et année fr-FR (« Membre depuis octobre 2026 »), heure locale du joueur.
+const monthYear = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' })
+export const formatMonthYear = (iso: string): string => monthYear.format(new Date(iso))
+
+// Heure courte fr-FR d'un message (« 14:03 »), heure locale du joueur.
+const time = new Intl.DateTimeFormat('fr-FR', { timeStyle: 'short' })
+export const formatTime = (iso: string): string => time.format(new Date(iso))
+
+// Date en toutes lettres fr-FR (« 21 octobre 2026 ») : séparateur de jour du fil de /dms, heure locale du joueur.
+const longDate = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long' })
+export const formatLongDate = (iso: string): string => longDate.format(new Date(iso))

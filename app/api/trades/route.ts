@@ -8,6 +8,7 @@ export const POST = route({
   fn: 'create_trade',
   input: TradeBody,
   idem: true,
+  push: true,
   args: (i, { tz }) => ({
     p_recipient_id: i.recipient_id,
     p_items: i.items,

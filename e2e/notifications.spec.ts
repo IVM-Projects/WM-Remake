@@ -129,6 +129,17 @@ returning data ->> 'auction_id'`, { uid, t: title })
   await expect(panel(page).getByRole('link', { name: `Tu as été surenchéri sur ${title}`, exact: true })).toHaveAttribute('href', `/marketplace/${auction}`)
 })
 
+test('message privé : « Alice t\'a écrit », lien vers le fil /dms?with=<user_id>', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  const from = sql(`insert into public.notifications (user_id, type, data) values (:'uid', 'chat_message',
+  jsonb_build_object('user_id', gen_random_uuid(), 'username', 'Alice')) returning data ->> 'user_id'`, { uid })
+  await page.goto('/pulls')
+  await expect(badge(page)).toHaveText('1')
+  await bell(page).click()
+  await expect(panel(page).getByRole('link', { name: 'Alice t\'a écrit', exact: true })).toHaveAttribute('href', `/dms?with=${from}`)
+})
+
 test('vide : « Aucune notification. » ; la cloche et « Tout marquer comme lu » font au moins 44 px', async ({ page, login }) => {
   trash.push((await login()).uid)
   await page.goto('/pulls')

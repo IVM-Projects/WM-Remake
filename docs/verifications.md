@@ -304,3 +304,35 @@ Répétition et CI le 2026-10-22 ; fichier lancé par l'utilisateur le 2026-10-2
 | Fusion du M4a | `git merge --no-ff` de 2ff1380 dans `develop` (7d77bb2) | `dpl_49Q1LvN9cBJ8WrRkSdo351paa49R` READY (alias `wmr-ivm.vercel.app`) ; `/api/health` 200 (`db: ok`, `settle_lag_s` 0, `overdue_s` nul) ; `/trades` sans session 307 vers `/gate` ; `/api/trades` sans session 401 ; `health.yml` vert (run 39915645523) | 2026-10-23 |
 | Acceptation 100 ↔ 100 sur la démo (Task 16, Step 6) | forux et forux2 rendus amis et dotés de 100 copies neuves chacun par le MCP (`wm.friend_request`, `wm.friend_action`, `wm.grant_copy`), échange `c704a0ba-…` créé par `wm.create_trade` (100 éléments par côté, WB 0 et 0 : soldes de 39 et 50) ; clic « Accepter » de forux2 sur `/trades/<id>` ; ligne `PATCH /api/trades/[tradeId]` des journaux d'exécution Vercel (`get_runtime_logs`) | **190 ms** de route (`status` 200, `rpc` `trade_action`, `pg_code` nul, déploiement `dpl_49Q1LvN9cBJ8WrRkSdo351paa49R`) ; le `GET` du détail juste avant 335 ms. Statut `accepted` ; les 200 copies sont passées de l'autre côté (100 + 100), aucune ligne perdue ; `check_invariants()` `[]`. Démo Free, une seule mesure (A5) : le M8 mesure S5 sur Pro | 2026-10-23 |
 | Préversions Vercel | `vercel.json` `git.deploymentEnabled` `{"claude/*": false}` (b51d6a5, accord de l'utilisateur) ; `list_deployments` après le push | Aucun déploiement créé pour b51d6a5 (dernière préversion : 2ff1380). Cause relevée : 87 des 100 derniers déploiements étaient des préversions de la branche de travail, ≈ 40 Mo de fonctions chacune (≈ 3,5 Go à elles seules), et « Functions Storage » (Hobby) était à 7,86 Go sur 10 (capture de l'utilisateur) ; suppression des anciennes : rétention du projet réglée par l'utilisateur (1 jour pour les annulés, les erreurs et la pré-production, 30 jours pour la production) | 2026-10-23 |
+
+## M4b — Task 16 : acceptation avec vitrine et push, overlay des amis
+
+Bac à sable, 2026-10-24, branche `claude/clever-cannon-59x0dj` (run de la vague finale de la revue de branche, sur 2fbff63) ; **chiffres indicatifs (A5) ; le M8 mesure S5 sur Pro.**
+
+Méthode (M4b-26, B14) :
+
+- celle du M4a (section « M4a — Task 15 » ci-dessus) : même machine (PG 16.15 local, 4 vCPU, 15 Go), `fsync=on` et `synchronous_commit=on`, mêmes 10 paires, mêmes tailles et tours, même fond de 5 000 échanges, `analyze` en fin de préparation, p50, p95 et max au rang le plus proche ;
+- en plus, dans la transaction mesurée : `bench.accept_next` pose, avant chaque acceptation, l'avatar et les 4 emplacements de vitrine de chaque joueur sur 4 de ses copies seules de l'échange (`insert … on conflict (user_id, position) do update`, 8 exigés), que `wm.trade_move` vide ;
+- un abonnement push par joueur des paires (`https://fcm.googleapis.com/fcm/send/bench-<n>`) et les 5 types `trade_*` dans `wm.notification_prefs`, posés à la fin de `trade_setup.sql`, après la création des échanges : outbox vide au départ, et le trigger d'outbox tourne dans chaque acceptation ;
+- après chaque taille, `run.sh` exige 0 emplacement de vitrine pour les 20 joueurs, 100 lignes dans `wm.push_outbox` (une `trade_accepted` par acceptation, pour l'abonnement de l'initiateur) et un p95 sous 500 ms, puis vide l'outbox ;
+- overlay (`overlay.sql`) : un joueur O à 1 000 amis acceptés (un sur deux dans chaque sens de la ligne), chacun possédant les 50 premières cartes du seed (par id), puis `analyze` ; le plan de `wm.cards_overlay(O, <50 ids>)` est lu par `auto_explain` (`log_nested_statements`, `log_analyze`, `client_min_messages = log`) : `run.sh` exige `user_cards_card_user_idx` dans deux nœuds au moins (`ownedCardIds` et `friendOwners`) et refuse `Seq Scan on user_cards` ; puis `pgbench -n -c 1 -t 200` du même appel, échec si le p95 atteint 50 ms (B14) ; enfin 200 appels sur les 50 cartes suivantes, qu'aucun ami ne possède, imprimés seulement (pire cas, indicatif).
+
+```bash
+bash load/bench/run.sh
+```
+
+Un run du `run.sh` commité, sur un banc neuf, vert de bout en bout. Chaque chiffre ci-dessous est recopié de son résumé (`== Résumé`, collé
+tel quel dans le rapport de la vague finale) ; les chiffres du M4a sont dans la section « M4a — Task 15 ».
+
+| Élément | Méthode | Résultat | Date |
+|---|---|---|---|
+| Acceptation 100 ↔ 100, vitrine et push | `trade_accept.sql`, `size=100` | p50 51,7 ms ; **p95 118,3 ms** ; max 141,4 ms ; 155,1 tps ; 100 acceptés. Sous les 500 ms (D:1083) | 2026-10-24 |
+| Acceptation 10 ↔ 10 (témoin) | `trade_accept.sql`, `size=10` | p50 16,4 ms ; p95 67,0 ms ; max 85,9 ms ; 409,5 tps ; 100 acceptés | 2026-10-24 |
+| Rapport des p95 | 100 ↔ 100 sur 10 ↔ 10 | 1,8 | 2026-10-24 |
+| Vitrine et outbox | `public.showcase` des 20 joueurs, `count(*)` de `wm.push_outbox`, après chaque taille | vitrines vidées et 100 lignes d'outbox à chaque taille | 2026-10-24 |
+| Expiration de 5 000 échanges | `wm.expire_trades(5000)`, un lot | 102,6 ms | 2026-10-24 |
+| Plan de l'overlay | `auto_explain` de `wm.cards_overlay(O, <50 ids>)`, après `analyze` | `user_cards_card_user_idx` dans 2 nœuds (`ownedCardIds` et `friendOwners`), aucun `Seq Scan on user_cards` | 2026-10-24 |
+| p95 de l'overlay (B14) | `pgbench -n -c 1 -t 200` du même appel | p50 4,3 ms ; **p95 5,0 ms** ; max 9,7 ms, pour < 50 ms | 2026-10-24 |
+| Page qu'aucun ami ne possède (indicatif) | 200 appels sur les 50 cartes suivantes, aucune possédée par les amis (contrôlé par `overlay.sql`) | p50 53,0 ms ; p95 84,0 ms ; max 110,9 ms : 50 × 1 000 sondes vaines. Hors du seuil de B14, qui vise la page possédée ; `shortcut:` dans `1850` (passer par les possesseurs de la carte quand ils sont moins nombreux que les amis, M8) | 2026-10-24 |
+| Choix de la forme | mesures ponctuelles de la Task 16, script jetable non commité | arrêt précoce retenu ; les chiffres des autres formes restent dans le rapport de la Task 16, aucun résumé de `run.sh` ne les trace | 2026-10-24 |
+| Interblocages et invariants | `pg_stat_database.deadlocks` avant et après ; `wm.check_invariants()` | 0 interblocage et `[]` ; aucune transaction en échec dans pgbench | 2026-10-24 |

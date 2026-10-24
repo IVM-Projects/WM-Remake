@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
 import { accessToken, giveCards, makeUser, psql } from '../users.ts'
 import { Card, CARD_COLUMNS } from './catalog.ts'
+import { befriend } from './friends.ts'
 import { listed, seller } from './market.ts'
 import { pair, proposed } from './trades.ts'
 
@@ -54,6 +55,18 @@ const spec = (method: RouteSpec['method'], path: string, source: string, cases: 
 // Les échanges de ce joueur : le seul, toujours en attente (0005 n'accorde que select à authenticated : « aucun client n'y écrit »).
 const onlyPending = (env: ContractEnv, uid: string, id: string) => assert.equal(sql(env, `select string_agg(id || ':' || status, ',')
 from public.trades where :'uid' in (initiator_id, recipient_id)`, { uid }), `${id}:pending`)
+// Deux amis, et deux messages de a à b par wm.chat_send : b a donc une chat_message non lue de a.
+function chatted(env: ContractEnv) {
+  const [a, b] = players(env)
+  befriend(env, a, b)
+  sql(env, `select wm.chat_send(:'a', :'b', 'm1'); select wm.chat_send(:'a', :'b', 'm2')`, { a, b })
+  return [a, b] as const
+}
+// Messages de a à b en contenu:lu, puis la chat_message de a pour b.
+const chatState = (env: ContractEnv, a: string, b: string) => sql(env, `select (select string_agg(content || ':' || read, ',' order by created_at)
+  from public.chat_messages where sender_id = :'a' and recipient_id = :'b') || ' ' || (select string_agg(read::text, ',')
+  from public.notifications where user_id = :'b' and type = 'chat_message' and data ->> 'user_id' = :'a')`, { a, b })
+const UNREAD = 'm1:false,m2:false false'
 
 export const restSpecs: RouteSpec[] = [
   spec('POST', 'rpc/sync_profile_packs', 'R§3.1', [
@@ -333,6 +346,52 @@ where a.id = :'id'`, { id: kept }))
         await pgError(await rest(env, `trades?id=eq.${id}`, { method: 'DELETE', uid: a.uid }), 403, '42501')
         await status(await rest(env, `trades?id=eq.${id}`, { method: 'DELETE' }), 401)
         onlyPending(env, a.uid, id)
+      },
+    },
+  ], 'inc.'),
+  spec('PATCH', 'chat_messages', 'R§3.7', [
+    {
+      name: 'sender_id=eq.A&recipient_id=eq.B&read=eq.false {read: true} : par A, par Carol → 204 sans effet ; {content} par B → 403 42501 ; anon → 401 42501 ; par B → 204, lus avec la chat_message (trigger), relus par A, invisibles à Carol',
+      run: async (env) => {
+        const [a, b] = chatted(env)
+        const carol = makeUser(env.backend.databaseUrl).uid
+        const mark = (uid?: string, body: unknown = { read: true }) =>
+          rest(env, `chat_messages?sender_id=eq.${a}&recipient_id=eq.${b}&read=eq.false`, { method: 'PATCH', uid, body, headers: MINIMAL })
+        for (const uid of [a, carol]) {
+          await status(await mark(uid), 204)
+          assert.equal(chatState(env, a, b), UNREAD, uid)
+        }
+        await pgError(await mark(b, { content: 'x' }), 403, '42501')
+        // Un with check de la RLS rendrait aussi 42501 : c'est bien le droit de colonne qui manque (DG:453).
+        assert.equal(sql(env, `select has_column_privilege('authenticated', 'public.chat_messages', 'content', 'update')`), 'f')
+        await pgError(await mark(), 401, '42501')
+        assert.equal(chatState(env, a, b), UNREAD)
+        await status(await mark(b), 204)
+        assert.equal(chatState(env, a, b), 'm1:true,m2:true true')
+        assert.deepEqual(await status(await rest(env, `chat_messages?select=content,read&sender_id=eq.${a}&order=created_at`, { uid: a }), 200),
+          [{ content: 'm1', read: true }, { content: 'm2', read: true }])
+        assert.deepEqual(await status(await rest(env, `chat_messages?select=id&sender_id=eq.${a}`, { uid: carol }), 200), [])
+      },
+    },
+  ], 'prob.'),
+  spec('POST', 'chat_messages', 'R§3.7', [
+    {
+      name: 'un message de A à B, posté par A → 403 42501, aucune ligne de plus',
+      run: async (env) => {
+        const [a, b] = chatted(env)
+        await pgError(await rest(env, 'chat_messages', { method: 'POST', uid: a, body: { sender_id: a, recipient_id: b, content: 'direct' }, headers: MINIMAL }),
+          403, '42501')
+        assert.equal(chatState(env, a, b), UNREAD)
+      },
+    },
+  ], 'inc.'),
+  spec('DELETE', 'chat_messages', 'R§3.7', [
+    {
+      name: 'sender_id=eq.A par A, puis par B → 403 42501, les lignes restent',
+      run: async (env) => {
+        const [a, b] = chatted(env)
+        for (const uid of [a, b]) await pgError(await rest(env, `chat_messages?sender_id=eq.${a}`, { method: 'DELETE', uid }), 403, '42501')
+        assert.equal(chatState(env, a, b), UNREAD)
       },
     },
   ], 'inc.'),

@@ -18,6 +18,12 @@ export const sql = (query: string, vars?: Record<string, string>): string => psq
 // n copies des n premières cartes du seed de cette rareté (P20) ; renvoie les ids des copies.
 export const giveCopies = (u: User, rarity: string, n = 1): string[] => giveCards(backend().databaseUrl, u.uid, rarity, n)
 
+// Copie d'une carte R à image (tests.image_card, B11), au titre unique à fin non numérique ; renvoie l'id de la copie.
+export const imageCopy = (u: User): string => sql(`select tests.image_card(:'title') as card \\gset
+insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards where id = :'card' returning id`,
+{ uid: u.uid, title: `Zz image e2e ${randomUUID().slice(-12)} z` })
+
 // Amis par SQL (P20) : une ligne accepted, `a` demandeur ; renvoie son id.
 export const befriend = (a: User, b: User): string =>
   sql(`insert into public.friendships (requester_id, addressee_id, status) values (:'a', :'b', 'accepted') returning id`, { a: a.uid, b: b.uid })

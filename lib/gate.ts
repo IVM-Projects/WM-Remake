@@ -1,7 +1,7 @@
 export const GATE_COOKIE = 'wm_gate'
 
 // Chemins bruts exacts : aucune normalisation, donc `/GATE` ou `/api/health/` ne passent pas.
-const EXEMPT = new Set(['/gate', '/api/health', '/api/stripe/webhook', '/robots.txt', '/icon'])
+const EXEMPT = new Set(['/gate', '/api/health', '/api/stripe/webhook', '/robots.txt', '/icon', '/sw.js'])
 
 // Seule définition de « porte active » (proxy, next.config, layout, robots) : les deux variables, ou aucune.
 // Une seule définie lève (fail-closed) au lieu d'ouvrir la porte. Lues à l'appel.

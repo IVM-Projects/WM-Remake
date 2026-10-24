@@ -1,5 +1,6 @@
 'use client'
 
+import { MessageCircle } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
@@ -75,6 +76,8 @@ export function TradeClient() {
   const pending = trade?.status === 'pending'
   usePoll(read, 20_000, pending)
 
+  // L'autre participant, d'après la session (P16) : « Message à » mène à son fil.
+  const peer = !trade || !uid ? null : uid === trade.initiator_id ? trade.recipient : uid === trade.recipient_id ? trade.initiator : null
   const recipient = pending && !!uid && trade.recipient_id === uid
   const initiator = pending && !!uid && trade.initiator_id === uid
   // Les actions disparaissent sous le focus (action faite, refus relu, poll) ou « Réessayer » sous le clic : le focus tombé sur body va
@@ -145,6 +148,12 @@ export function TradeClient() {
           <PageHeader title="Détail de l'échange" icon={entry.icon} />
           <div className="card-frame space-y-4 p-4">
             <p className="wrap-anywhere">{`De ${trade.initiator.username} à ${trade.recipient.username}`}</p>
+            {peer && (
+              <Link href={`/dms?with=${peer.id}`} className={`${link} gap-2 wrap-anywhere`}>
+                <MessageCircle className="size-4 shrink-0" />
+                {`Message à ${peer.username}`}
+              </Link>
+            )}
             <p ref={status} tabIndex={-1} className={`font-semibold outline-none ${STATUS_LABEL[trade.status].className}`}>
               {STATUS_LABEL[trade.status].text}
             </p>

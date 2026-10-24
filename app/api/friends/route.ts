@@ -7,5 +7,6 @@ export const POST = route({
   fn: 'friend_request',
   input: z.object({ addressee_id: z.uuid() }),
   idem: true,
+  push: true,
   args: (i) => ({ p_addressee_id: i.addressee_id }),
 })

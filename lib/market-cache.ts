@@ -33,6 +33,7 @@ export async function sharedMarketList(page: number, limit: number, sort: string
 }
 
 // Détail partagé ; auction_detail règle d'abord une enchère échue, à chaque cache manqué (M3-19).
+// shortcut: le règlement paresseux de ce détail insère des notifications sous 'use cache: remote', donc sans after() ; leur push part au drain suivant (réveil de 15 s sur la démo, after() d'une autre route ou cron) ; sortir le règlement du cache si ce délai gêne.
 export async function sharedAuction(id: string): Promise<RpcResult> {
   'use cache: remote'
   cacheTag('market')

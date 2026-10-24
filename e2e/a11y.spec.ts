@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { befriend, expect, giveCopies, makePlayer, sql, test } from './fixtures'
+import { befriend, expect, giveCopies, imageCopy, makePlayer, sql, test } from './fixtures'
+import { stubPush } from './push-stub'
 
 type Known = { rule: string; selector: string }
 
@@ -31,12 +32,18 @@ const TAG_OPTION: Known = { rule: 'nested-interactive', selector: '[role=listbox
 const READY: Record<string, string> = {
   '/reset-password': 'main [role=alert]', '/verify-email': '#signup-otp-code', '/pulls': '[data-stock-bar]',
   '/collection': 'main a[href="/pulls"]', '/global-collection': 'main nav[aria-label="Pagination"]',
-  // Les deux lectures de /settings finies : pseudo et préférences.
-  '/settings': 'main:has(#settings-username) input[name="sounds"]',
+  // Les lectures de /settings finies : pseudo, préférences et notifications push (avec le renvoi de l'abonnement).
+  '/settings': 'main:has(#settings-username):has(input[name="sounds"]) section[data-ready]',
   // Première lecture de /api/friends finie (sections ou erreur).
   '/friends': 'main [data-ready]',
   // Ami, collections et parent lus (composer, blocage ou erreur).
   '/trades/new': 'main [data-ready]',
+  // Profil lu, avec sa vitrine et ses raretés quand la vue est permise (ou l'échec).
+  '/profile/[username]': 'main [data-ready]',
+  // Ligne du profil et vitrine lues (ou l'échec).
+  '/profile': 'main [data-ready]',
+  // Liste des conversations lue, avec le fil quand `with` est là (ou l'échec).
+  '/dms': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -155,6 +162,22 @@ test('axe /global-collection : modale de carte ouverte, liste de souhaits vide, 
   await expectNoSeriousViolations(page)
 })
 
+// Pastille « ami possède » en lien (M4b-21) : sa boîte de 44 px passe target-size (wcag22aa).
+test('axe /global-collection, pastille d\'un ami', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(friend, me)
+    sql(`insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards where wikipedia_title = 'Article d''essai n° 0001'`, { uid: friend.uid })
+    await page.goto('/global-collection')
+    await page.locator('main a[href^="/profile/"]').waitFor()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
 // Tuile du contrat (R§6.8) attendue avant l'analyse : une enchère d'une carte neuve, filtrée par son titre ; tout est supprimé à la fin.
 test('axe /marketplace : tuile d\'une enchère créée par sql', async ({ page, login }) => {
   const { uid } = await login()
@@ -213,6 +236,83 @@ test('axe /friends : une demande reçue et un ami, puis la modale de retrait', a
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'a', :'f')`, { me: me.uid, a: asker.uid, f: friend.uid })
+  }
+})
+
+test('axe /profile/<pseudo> : soi, un ami à la vitrine garnie, un profil privé, puis la modale de signalement ouverte', async ({ page, login }) => {
+  const me = await login()
+  const [friend, hidden] = [makePlayer(), makePlayer()]
+  try {
+    befriend(me, friend)
+    sql(`insert into public.showcase (user_id, position, user_card_id) values (:'uid', 0, :'copy')`, { uid: friend.uid, copy: imageCopy(friend) })
+    sql(`update public.profiles set is_public = false where id = :'uid'`, { uid: hidden.uid })
+    for (const u of [me, friend, hidden]) {
+      await page.goto(`/profile/${encodeURIComponent(u.username)}`)
+      await page.locator(READY['/profile/[username]']).waitFor()
+      await expect(page.locator('main h1')).toHaveText(u.username)
+      await expectNoSeriousViolations(page)
+    }
+    await page.getByRole('button', { name: 'Signaler' }).click()
+    await expect(page.getByRole('dialog').getByRole('group', { name: 'Motif' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f', :'h')`, { me: me.uid, f: friend.uid, h: hidden.uid })
+  }
+})
+
+test('axe /profile : deux emplacements remplis, puis le sélecteur d\'avatar ouvert (une copie à image, une « Sans image »)', async ({ page, login }) => {
+  const me = await login()
+  try {
+    for (const position of ['0', '1']) {
+      sql(`insert into public.showcase (user_id, position, user_card_id) values (:'uid', :'p'::int, :'copy')`, { uid: me.uid, p: position, copy: imageCopy(me) })
+    }
+    giveCopies(me, 'C')
+    await page.goto('/profile')
+    await page.locator(READY['/profile']).waitFor()
+    await expect(page.getByRole('region', { name: 'Vitrine (2/4)' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Changer l\'avatar' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Choisir ton avatar' })
+    await expect(dialog.locator('div[class*="glow-"]')).toHaveCount(3)
+    await expect(dialog.getByText('Sans image', { exact: true })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'me'`, { me: me.uid })
+  }
+})
+
+test('axe /dms : deux conversations, l\'une à deux non lus', async ({ page, login }) => {
+  const me = await login()
+  const [a, b] = [makePlayer(), makePlayer()]
+  try {
+    befriend(me, a)
+    befriend(me, b)
+    sql(`insert into public.chat_messages (sender_id, recipient_id, content) values (:'me', :'b', 'Pour B'), (:'a', :'me', 'Un'), (:'a', :'me', 'Deux')`,
+      { me: me.uid, a: a.uid, b: b.uid })
+    await page.goto('/dms')
+    await page.locator(READY['/dms']).waitFor()
+    await expect(page.getByRole('list', { name: 'Conversations' }).getByRole('listitem')).toHaveCount(2)
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'a', :'b')`, { me: me.uid, a: a.uid, b: b.uid })
+  }
+})
+
+// Le fil : div[role=log] et son ol sans rôle (un ol au rôle log perdrait sa sémantique de liste, et chaque li lèverait listitem).
+test('axe /dms?with=<ami> : dix messages', async ({ page, login }) => {
+  const me = await login()
+  const friend = makePlayer()
+  try {
+    befriend(me, friend)
+    sql(`insert into public.chat_messages (sender_id, recipient_id, content)
+select case when i % 2 = 0 then :'me' else :'f' end::uuid, case when i % 2 = 0 then :'f' else :'me' end::uuid, 'Message ' || i
+from generate_series(1, 10) i`, { me: me.uid, f: friend.uid })
+    await page.goto(`/dms?with=${friend.uid}`)
+    await page.locator(READY['/dms']).waitFor()
+    await expect(page.getByRole('log').getByRole('listitem').filter({ hasText: 'Message ' })).toHaveCount(10)
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
   }
 })
 
@@ -275,6 +375,23 @@ test('axe /trades/new?with=<id> : deux panneaux garnis, une copie engagée, un c
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
+test('axe /settings : section push active (« Messages » cochée, puis « Activer sur cet appareil »)', async ({ page, login }) => {
+  const { uid } = await login()
+  try {
+    await stubPush(page)
+    await page.goto('/settings')
+    await page.locator(READY['/settings']).waitFor()
+    const saved = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings/notifications')
+    await page.getByRole('checkbox', { name: 'Messages', exact: true }).check()
+    await saved
+    await page.getByRole('button', { name: 'Activer sur cet appareil' }).click()
+    await expect(page.getByText('Notifications activées sur cet appareil.', { exact: true })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
   }
 })
 

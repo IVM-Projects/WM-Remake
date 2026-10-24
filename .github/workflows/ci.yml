@@ -68,6 +68,8 @@ jobs:
             .cache/mailpit
           key: bench-tools-${{ hashFiles('scripts/get-tools.sh') }}
       - run: bash scripts/get-tools.sh
+      # Ports du banc (54321-54329) hors de la plage éphémère : une socket cliente (psql, pools) ne peut plus les prendre avant les binds.
+      - run: sudo sysctl -w net.ipv4.ip_local_reserved_ports=54321-54329
       - run: npm run test:db
       - run: npm run build:test
       - run: npm run test:contract
