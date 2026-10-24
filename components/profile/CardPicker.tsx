@@ -67,6 +67,7 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
     e.preventDefault()
     q.current = String(new FormData(e.currentTarget).get('q') ?? '').trim()
     setList(null)
+    setError(null)
     read(0)
   }
 
@@ -107,6 +108,7 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
         <LoadError onRetry={() => {
           title.current?.focus()
           setFailed(false)
+          setError(null)
           read(0)
         }} />
       ) : !list ? (

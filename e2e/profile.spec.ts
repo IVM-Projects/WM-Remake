@@ -742,6 +742,15 @@ test('/profile, sélecteur : 50 copies par page, « Charger la suite », « Filt
   await more.click()
   await expect(dialog.getByRole('alert')).toHaveText(LOAD_FAILED)
   await expect(cards).toHaveCount(50)
+  // Filtre appliqué puis retiré : l'alerte de la suite en échec ne survit pas à la relecture.
+  const filter = dialog.getByRole('searchbox', { name: 'Filtrer mes cartes' })
+  await filter.fill('Zz image e2e')
+  await filter.press('Enter')
+  await expect(cards).toHaveCount(1)
+  await expect(dialog.getByRole('alert')).toHaveCount(0)
+  await filter.fill('')
+  await filter.press('Enter')
+  await expect(cards).toHaveCount(50)
   // Dernière page au clavier : le bouton disparaît sous le focus, qui va à la première copie arrivée.
   await more.focus()
   await page.keyboard.press('Enter')
@@ -749,7 +758,6 @@ test('/profile, sélecteur : 50 copies par page, « Charger la suite », « Filt
   await expect(more).toHaveCount(0)
   await expect(dialog.getByRole('alert')).toHaveCount(0)
   await expect(cards.nth(50).locator('h3 > button')).toBeFocused()
-  const filter = dialog.getByRole('searchbox', { name: 'Filtrer mes cartes' })
   await filter.fill('Zz image e2e')
   await filter.press('Enter')
   await expect(cards).toHaveCount(1)

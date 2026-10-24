@@ -1,5 +1,6 @@
 // Service worker du push (M4b-23), écrit à la main. Aucun gestionnaire fetch : rien n'est intercepté ni mis en cache.
-// Neutre : le titre arrive dans la charge ({title, body, url, tag}, lib/push.ts), jamais écrit ici.
+// Neutre : le titre arrive dans la charge ({title, body, url, tag}, lib/push.ts, lib/brand.ts côté serveur) ; à défaut, un titre neutre,
+// jamais la marque.
 
 // Charge vide, non JSON ou sans titre : un titre neutre, jamais une exception (la notification serait perdue).
 self.addEventListener('push', (event) => {
