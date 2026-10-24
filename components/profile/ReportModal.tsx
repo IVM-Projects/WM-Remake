@@ -59,6 +59,9 @@ export function ReportModal({ user, onClose }: { user: { id: string; username: s
     inflight.current = true
     setBusy(true)
     setError(null)
+    // Seule la clé de ce corps vaut encore : une autre, gardée d'une issue incertaine, rejouerait sa réponse stockée (A, B, puis A →
+    // « Signalement envoyé. » alors que la base tient B).
+    for (const k of keys.current.keys()) if (k !== body) keys.current.delete(k)
     try {
       const r = await apiOnce<{ report: Report } | null>(keys.current, body, '/api/reports', { method: 'POST', body })
       // Réponse perdue, 5xx ou corps illisible (B12) : relancé avec le même corps, l'envoi garde sa clé (apiOnce) et le serveur rejoue sa réponse.
@@ -104,6 +107,7 @@ export function ReportModal({ user, onClose }: { user: { id: string; username: s
                     if (inflight.current) return
                     setReason(value)
                     setError(null)
+                    keys.current.clear()
                   }}
                   className="size-5 accent-[var(--color-accent)]"
                 />
@@ -123,6 +127,7 @@ export function ReportModal({ user, onClose }: { user: { id: string; username: s
               onChange={(e) => {
                 setDetails(e.target.value)
                 setError(null)
+                keys.current.clear()
               }}
               className="block w-full rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm"
             />

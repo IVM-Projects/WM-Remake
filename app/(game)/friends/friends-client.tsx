@@ -144,14 +144,15 @@ export function FriendsClient() {
     }
   }
 
-  // Relue même après un refus : la demande a pu changer ailleurs. Une issue inconnue garde sa clé (apiOnce) : la relance rejoue, jusqu'à la
-  // prochaine relecture réussie.
+  // Relue même après un refus : la demande a pu changer ailleurs. Une issue inconnue (2xx au corps illisible compris : apiOnce rend null)
+  // garde sa clé : la relance rejoue, jusqu'à la prochaine relecture réussie.
   async function act<T>(intent: string, path: string, init: RequestInit, done: (r: T) => string, focus: Focus | null = null) {
     if (inflight.current) return
     inflight.current = true
     setBusy(true)
     try {
-      toast(done(await apiOnce<T>(keys.current, intent, path, init)))
+      const r = await apiOnce<T | null>(keys.current, intent, path, init)
+      toast(r === null ? UNSURE : done(r))
     } catch (e) {
       toast(userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'))
     }

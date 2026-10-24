@@ -37,4 +37,12 @@ describe('subscribePush', () => {
     expect(reg.pushManager.subscribe).toHaveBeenCalledWith({ userVisibleOnly: true, applicationServerKey: new Uint8Array([4, 1, 2]) })
     expect(early.pushManager.subscribe).not.toHaveBeenCalled()
   })
+
+  it('« Bloquer » à l\'invite (requestPermission → denied) : null, ni register ni subscribe', async () => {
+    vi.stubGlobal('Notification', { requestPermission: vi.fn(async () => 'denied') })
+    const register = vi.fn()
+    vi.stubGlobal('navigator', { serviceWorker: { register, ready: new Promise(() => {}) } })
+    expect(await subscribePush('BAEC')).toBeNull()
+    expect(register).not.toHaveBeenCalled()
+  })
 })

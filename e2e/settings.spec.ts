@@ -93,8 +93,8 @@ test('préférences : images sensibles, sons et profil public enregistrés', asy
   expect(row()).toBe('t|f|f')
 })
 
-test('préférences : un enregistrement refusé revient en arrière, une lecture en échec se réessaie', async ({ page, login }) => {
-  await login()
+test('préférences : un enregistrement refusé revient en arrière, une lecture en échec se réessaie, une réponse perdue relit la valeur', async ({ page, login }) => {
+  const { uid } = await login()
   // Routes désarmées par phase, jamais retirées : un unroute enverrait Fetch.disable (routeOnce).
   let phase = 1
   await page.route('**/api/settings/preferences', (route) => (phase === 1 && route.request().method() === 'GET' ? route.abort() : route.fallback()))
@@ -117,12 +117,16 @@ test('préférences : un enregistrement refusé revient en arrière, une lecture
   await expect(section.getByRole('status')).toHaveText('')
   phase = 3
 
-  await page.route('**/api/settings/preferences', (route) =>
-    route.request().method() === 'POST' ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }) : route.fallback())
-  // click et non uncheck : la case revient cochée, uncheck() échouerait sur ce retour.
+  // 500 après l'enregistrement (réponse perdue) : issue inconnue, dite comme telle (B12), et la case prend la valeur relue.
+  await page.route('**/api/settings/preferences', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    await route.fetch()
+    await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+  })
   await sounds.click()
-  await expect(section.getByRole('alert')).toHaveText('Ta préférence n\'a pas pu être enregistrée.')
-  await expect(sounds).toBeChecked()
+  await expect(section.getByRole('alert')).toHaveText(UNSURE)
+  await expect(sounds).not.toBeChecked()
+  expect(sql(`select sounds from wm.user_prefs where user_id = :'uid'`, { uid })).toBe('f')
 })
 
 test('mot de passe : le nouveau permet de se reconnecter ; « Se déconnecter » mène à /login', async ({ page, login }) => {
@@ -339,6 +343,20 @@ test('push : notifications bloquées → le texte en role="status", aucun bouton
   for (const f of FAMILIES) await expect(family(page, f)).toBeVisible()
 })
 
+test('push : « Bloquer » à l\'invite → l\'état bloqué (le texte en role="status", plus de bouton), aucune alerte, le focus sur le titre', async ({ page, login }) => {
+  trash.push((await login()).uid)
+  await stubPush(page, { answer: 'denied' })
+  const subs = record(page, 'POST', SUBSCRIBE)
+  await openPush(page)
+  await toggle(page, 'Messages', true)
+  await activate(page).click()
+  await expect(push(page).getByRole('status')).toHaveText('Les notifications sont bloquées pour ce site : autorise-les dans les réglages de ton navigateur.')
+  await expect(push(page).getByRole('button')).toHaveCount(0)
+  await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeFocused()
+  expect(subs).toHaveLength(0)
+})
+
 test.describe('Review Focus, navigateur partagé', () => {
   // Endpoint E déjà enregistré pour un autre joueur, le navigateur abonné à E.
   const shared = () => {
@@ -391,6 +409,21 @@ test.describe('Review Focus, navigateur partagé', () => {
     const order: string[] = []
     page.on('request', (r) => { if (is('DELETE', SUBSCRIBE)(r)) order.push(`DELETE ${r.postDataJSON().endpoint}`) })
     // Une fois : /login peut renaviguer (remplacement d'adresse).
+    page.on('framenavigated', (f) => { if (f === page.mainFrame() && new URL(f.url()).pathname === '/login' && !order.includes('/login')) order.push('/login') })
+    await page.getByRole('button', { name: 'Se déconnecter' }).click()
+    await expect(page).toHaveURL('/login')
+    expect(order).toEqual([`DELETE ${endpoint}`, '/login'])
+    expect(rows(endpoint)).toBe('')
+  })
+
+  test('« Se déconnecter », le désabonnement du navigateur en échec : le DELETE de E part quand même, avant /login, plus de ligne pour E', async ({ page, login }) => {
+    trash.push((await login()).uid)
+    const endpoint = shared()
+    await stubPush(page, { endpoint, unsubscribeFails: true })
+    await openPush(page)
+    await expect(push(page).getByRole('status')).toHaveText(ACTIVE)
+    const order: string[] = []
+    page.on('request', (r) => { if (is('DELETE', SUBSCRIBE)(r)) order.push(`DELETE ${r.postDataJSON().endpoint}`) })
     page.on('framenavigated', (f) => { if (f === page.mainFrame() && new URL(f.url()).pathname === '/login' && !order.includes('/login')) order.push('/login') })
     await page.getByRole('button', { name: 'Se déconnecter' }).click()
     await expect(page).toHaveURL('/login')

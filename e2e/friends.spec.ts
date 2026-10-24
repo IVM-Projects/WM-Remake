@@ -439,6 +439,22 @@ test('réponse perdue sur « Ajouter » : la relecture montre la demande ; retir
   expect(keys[0]).not.toBe(keys[1])
 })
 
+test('2xx au corps illisible sur « Ajouter » : l\'issue incertaine, jamais « Demande envoyée à … » ; la relecture montre la demande', async ({ page, login }) => {
+  trash.push((await login()).uid)
+  const other = player()
+  await open(page)
+  // Le serveur crée la demande, le corps de la réponse est coupé : apiOnce rend null et garde la clé.
+  await routeOnce(page, '**/api/friends', async (route) => {
+    await route.fetch()
+    await route.fulfill({ status: 200, body: 'x' })
+  }, (r) => r.request().method() === 'POST')
+  await search(page, other.username)
+  await results(page).getByRole('button', { name: 'Ajouter' }).click()
+  await expect(toasts(page)).toContainText('L\'action n\'a pas été confirmée : elle a peut-être eu lieu.')
+  await expect(toasts(page)).not.toContainText(`Demande envoyée à ${other.username}.`)
+  await expect(section(page, 'Demandes envoyées').getByRole('listitem')).toContainText(other.username)
+})
+
 test('première lecture lente, rendue après la relecture d\'un ajout : jetée, la demande reste affichée', async ({ page, login }) => {
   trash.push((await login()).uid)
   const other = player()

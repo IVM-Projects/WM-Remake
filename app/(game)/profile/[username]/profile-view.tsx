@@ -9,6 +9,7 @@ import { ReportModal } from '@/components/profile/ReportModal'
 import { copyFace, type CopyFace, type ProfileView as View, type ShowcaseItem } from '@/components/profile/types'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
+import { Avatar } from '@/components/ui/Avatar'
 import { ghost, link, primary } from '@/components/ui/button'
 import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
@@ -131,12 +132,21 @@ export function ProfileView() {
     void read()
   }
 
-  // « Réessayer » d'un panneau disparaît pendant la relecture : le focus passe au h1, jamais sur body.
+  // « Réessayer » d'un panneau disparaît pendant la relecture : le focus passe au h1, jamais sur body. Génération courante : une relecture du
+  // profil en vol (après une action) n'est pas jetée.
   function retryExtra() {
     title.current?.focus()
     setFailed(false)
     setExtra(null)
-    void readExtra(++gen.current)
+    void readExtra(gen.current)
+  }
+
+  // Onglet « Collection » refusé (403) : le profil est passé privé depuis sa lecture. Les onglets disparaissent avec le focus qu'ils tenaient,
+  // qui passe au h1.
+  function turnedPrivate() {
+    const a = document.activeElement
+    if (a === document.body || a?.closest('[role="tablist"], [role="tabpanel"]')) title.current?.focus()
+    setExtra('private')
   }
 
   const allowed = !!view && (view.isOwn || view.isFriend || view.profile.is_public)
@@ -197,15 +207,7 @@ export function ProfileView() {
           </PageHeader>
 
           <div className="card-frame flex flex-wrap items-center gap-6 p-6">
-            {/* À côté du pseudo (h1) : décoratif, alt vide (D:753). Miniature Commons en lien direct, sans l'optimiseur de Next (D§8.5). */}
-            {p.avatar_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={p.avatar_url} alt="" className="size-24 shrink-0 rounded-full object-cover" />
-            ) : (
-              <span aria-hidden="true" className="inline-flex size-24 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-light)] text-4xl font-bold text-[var(--color-accent)]">
-                {[...p.username][0]?.toUpperCase()}
-              </span>
-            )}
+            <Avatar url={p.avatar_url} name={p.username} size="lg" />
             <div className="min-w-0 flex-1 space-y-3">
               <p className="text-sm text-[var(--color-foreground)]/70">{`Membre depuis ${formatMonthYear(p.created_at)}`}</p>
               {p.bio && <p className="whitespace-pre-line wrap-anywhere">{p.bio}</p>}
@@ -245,7 +247,7 @@ export function ProfileView() {
               </div>
               <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${tab}`}>
                 {tab === 'collection' ? (
-                  <Collection username={username} onOpen={setOpen} onRetry={() => title.current?.focus()} />
+                  <Collection username={username} onOpen={setOpen} onRetry={() => title.current?.focus()} onPrivate={turnedPrivate} />
                 ) : !extra && !failed ? (
                   <Loading label="Chargement de la vitrine" />
                 ) : !extra || extra === 'failed' ? (
@@ -277,32 +279,55 @@ export function ProfileView() {
 }
 
 // Onglet « Collection » : 50 copies par page (wm.profile_collection), en base 0, et une recherche. Lu à chaque affichage (Activity compris),
-// à chaque page, recherche ou « Réessayer » ; une réponse d'une requête quittée est jetée.
-function Collection({ username, onOpen, onRetry }: { username: string; onOpen: (card: CatalogCard) => void; onRetry: () => void }) {
+// à chaque page, recherche ou « Réessayer » ; une réponse d'une requête quittée est jetée. 403 : le parent passe à l'état privé.
+function Collection({ username, onOpen, onRetry, onPrivate }: {
+  username: string
+  onOpen: (card: CatalogCard) => void
+  onRetry: () => void
+  onPrivate: () => void
+}) {
   const [text, setText] = useState('')
   const [q, setQ] = useState('')
   const [page, setPage] = useState(0)
   const [reload, setReload] = useState(0)
-  const [data, setData] = useState<{ q: string; items: CopyFace[]; total: number } | null>(null)
+  const [data, setData] = useState<{ key: string; q: string; items: CopyFace[]; total: number } | null>(null)
   const [failedKey, setFailedKey] = useState<string | null>(null)
   const query = new URLSearchParams({ page: String(page), ...(q ? { q } : {}) }).toString()
   const key = `${query}#${reload}`
+  // Page changée : la grille et la pagination laissent place à « Réessayer » ou au texte vide si elle revient en échec ou vide. Le focus
+  // tombé sur body va alors au « Réessayer », sinon à la première carte ou au texte (comme /global-collection).
+  const refocus = useRef(false)
+  const retryButton = useRef<HTMLButtonElement>(null)
+  const results = useRef<HTMLDivElement>(null)
+  const empty = useRef<HTMLParagraphElement>(null)
+  const privateNow = useEffectEvent(onPrivate)
 
   useEffect(() => {
     let live = true
     api<CollectionPage | null>(`/api/profile/${username}/collection?${query}`).then(
       (r) => {
         if (!live) return
-        if (Array.isArray(r?.collection)) setData({ q, items: r.collection, total: r.total })
+        if (Array.isArray(r?.collection)) setData({ key, q, items: r.collection, total: r.total })
         else setFailedKey(key)
       },
-      () => { if (live) setFailedKey(key) },
+      (e) => {
+        if (!live) return
+        if (e instanceof ApiError && e.status === 403) privateNow()
+        else setFailedKey(key)
+      },
     )
     return () => {
       live = false
       setFailedKey(null)
     }
   }, [username, query, q, key])
+
+  useEffect(() => {
+    if (!refocus.current || (failedKey !== key && data?.key !== key)) return
+    refocus.current = false
+    if (document.activeElement !== document.body) return
+    ;(failedKey === key ? retryButton.current : results.current?.querySelector<HTMLElement>('h3 > button') ?? empty.current)?.focus()
+  }, [failedKey, key, data])
 
   const search = (v: string) => {
     setPage(0)
@@ -325,7 +350,7 @@ function Collection({ username, onOpen, onRetry }: { username: string; onOpen: (
         />
       </form>
       {failedKey === key ? (
-        <LoadError onRetry={() => {
+        <LoadError ref={retryButton} onRetry={() => {
           // « Réessayer » disparaît pendant la relecture : le focus passe au h1, jamais sur body.
           onRetry()
           setReload((n) => n + 1)
@@ -334,7 +359,7 @@ function Collection({ username, onOpen, onRetry }: { username: string; onOpen: (
         <Loading label="Chargement de la collection" />
       ) : data.items.length ? (
         <>
-          <div className={grid}>
+          <div ref={results} className={grid}>
             {data.items.map((c) => (
               <Card key={c.id} card={copyFace(c)} size="grid" count={c.count} isShiny={c.is_shiny} onClick={() => onOpen(c.card)} />
             ))}
@@ -343,13 +368,14 @@ function Collection({ username, onOpen, onRetry }: { username: string; onOpen: (
             page={page}
             totalPages={Math.ceil(data.total / LIMIT)}
             onPage={(n) => {
+              refocus.current = true
               setPage(n)
               document.querySelector('main')?.scrollTo({ top: 0 })
             }}
           />
         </>
       ) : (
-        <p className="card-frame p-6 text-center text-sm">{data.q ? 'Aucune carte ne correspond à ces filtres.' : 'Sa collection est vide.'}</p>
+        <p ref={empty} tabIndex={-1} className="card-frame p-6 text-center text-sm outline-none">{data.q ? 'Aucune carte ne correspond à ces filtres.' : 'Sa collection est vide.'}</p>
       )}
     </div>
   )

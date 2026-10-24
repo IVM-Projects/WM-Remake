@@ -7,7 +7,7 @@ import { useHydrated } from '@/components/auth/Submit'
 import { ghost as ghostBase } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { ReadError, Section } from '@/components/ui/Section'
-import { api, ApiError, apiOnce, userMessage } from '@/lib/api'
+import { api, ApiError, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { authErrorMessage, usernameProblem } from '@/lib/auth'
 import { setPrefs } from '@/lib/prefs'
 import { pushState, unsubscribePush } from '@/lib/push-browser'
@@ -80,6 +80,14 @@ export function SettingsClient() {
     fn()
   }
 
+  // Seule la clé k : la réponse d'un autre interrupteur, partie avant, n'écrase pas une valeur plus fraîche.
+  const settle = (k: Key, v: boolean) => {
+    confirmed.current = { ...(confirmed.current as Prefs), [k]: v }
+    setPrefs({ sounds: confirmed.current.sounds, hideSensitive: confirmed.current.hide_sensitive })
+  }
+
+  // Refus, ou valeur que le serveur n'a pas retenue : le message connu. Issue inconnue (réseau, ≥ 500, 2xx illisible) : le texte du B12
+  // et la valeur relue, comme « Profil public » de /profile.
   async function toggle(k: Key) {
     if (!prefs || !confirmed.current || saving.current.has(k)) return
     saving.current.add(k)
@@ -89,15 +97,17 @@ export function SettingsClient() {
     setPrefError(null)
     setPrefSaved('')
     try {
-      const r = await api<Prefs>('/api/settings/preferences', { method: 'POST', body: JSON.stringify({ [k]: next }) })
-      // Seule la clé envoyée : la réponse d'un autre interrupteur, partie avant, n'écrase pas une valeur plus fraîche.
-      confirmed.current = { ...confirmed.current, [k]: r[k] }
-      setPrefs({ sounds: confirmed.current.sounds, hideSensitive: confirmed.current.hide_sensitive })
-      // Le serveur a gardé une autre valeur : c'est elle qui s'affiche, et ce n'est pas un succès.
-      if (r[k] !== next) throw new Error('préférence non retenue')
-      setPrefSaved('Préférence enregistrée.')
-    } catch {
-      setPrefError('Ta préférence n\'a pas pu être enregistrée.')
+      const r = await api<Prefs | null>('/api/settings/preferences', { method: 'POST', body: JSON.stringify({ [k]: next }) })
+      if (typeof r?.[k] !== 'boolean') throw new Error('Réponse illisible')
+      settle(k, r[k])
+      if (r[k] === next) setPrefSaved('Préférence enregistrée.')
+      else setPrefError('Ta préférence n\'a pas pu être enregistrée.')
+    } catch (e) {
+      if (unsure(e)) {
+        const p = await api<Prefs | null>('/api/settings/preferences').catch(() => null)
+        if (typeof p?.[k] === 'boolean') settle(k, p[k])
+      }
+      setPrefError(unsure(e) ? UNSURE : 'Ta préférence n\'a pas pu être enregistrée.')
     }
     const now = confirmed.current[k]
     setPrefsView((p) => p && { ...p, [k]: now })
@@ -300,12 +310,14 @@ function SignOut() {
     if (pending) return
     setPending(true)
     setError(null)
-    // Appareil désabonné d'abord, puis sa ligne (B18, PF12). Un échec ne bloque jamais la déconnexion : le renvoi de la section push
-    // rattachera l'appareil au joueur suivant.
+    // Appareil désabonné d'abord, puis sa ligne (B18, PF12) : deux étapes indépendantes, le DELETE part même si le désabonnement du
+    // navigateur échoue (navigateur partagé). Un échec ne bloque jamais la déconnexion : le renvoi de la section push rattachera
+    // l'appareil au joueur suivant.
     const { sub } = await pushState().catch(() => ({ sub: null }))
-    const endpoint = sub && (await unsubscribePush().catch(() => null))
-    if (endpoint) {
-      await apiOnce(keys.current, `unsubscribe:${endpoint}`, '/api/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }).catch(() => {})
+    if (sub?.endpoint) {
+      await unsubscribePush().catch(() => null)
+      await apiOnce(keys.current, `unsubscribe:${sub.endpoint}`, '/api/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint: sub.endpoint }) })
+        .catch(() => {})
     }
     const { error } = await createBrowserSupabase().auth.signOut()
     // Chargement complet : les pages gardées en mémoire (Activity) ne survivent pas à la session.

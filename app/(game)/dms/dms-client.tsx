@@ -7,6 +7,7 @@ import { Thread } from '@/components/dms/Thread'
 import type { Conversation } from '@/components/dms/types'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
+import { Avatar } from '@/components/ui/Avatar'
 import { link } from '@/components/ui/button'
 import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
@@ -49,7 +50,11 @@ export function DmsClient() {
       .then((next) => {
         if (g < applied.current || (!next && keep)) return
         applied.current = g
-        if (next) setList(next)
+        if (next) {
+          // Relecture réussie pendant que « Réessayer » tient le focus : il va disparaître sous lui.
+          retried.current ||= !!retryButton.current && document.activeElement === retryButton.current
+          setList(next)
+        }
         setFailed(!next)
       })
   }
@@ -62,17 +67,18 @@ export function DmsClient() {
     void createBrowserSupabase().auth.getSession().then(({ data }) => setMe(data.session?.user.id ?? null), () => setMe(null))
   }, [])
 
-  // « Réessayer » disparu sous le focus (pressé, ou retiré par une relecture de fond réussie) : la première conversation, sinon le h1,
-  // ou le « Réessayer » revenu (PF15). Rien si le joueur a mis le focus ailleurs.
+  // « Réessayer » disparu sous le focus (pressé, ou retiré par une relecture de fond réussie qui l'a trouvé focalisé) : la première
+  // conversation, sinon le h1, ou le « Réessayer » revenu (PF15). Rien sans ce geste (liste en échec au chargement puis relue par la
+  // cloche), ni si le joueur a mis le focus ailleurs ; sans défilement (un clic dans le fil ne fait pas remonter main).
   const state = failed ? 'failed' : list ? 'list' : null
   const shown = useRef<typeof state>(null)
   useEffect(() => {
     if (!state || (state === shown.current && !retried.current)) return
-    const want = retried.current || shown.current === 'failed'
+    const want = retried.current
     shown.current = state
     retried.current = false
     if (!want || document.activeElement !== document.body) return
-    ;(state === 'failed' ? retryButton.current : conversations.current?.querySelector('a') ?? title.current)?.focus()
+    ;(state === 'failed' ? retryButton.current : conversations.current?.querySelector('a') ?? title.current)?.focus({ preventScroll: true })
   }, [state])
   // Fil quitté (« ← Conversations ») : le focus tombé sur body va à l'entrée du pair, sinon au h1.
   const left = useRef(peerId)
@@ -139,14 +145,7 @@ function Entry({ c, current }: { c: Conversation; current: boolean }) {
         // Anneau de focus dedans : la liste arrondie coupe ce qui dépasse (overflow-hidden).
         className={`flex min-h-11 items-center gap-3 px-4 py-3 transition-colors hover:bg-[var(--color-surface-light)] focus-visible:-outline-offset-2 ${current ? 'bg-[var(--color-surface-light)]' : ''}`}
       >
-        {c.peer_avatar_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={c.peer_avatar_url} alt="" className="size-10 shrink-0 rounded-full object-cover" />
-        ) : (
-          <span aria-hidden="true" className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-light)] font-bold text-[var(--color-accent)]">
-            {[...c.peer_username][0]?.toUpperCase()}
-          </span>
-        )}
+        <Avatar url={c.peer_avatar_url} name={c.peer_username} size="sm" />
         <span className={`min-w-0 flex-1 ${n ? 'font-bold' : ''}`}>
           <span className="flex items-baseline justify-between gap-2">
             <span className={`min-w-0 wrap-anywhere ${n ? '' : 'font-medium'}`}>{c.peer_username}</span>

@@ -117,7 +117,8 @@ export function PushSection() {
     show({ ...view, push_types: now ?? before }, text)
   })
 
-  // Échec du navigateur (permission refusée…) : connu, rien n'est parti. Issue du serveur inconnue : le texte du B12 (PF3).
+  // Échec du navigateur : connu, rien n'est parti. « Bloquer » à l'invite : l'état bloqué, sans bouton ; le focus attend sur le titre. Issue
+  // du serveur inconnue : le texte du B12 (PF3).
   const activate = () => guard(async () => {
     if (!view || !view.vapid_public || !view.push_types.length) return
     setFailure(null)
@@ -125,6 +126,10 @@ export function PushSection() {
     let text: string | null = null
     try {
       sub = await subscribePush(view.vapid_public)
+      if (!sub) {
+        document.getElementById('settings-notifications')?.focus()
+        return show({ ...view, device: 'denied' }, null)
+      }
       await send(sub)
     } catch (e) {
       text = sub && unsure(e) ? UNSURE : FAILED

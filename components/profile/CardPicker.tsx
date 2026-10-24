@@ -29,9 +29,13 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
   // Filtre appliqué (envoyé sur Entrée) : relu par « Réessayer », « Charger la suite » et chaque affichage, même quand sa lecture a échoué.
   const q = useRef('')
   const title = useRef<HTMLHeadingElement>(null)
+  const cards = useRef<HTMLUListElement>(null)
+  // Rang de la première copie attendue de « Charger la suite » : sur la dernière page, le bouton disparaît sous le focus, qui va à elle.
+  const refocus = useRef<number | null>(null)
 
   // Page 0 : la liste remplacée ; suivante : ajoutée, sans reprendre une copie déjà listée (pages par décalage). Échec ou 2xx sans
-  // `collection` (corps illisible : api() rend null) : l'alerte et « Réessayer » à la place de la grille.
+  // `collection` (corps illisible : api() rend null) : page 0, l'alerte et « Réessayer » à la place de la grille ; suivante, les pages
+  // lues restent et l'alerte le dit (comme TradeComposer).
   const read = (page: number) => {
     const g = ++gen.current
     const text = q.current
@@ -40,10 +44,21 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
       .then((r) => {
         if (g !== gen.current) return
         setLoading(false)
+        if (!r && page) return setError('Impossible de charger cette page.')
         setFailed(!r)
         if (r) setList((l) => ({ page, total: r.total, items: page && l ? [...l.items, ...r.collection.filter((c) => !l.items.some((x) => x.id === c.id))] : r.collection }))
       })
   }
+
+  useEffect(() => {
+    const i = refocus.current
+    if (i === null || loading) return
+    refocus.current = null
+    const a = document.activeElement
+    if (a !== document.body && !a?.matches('[role="dialog"]')) return
+    const next = [...(cards.current?.children ?? [])].slice(i).map((li) => li.querySelector<HTMLElement>('h3 > button')).find(Boolean)
+    ;(next ?? title.current)?.focus()
+  }, [list, loading])
   // Lue à l'ouverture et à chaque affichage (Activity compris), sous le filtre appliqué.
   const onShow = useEffectEvent(() => read(0))
   useEffect(() => onShow(), [])
@@ -98,12 +113,12 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
         <Loading label="Chargement de la collection" />
       ) : list.items.length ? (
         <>
-          <ul className="flex flex-wrap justify-center gap-3">
+          <ul ref={cards} className="flex flex-wrap justify-center gap-3">
             {list.items.map((c) => {
               const usable = mode === 'showcase' || showsImage(c.card, true)
               return (
                 <li key={c.id} className="flex flex-col items-center gap-1">
-                  <Card card={faceOf(c)} size="grid" count={c.count} isShiny={c.is_shiny} onClick={usable ? () => void pick(c.id) : undefined} />
+                  <Card card={faceOf(c)} size="grid" count={c.count} isShiny={c.is_shiny} onClick={usable ? () => void pick(c.id) : undefined} clickOff={busy} />
                   {!usable && <p className="text-xs text-[var(--color-foreground)]/70">Sans image</p>}
                 </li>
               )
@@ -113,6 +128,8 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
             <button type="button" aria-disabled={loading || undefined} onClick={() => {
               if (loading) return
               setLoading(true)
+              setError(null)
+              refocus.current = list.items.length
               read(list.page + 1)
             }} className={`${ghost} justify-center`}>
               Charger la suite

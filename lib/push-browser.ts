@@ -16,9 +16,10 @@ export async function pushState(): Promise<{ state: 'unsupported' | 'denied' | '
   return sub ? { state: 'on', sub: sub.toJSON() } : { state: 'off', sub: null }
 }
 
-export async function subscribePush(vapidPublic: string): Promise<PushSubscriptionJSON> {
+// null : « Bloquer » à l'invite (permission refusée), l'appelant montre l'état bloqué ; subscribe lèverait.
+export async function subscribePush(vapidPublic: string): Promise<PushSubscriptionJSON | null> {
   // Premier appel du geste : Safari n'accorde la permission que pendant l'activation par l'utilisateur.
-  await Notification.requestPermission()
+  if ((await Notification.requestPermission()) === 'denied') return null
   await navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })
   // Jamais la registration de register() : au premier enregistrement, son worker est encore « installing », et Chromium refuse
   // subscribe (« no active Service Worker »).

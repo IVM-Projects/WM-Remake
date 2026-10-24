@@ -101,6 +101,12 @@ describe('Card (DOM de R§6.4)', () => {
     }
   })
 
+  test('bouton du h3 : aria-disabled seulement avec clickOff (choix en cours), le clic gardé par le parent', () => {
+    expect(html(<Card card={chat} onClick={() => {}} />)).toContain('<button type="button" aria-label="Chat" class="absolute inset-0 outline-none">')
+    expect(html(<Card card={chat} onClick={() => {}} clickOff />))
+      .toContain('<button type="button" aria-label="Chat" aria-disabled="true" class="absolute inset-0 outline-none">')
+  })
+
   test('p de description et div.mt-auto ; count > 1 affiche « x3 » ; ami possède', () => {
     const h = html(<Card card={chat} owned count={3} friendOwner="alice" />)
     expect(h).toContain('>Espèce de mammifère carnivore</p>')

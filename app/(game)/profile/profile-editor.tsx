@@ -8,6 +8,7 @@ import { CardPicker } from '@/components/profile/CardPicker'
 import { copyFace, type ProfileView, type ShowcaseItem } from '@/components/profile/types'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
+import { Avatar } from '@/components/ui/Avatar'
 import { ghost, primary } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { ReadError, Section } from '@/components/ui/Section'
@@ -246,15 +247,7 @@ export function ProfileEditor() {
           {!row ? rowState('avatar') : (
             <>
               <div className="flex flex-wrap items-center gap-4">
-                {/* Miniature Commons en lien direct, sans l'optimiseur de Next (D§8.5) ; décorative, alt vide (D:753). */}
-                {row.avatar_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={row.avatar_url} alt="" className="size-24 shrink-0 rounded-full object-cover" />
-                ) : (
-                  <span aria-hidden="true" className="inline-flex size-24 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-light)] text-4xl font-bold text-[var(--color-accent)]">
-                    {[...row.username][0]?.toUpperCase()}
-                  </span>
-                )}
+                <Avatar url={row.avatar_url} name={row.username} size="lg" />
                 <div className="flex flex-wrap gap-3">
                   <button ref={changeAvatar} type="button" aria-disabled={busy.avatar || undefined} onClick={() => { if (!busy.avatar) setPicker({ mode: 'avatar' }) }} className={ghost}>
                     Changer l&apos;avatar

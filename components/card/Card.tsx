@@ -32,6 +32,8 @@ type Props = {
   isShiny?: boolean
   friendOwner?: string
   onClick?: () => void
+  // Clic inactif mais focalisable (aria-disabled, un choix en cours) : le parent garde aussi onClick et sa garde.
+  clickOff?: boolean
   // Modale : le p porte l'extrait de l'article au lieu de la description courte.
   excerpt?: string | null
 }
@@ -50,7 +52,7 @@ export const showsImage = (card: Pick<CardFace, 'image_url' | 'hide_image' | 'ns
   !!card.image_url && !card.hide_image && !(card.nsfw_image && hideSensitive)
 
 // DOM de R§6.4 : classes, ordre des enfants et aria-label sont un contrat avec les extensions (docs/DESIGN.md).
-export function Card({ card, size = 'lg', owned, starred, onToggleStar, starOff, count = 1, isShiny, friendOwner, onClick, excerpt }: Props) {
+export function Card({ card, size = 'lg', owned, starred, onToggleStar, starOff, count = 1, isShiny, friendOwner, onClick, clickOff, excerpt }: Props) {
   const { hideSensitive } = usePrefs()
   // Miniature introuvable ou refusée (fichier Commons supprimé) : l'emblème plutôt que l'icône d'image cassée.
   const [broken, setBroken] = useState<string | null>(null)
@@ -134,7 +136,7 @@ export function Card({ card, size = 'lg', owned, starred, onToggleStar, starOff,
         <h3 className={`shrink-0 font-bold leading-tight line-clamp-2 text-black ${s.h3}`} style={{ fontFamily: 'var(--font-heading)' }}>
           {title}
           {/* Accès clavier : un bouton sans texte (h3.textContent reste le titre) étendu sur la zone texte. */}
-          {onClick && <button type="button" aria-label={title} className="absolute inset-0 outline-none" />}
+          {onClick && <button type="button" aria-label={title} aria-disabled={clickOff || undefined} className="absolute inset-0 outline-none" />}
         </h3>
         {/* neutral-900/90 partout, extrait de la modale compris : le neutral-800/88 d'origine fait 4,45:1 sur SR (lib/contrast.test.ts). */}
         {text && <p className={`${excerpt ? 'text-[10px] line-clamp-[10]' : s.p} text-neutral-900/90`}>{text}</p>}

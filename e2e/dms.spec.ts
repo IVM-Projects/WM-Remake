@@ -452,6 +452,28 @@ test('téléphone (390 px) : la liste seule ; une conversation → le fil seul, 
   await expect(entry(page, friend)).toBeFocused()
 })
 
+test('relecture de fond qui réordonne la liste (message neuf d\'un pair plus bas) : le focus reste sur l\'entrée qu\'il tenait, jamais sur body', async ({ page, login }) => {
+  const me = await viewer(login)
+  const [a, b] = [player(), player()]
+  befriend(me, a)
+  befriend(me, b)
+  say(b, me, 'plus ancien')
+  say(a, me, 'plus récent')
+  await page.clock.install()
+  await open(page)
+  const first = list(page).getByRole('link').first()
+  await expect(first).toContainText(a.username)
+  await entry(page, a).focus()
+  say(b, me, 'neuf')
+  // Passage de 30 s de la cloche : sa version relit la liste, où B passe devant A. React déplace l'entrée de A (focusout), puis lui rend le
+  // focus à la fin du commit (restoreSelection de react-dom) : aucun correctif dans la page (ui-1, revue finale, réfuté ici).
+  const reread = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/chat')
+  await page.clock.runFor(30_000)
+  await reread
+  await expect(first).toContainText(b.username)
+  await expect(entry(page, a)).toBeFocused()
+})
+
 test('Activity : « brouillon » dans le fil, « Amis » puis retour → la même page, relue, le même fil et son brouillon', async ({ page, login }) => {
   const me = await viewer(login)
   const friend = player()
@@ -560,6 +582,35 @@ for (const [label, reply] of FAILS) {
     await page.clock.runFor(30_000)
     await expect(page.locator('main').getByText('Aucune conversation.', { exact: true })).toBeVisible()
     await expect(page.locator('main h1')).toBeFocused()
+  })
+
+  test(`liste en échec (${label}) au chargement, « Réessayer » jamais focalisé : la relecture de fond de la cloche rend la liste sans prendre le focus`, async ({ page, login }) => {
+    await viewer(login)
+    let failed = 0
+    const { release: mounted, held } = hold()
+    await routeOnce(page, '**/rest/v1/notifications*', async (r) => {
+      await held
+      await r.fallback()
+    })
+    for (let i = 0; i < 2; i++) {
+      await routeOnce(page, '**/api/chat', (r) => {
+        failed++
+        mounted()
+        return r.fulfill(reply)
+      })
+    }
+    await page.clock.install()
+    await open(page)
+    await expect(alert(page)).toHaveText(LOAD_FAILED)
+    await expect.poll(() => failed).toBe(2)
+    expect(await onBody(page)).toBe(true)
+    await page.clock.runFor(30_000)
+    await expect(page.locator('main').getByText('Aucune conversation.', { exact: true })).toBeVisible()
+    // Une seconde relecture de fond : l'effet de la première est passé depuis longtemps quand on regarde le focus.
+    const again = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/chat')
+    await page.clock.runFor(30_000)
+    await again
+    expect(await onBody(page)).toBe(true)
   })
 
   test(`fil en échec (${label}) : l'alerte et « Réessayer » à la place du fil, la liste lue ; « Réessayer » → « Aucun message pour l'instant. » et le champ`, async ({ page, login }) => {

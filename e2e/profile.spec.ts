@@ -66,6 +66,9 @@ test('inconnu public, une copie en vitrine : sa Card, Entrée → la modale au t
   // 51 copies : deux pages de 50, donc la pagination.
   giveCopies(owner, 'C', 50)
   const title = titleOf(copy)
+  // Média de l'image (D§3.4) : la modale ouverte depuis la vitrine en donne l'auteur et la licence.
+  sql(`insert into wm.card_media (card_id, file, author, license, license_url)
+select card_id, 'Zz.jpg', 'Jean Dupont', 'CC BY-SA 4.0', 'https://creativecommons.org/licenses/by-sa/4.0' from public.user_cards where id = :'copy'`, { copy })
   await open(page, owner.username)
   await expect(tabs(page).getByRole('tab', { name: 'Vitrine' })).toHaveAttribute('aria-selected', 'true')
   await expect(grid(page)).toHaveCount(1)
@@ -74,6 +77,8 @@ test('inconnu public, une copie en vitrine : sa Card, Entrée → la modale au t
   await page.keyboard.press('Enter')
   const dialog = page.getByRole('dialog', { name: title })
   await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Texte de l\'article : CC BY-SA 4.0 — crédits sur la page Wikipédia.', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Image : Jean Dupont, CC BY-SA 4.0', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
   await expect(card).toBeFocused()
@@ -122,6 +127,58 @@ test('réponse perdue sur « Ajouter en ami » : la relecture montre la demande 
   expect(sql(`select count(*) from public.friendships where addressee_id = :'o'`, { o: owner.uid })).toBe('1')
   expect(keys).toHaveLength(2)
   expect(keys[1]).not.toBe(keys[0])
+})
+
+test('onglet « Collection », « Suivant » en échec : l\'alerte et « Réessayer » à la place de la grille, le focus sur « Réessayer », jamais body', async ({ page, login }) => {
+  await viewer(login)
+  const owner = player()
+  imageCopy(owner)
+  giveCopies(owner, 'C', 50)
+  await open(page, owner.username)
+  await tabs(page).getByRole('tab', { name: 'Collection' }).click()
+  await expect(grid(page)).toHaveCount(50)
+  await routeOnce(page, (u) => u.pathname.endsWith('/collection') && u.searchParams.get('page') === '1', (r) => r.fulfill({ status: 500 }))
+  await panel(page).getByRole('button', { name: 'Suivant' }).click()
+  await expect(panel(page).getByRole('alert')).toHaveText(LOAD_FAILED)
+  await expect(panel(page).getByRole('button', { name: 'Réessayer' })).toBeFocused()
+})
+
+test('profil passé privé après sa lecture : l\'onglet « Collection » (403) → « Ce profil est réservé aux amis. », plus d\'onglets, le focus sur le h1', async ({ page, login }) => {
+  await viewer(login)
+  const owner = player()
+  giveCopies(owner, 'C')
+  await open(page, owner.username)
+  await expect(tabs(page)).toBeVisible()
+  hide(owner)
+  await tabs(page).getByRole('tab', { name: 'Collection' }).click()
+  await expect(page.getByText('Ce profil est réservé aux amis.', { exact: true })).toBeVisible()
+  await expect(tabs(page)).toHaveCount(0)
+  await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
+  await expect(h1(page)).toBeFocused()
+})
+
+test('« Réessayer » de la vitrine pendant la relecture qui suit « Ajouter en ami » : cette relecture n\'est pas jetée, « Demande envoyée » s\'affiche', async ({ page, login }) => {
+  await viewer(login)
+  const owner = player()
+  await routeOnce(page, '**/api/profile/*/showcase', (r) => r.fulfill({ status: 500 }))
+  await open(page, owner.username)
+  await expect(panel(page).getByRole('alert')).toHaveText(LOAD_FAILED)
+  // Relecture du profil après l'action, retenue jusqu'au clic sur « Réessayer » du panneau.
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  let seen = () => {}
+  const fetched = new Promise<void>((r) => { seen = r })
+  await routeOnce(page, (u) => u.pathname === `/api/profile/${owner.username}`, async (r) => {
+    seen()
+    await held
+    await r.fallback()
+  })
+  await page.getByRole('button', { name: 'Ajouter en ami' }).click()
+  await fetched
+  await panel(page).getByRole('button', { name: 'Réessayer' }).click()
+  release()
+  await expect(page.getByText('Demande envoyée', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Ajouter en ami' })).toHaveCount(0)
 })
 
 test('inconnu privé : « Ce profil est réservé aux amis. », aucun onglet, ni vitrine ni collection lues ; « Ajouter en ami »', async ({ page, login }) => {
@@ -252,6 +309,36 @@ test('signalement à la réponse perdue : le texte de l\'issue incertaine dans l
   expect(keys).toHaveLength(2)
   expect(keys[1]).toBe(keys[0])
   expect(reportOf(me, target)).toBe('spam:<null>')
+})
+
+test('signalement : motif A puis B, chaque réponse perdue, puis A de nouveau → une clé neuve à chaque intention, la base tient A', async ({ page, login }) => {
+  const me = await viewer(login)
+  const target = player()
+  const keys: string[] = []
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/reports') keys.push(r.headers()['idempotency-key'] ?? '')
+  })
+  await open(page, target.username)
+  await page.getByRole('button', { name: 'Signaler' }).click()
+  const dialog = dialogFor(page, target)
+  const send = dialog.getByRole('button', { name: 'Envoyer le signalement' })
+  for (const reason of ['Triche', 'Spam']) {
+    // Le serveur enregistre, la réponse se perd : issue inconnue.
+    await routeOnce(page, (u) => u.pathname === '/api/reports', async (route) => {
+      await route.fetch()
+      await route.abort()
+    }, (r) => r.request().method() === 'POST')
+    await dialog.getByRole('radio', { name: reason }).check()
+    await send.click()
+    await expect(dialog.getByRole('alert')).toHaveText(UNSURE)
+  }
+  expect(reportOf(me, target)).toBe('spam:<null>')
+  // La clé gardée de Triche rejouerait sa réponse stockée (« Signalement envoyé. ») sans rien écrire : la base tiendrait Spam.
+  await dialog.getByRole('radio', { name: 'Triche' }).check()
+  await send.click()
+  await expect(dialog).toHaveCount(0)
+  expect(reportOf(me, target)).toBe('cheating:<null>')
+  expect(new Set(keys).size).toBe(3)
 })
 
 test('Review Focus, pseudo hérité : renommé Élise Ü, a%b puis x?y#z (sql) → /profile/<encodeURIComponent>, le h1 à ce nom, vitrine et collection lues', async ({ page, login }) => {
@@ -649,9 +736,19 @@ test('/profile, sélecteur : 50 copies par page, « Charger la suite », « Filt
   await expect(cards).toHaveCount(50)
   // Vitrine : toutes les copies se choisissent, image ou non.
   await expect(dialog.getByText('Sans image', { exact: true })).toHaveCount(0)
-  await dialog.getByRole('button', { name: 'Charger la suite' }).click()
+  // Suite en échec : les 50 copies restent, l'alerte, et « Charger la suite » pour relancer.
+  await routeOnce(page, (u) => u.pathname === '/api/my-collection' && u.searchParams.get('page') === '1', (r) => r.fulfill({ status: 500 }))
+  const more = dialog.getByRole('button', { name: 'Charger la suite' })
+  await more.click()
+  await expect(dialog.getByRole('alert')).toHaveText(LOAD_FAILED)
+  await expect(cards).toHaveCount(50)
+  // Dernière page au clavier : le bouton disparaît sous le focus, qui va à la première copie arrivée.
+  await more.focus()
+  await page.keyboard.press('Enter')
   await expect(cards).toHaveCount(51)
-  await expect(dialog.getByRole('button', { name: 'Charger la suite' })).toHaveCount(0)
+  await expect(more).toHaveCount(0)
+  await expect(dialog.getByRole('alert')).toHaveCount(0)
+  await expect(cards.nth(50).locator('h3 > button')).toBeFocused()
   const filter = dialog.getByRole('searchbox', { name: 'Filtrer mes cartes' })
   await filter.fill('Zz image e2e')
   await filter.press('Enter')
@@ -683,15 +780,26 @@ test('/profile, sélecteur : la lecture filtrée en échec, « Réessayer » rel
 })
 
 // Corps JSON d'un 2xx sans sa clé (jamais rendu par nos routes) : une issue incertaine, jamais une page qui plante.
-test('/profile, écriture à 2xx sans sa clé ({}) : vitrine et bio → l\'alerte d\'issue incertaine, la page reste', async ({ page, login }) => {
+test('/profile, écriture à 2xx sans sa clé ({}) : vitrine (cartes en aria-disabled pendant le choix) et bio → l\'alerte d\'issue incertaine, la page reste', async ({ page, login }) => {
   const me = await viewer(login)
   const copy = imageCopy(me)
   await edit(page)
-  await routeOnce(page, '**/api/showcase', (r) => r.fulfill({ json: {} }), (r) => r.request().method() === 'PUT')
+  // Réponse retenue : pendant le choix, les cartes sont en aria-disabled.
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  await routeOnce(page, '**/api/showcase', async (r) => {
+    await held
+    await r.fulfill({ json: {} })
+  }, (r) => r.request().method() === 'PUT')
   await addAt(page, 1).click()
   const dialog = page.getByRole('dialog', { name: 'Choisir une carte pour la vitrine' })
-  await dialog.getByRole('button', { name: titleOf(copy), exact: true }).click()
+  const pick = dialog.getByRole('button', { name: titleOf(copy), exact: true })
+  await expect(pick).not.toHaveAttribute('aria-disabled')
+  await pick.click()
+  await expect(pick).toHaveAttribute('aria-disabled', 'true')
+  release()
   await expect(dialog.getByRole('alert')).toHaveText(UNSURE)
+  await expect(pick).not.toHaveAttribute('aria-disabled')
   await dialog.getByRole('button', { name: 'Annuler' }).click()
   await expect(dialog).toHaveCount(0)
   await expect(region(page, 'Vitrine (0/4)')).toBeVisible()
