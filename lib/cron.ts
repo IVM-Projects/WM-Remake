@@ -3,7 +3,8 @@ import { fail, type HttpError } from '@/lib/route'
 
 // Empreintes de même longueur : timingSafeEqual ne révèle ni le contenu ni la longueur du secret.
 const digest = (s: string) => createHash('sha256').update(s).digest()
-const reply = ({ status, body }: HttpError) => Response.json(body, { status })
+// Réponse des routes /api/cron/*, hors route() : Retry-After sur chaque 503 (D§8.1), comme route().
+export const reply = ({ status, body }: HttpError) => Response.json(body, { status, headers: status === 503 ? { 'Retry-After': '1' } : undefined })
 
 // Garde des routes /api/cron/* (B5) : la réponse d'un refus, ou null. Secret absent → échec fermé.
 export function cronDenied(req: Request): Response | null {

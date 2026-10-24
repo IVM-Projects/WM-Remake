@@ -24,6 +24,7 @@ describe('POST /api/cron/push', () => {
     vi.stubEnv('CRON_SECRET', undefined)
     const res = await post('bon-secret')
     expect(res.status).toBe(503)
+    expect(res.headers.get('retry-after')).toBe('1')
     expect(await res.json()).toEqual({ code: 'cron_disabled', error: 'Tâche planifiée non configurée.', message: 'Tâche planifiée non configurée.' })
     expect(drainPush).not.toHaveBeenCalled()
   })
@@ -35,10 +36,11 @@ describe('POST /api/cron/push', () => {
     expect(drainPush).not.toHaveBeenCalled()
   })
 
-  it('drainPush → null (VAPID absentes) → 503 push_disabled (M4b-16)', async () => {
+  it('drainPush → null (VAPID absentes) → 503 push_disabled (M4b-16), Retry-After (D§8.1)', async () => {
     vi.mocked(drainPush).mockResolvedValueOnce(null)
     const res = await post('bon-secret')
     expect(res.status).toBe(503)
+    expect(res.headers.get('retry-after')).toBe('1')
     expect(await res.json()).toEqual({ code: 'push_disabled', error: DISABLED, message: DISABLED })
   })
 
@@ -49,10 +51,14 @@ describe('POST /api/cron/push', () => {
     expect(await res.json()).toStrictEqual({ sent: 1, gone: 0, failed: 0 })
   })
 
-  it('drainPush lève → 500 INTERNAL, sans détail', async () => {
+  it('drainPush lève → 500 INTERNAL, sans détail ; journalisé comme route() ({ push: "drain_failed" }, sans le message)', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.mocked(drainPush).mockRejectedValueOnce(new Error('relation secrète'))
     const res = await post('bon-secret')
     expect(res.status).toBe(500)
+    expect(res.headers.get('retry-after')).toBeNull()
     expect(await res.json()).toStrictEqual({ error: INTERNAL, message: INTERNAL })
+    expect(log.mock.calls).toStrictEqual([[JSON.stringify({ push: 'drain_failed' })]])
+    log.mockRestore()
   })
 })

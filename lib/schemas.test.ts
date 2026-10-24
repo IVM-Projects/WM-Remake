@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { boolParam, CollectionQuery, filterArgs, pageParam, pgText, rarityList } from '@/lib/schemas'
+import { boolParam, CollectionQuery, filterArgs, pageParam, pgText, PushEndpoint, PushSubscriptionBody, rarityList } from '@/lib/schemas'
 
 describe('schémas de query', () => {
   it('pgText : \\0 et demi-paire UTF-16 seule (haute ou basse) refusés, « Caractère invalide » ; paire d\'émoji acceptée', () => {
@@ -31,5 +31,14 @@ describe('schémas de query', () => {
     expect(filterArgs(i)).toMatchObject({ p_q: 'abc', p_rarity: ['L'], p_untagged: false })
     expect(filterArgs(CollectionQuery.parse({ q: '', search: 'x' })).p_q).toBe('x')
     expect(CollectionQuery.safeParse({ sort: 'xyz' }).success).toBe(false)
+  })
+
+  it('endpoint push : \\0 ou demi-paire UTF-16 dans le chemin → « Abonnement push invalide » (un 500 de PostgREST sinon), en POST comme en DELETE', () => {
+    const keys = { p256dh: `B${'A'.repeat(85)}A`, auth: `${'A'.repeat(21)}A` }
+    for (const endpoint of ['https://fcm.googleapis.com/fcm/send/a\0b', 'https://fcm.googleapis.com/fcm/send/a\ud800b']) {
+      expect(PushEndpoint.safeParse({ endpoint }).error?.issues[0].message, JSON.stringify(endpoint)).toBe('Abonnement push invalide')
+      expect(PushSubscriptionBody.safeParse({ endpoint, keys }).error?.issues[0].message, JSON.stringify(endpoint)).toBe('Abonnement push invalide')
+    }
+    expect(PushSubscriptionBody.parse({ endpoint: 'https://fcm.googleapis.com/fcm/send/a', keys }).endpoint).toBe('https://fcm.googleapis.com/fcm/send/a')
   })
 })

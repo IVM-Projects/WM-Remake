@@ -113,13 +113,25 @@ export const pushSubscribe: RouteSpec = {
       },
     },
     {
-      name: 'même Idempotency-Key deux fois → corps identiques',
+      name: 'endpoint au \\0 ou à la demi-paire UTF-16 dans le chemin (pgText) → 400 « Abonnement push invalide », aucune ligne (psql)',
       run: async (env) => {
         allowSink(env)
         const { uid } = player(env)
-        const [key, body] = [idem(), { endpoint: `${PUSH_SINK}/${randomUUID()}`, keys: keys().keys }]
-        const first = await ok(await send(env, 'POST', SUBSCRIBE, uid, body, key), Ok)
-        assert.deepEqual(await ok(await send(env, 'POST', SUBSCRIBE, uid, body, key), Ok), first)
+        for (const endpoint of [`${PUSH_SINK}/a\u0000b`, `${PUSH_SINK}/a\ud800b`]) {
+          await refused(await send(env, 'POST', SUBSCRIBE, uid, { endpoint, keys: keys().keys }), 400, 'Abonnement push invalide', 'invalid_request')
+        }
+        assert.equal(subscriptions(env, uid), '0')
+      },
+    },
+    {
+      name: 'même Idempotency-Key deux fois, la seconde avec un autre endpoint → corps identiques, seul le premier enregistré (psql)',
+      run: async (env) => {
+        allowSink(env)
+        const { uid } = player(env)
+        const [key, first, second] = [idem(), `${PUSH_SINK}/${randomUUID()}`, `${PUSH_SINK}/${randomUUID()}`]
+        const body = await ok(await send(env, 'POST', SUBSCRIBE, uid, { endpoint: first, keys: keys().keys }, key), Ok)
+        assert.deepEqual(await ok(await send(env, 'POST', SUBSCRIBE, uid, { endpoint: second, keys: keys().keys }, key), Ok), body)
+        assert.equal(sql(env, `select string_agg(endpoint, ',') from public.push_subscriptions where user_id = :'uid'`, { uid }), first)
       },
     },
     {
@@ -272,14 +284,25 @@ export const pushUnsubscribe: RouteSpec = {
       },
     },
     {
-      name: 'même Idempotency-Key deux fois → { ok: true } les deux fois, la ligne disparue',
+      name: 'endpoint au \\0 ou à la demi-paire UTF-16 dans le chemin (pgText) → 400 « Abonnement push invalide », la ligne de l\'abonné gardée',
+      run: async (env) => {
+        const s = await subscriber(env, [])
+        for (const endpoint of [`${PUSH_SINK}/a\u0000b`, `${PUSH_SINK}/a\ud800b`]) {
+          await refused(await send(env, 'DELETE', SUBSCRIBE, s.uid, { endpoint }), 400, 'Abonnement push invalide', 'invalid_request')
+        }
+        assert.equal(subscriptions(env, s.uid), '1')
+      },
+    },
+    {
+      name: 'même Idempotency-Key deux fois, la ligne recréée entre-temps (psql) → { ok: true } les deux fois, la ligne recréée gardée',
       run: async (env) => {
         const s = await subscriber(env, [])
         const key = idem()
-        for (let i = 0; i < 2; i++) {
-          assert.deepEqual(await ok(await send(env, 'DELETE', SUBSCRIBE, s.uid, { endpoint: s.endpoint }, key), Ok), { ok: true })
-        }
+        assert.deepEqual(await ok(await send(env, 'DELETE', SUBSCRIBE, s.uid, { endpoint: s.endpoint }, key), Ok), { ok: true })
         assert.equal(subscriptions(env, s.uid), '0')
+        sql(env, `insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (:'uid', :'e', 'p', 'k')`, { uid: s.uid, e: s.endpoint })
+        assert.deepEqual(await ok(await send(env, 'DELETE', SUBSCRIBE, s.uid, { endpoint: s.endpoint }, key), Ok), { ok: true })
+        assert.equal(subscriptions(env, s.uid), '1')
       },
     },
   ],

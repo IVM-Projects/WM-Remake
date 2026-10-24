@@ -10,7 +10,8 @@ export const CollectionSort = z.enum(['rarity', 'obtained_at', 'added', 'name', 
 export const boolParam = z.enum(['1', 'true', '0', 'false']).optional().transform((v) => v === '1' || v === 'true')
 // Postgres refuse \0 dans un texte (22P05), PostgREST une demi-paire UTF-16 seule (PGRST102) : sans ce refus, un 500 au lieu d'un 400.
 // Tout texte libre qui atteint le SQL passe par lui. \p{Cs} sous `u` ne voit que les demi-paires seules (isWellFormed manque aux Firefox d'avant 119).
-export const pgText = z.string().refine((s) => !s.includes('\0') && !/\p{Cs}/u.test(s), 'Caractère invalide')
+const pgOk = (s: string) => !s.includes('\0') && !/\p{Cs}/u.test(s)
+export const pgText = z.string().refine(pgOk, 'Caractère invalide')
 export const Username = pgText.min(1).max(64)
 export const AuctionParams = z.object({ auctionId: z.uuid() })
 export const FriendshipParams = z.object({ friendshipId: z.uuid() })
@@ -61,8 +62,9 @@ export const ChatBody = z.object({ content: pgText })
 // Abonnement push (M4b-12) : la forme seulement, chaque refus en « Abonnement push invalide » ; l'origine est contrôlée en SQL (B9), le
 // point sur la courbe dans la route (node:crypto). Tailles sans Buffer, ce fichier partant au navigateur : 65 octets en base64url sans
 // remplissage font 87 caractères, le premier B (0x04) et le dernier porteur de 4 bits ; 16 octets font 22 caractères, le dernier porteur de 2.
+// z.url() laisse passer \0 et une demi-paire dans le chemin : le refus de pgText, sinon un 500 de PostgREST.
 const INVALID_PUSH = 'Abonnement push invalide'
-const pushUrl = z.url({ error: INVALID_PUSH }).max(2048, INVALID_PUSH)
+const pushUrl = z.url({ error: INVALID_PUSH }).max(2048, INVALID_PUSH).refine(pgOk, INVALID_PUSH)
 export const PushEndpoint = z.object({ endpoint: pushUrl }, { error: INVALID_PUSH })
 export const PushSubscriptionBody = PushEndpoint.extend({
   keys: z.object({
