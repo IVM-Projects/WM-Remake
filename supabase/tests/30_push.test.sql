@@ -72,15 +72,16 @@ do $$ declare a uuid := pg_temp.player('Prefs1'); r jsonb; d jsonb; begin
   assert wm.notification_prefs_set(a, '{}') = '{"push_types": []}', 'tout décoché';
 end $$;
 
--- Endpoint hostile ou voisin (B9, Review Focus) : les treize refus, plus http sur un hôte de suffixe, au corps exact et sans aucune ligne ;
--- la casse et un hôte de suffixe passent, stockés tels quels. Chaque \ est un seul caractère (standard_conforming_strings).
+-- Endpoint hostile ou voisin (B9, Review Focus) : les treize refus, plus http sur un hôte de suffixe et un \ dans le chemin d'une origine
+-- listée (seule la règle \ le refuse), au corps exact et sans aucune ligne ; la casse et un hôte de suffixe passent, stockés tels quels.
+-- Chaque \ est un seul caractère (standard_conforming_strings).
 do $$ declare a uuid := pg_temp.player('Endpoint1'); d jsonb; e text; begin
   foreach e in array array['https://fcm.googleapis.com@evil.example/x', 'https://fcm.googleapis.com.evil.example/x',
     'http://fcm.googleapis.com/x', 'https://fcm.googleapis.com:8443/x', 'https://a.notify.windows.com:8443/x', 'https://notify.windows.com/x',
     'https://evilnotify.windows.com/x', 'https://evil.example\.notify.windows.com/x', 'https://127.0.0.1\.notify.windows.com/x',
     'https:evil.example/x://a.notify.windows.com/', 'https://evil.example%2F.notify.windows.com/x', 'https://[::1]/x',
     'https://fcm.googleapis.com/fcm/send/' || (select string_agg(chr(19968 + n), '') from generate_series(1, 2000) n),
-    'http://a.notify.windows.com/x'] loop
+    'http://a.notify.windows.com/x', 'https://fcm.googleapis.com/fcm/send/a\b'] loop
     d := pg_temp.err(format('select wm.push_subscribe(%L, %L, %L, %L)', a, e, 'p', 'k'));
     assert d = '{"status":400,"code":"invalid_request","error":"Service de notifications non pris en charge",
       "message":"Service de notifications non pris en charge"}', left(e, 60) || ' : ' || coalesce(d::text, 'accepté');
@@ -224,6 +225,22 @@ do $$ declare a uuid := pg_temp.player('Claim1'); e text := 'https://fcm.googlea
   r := wm.push_claim();
   update wm.config set value = 'false' where key = 'maintenance';
   assert jsonb_array_length(r) = 1 and r -> 0 ->> 'notification_id' = n[1]::text, 'maintenance : ' || r::text;
+end $$;
+
+-- Ligne de plus d'une heure (réveil coupé ou arrêté, sa purge avec lui, M4b-16) : consommée sans être rendue, quel que soit le drain ; celle
+-- de 59 minutes est rendue.
+do $$ declare a uuid := pg_temp.player('Vieille1'); s uuid; n1 uuid; n2 uuid; r jsonb; begin
+  delete from wm.push_outbox where true;
+  perform wm.push_subscribe(a, 'https://fcm.googleapis.com/fcm/send/vieille', 'p', 'k');
+  s := (select id from public.push_subscriptions where user_id = a);
+  -- A n'a aucune préférence : le trigger n'écrit rien, les lignes sont posées à la main.
+  n1 := pg_temp.notify(a, 'friend_request');
+  n2 := pg_temp.notify(a, 'friend_request');
+  insert into wm.push_outbox (subscription_id, notification_id, created_at)
+  values (s, n1, now() - interval '61 minutes'), (s, n2, now() - interval '59 minutes');
+  r := wm.push_claim();
+  assert jsonb_array_length(r) = 1 and r -> 0 ->> 'notification_id' = n2::text, 'push_claim() : ' || r::text;
+  assert not exists (select from wm.push_outbox), 'ligne de plus d''une heure laissée';
 end $$;
 
 -- push_gone : les abonnements donnés, un id inconnu ignoré ; le nombre supprimé.

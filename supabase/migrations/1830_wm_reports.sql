@@ -11,10 +11,13 @@ $$;
 
 -- Signalement (M4b-2) : actor seul, ni amitié ni notification. Les deux profils sont pris for key share dans l'ordre des id (M4b-31) :
 -- l'insertion vérifie ses deux clés étrangères dans l'ordre de leurs triggers, et une acceptation entre les mêmes joueurs ferait un cycle.
+-- Un joueur supprimé depuis le contrôle d'existence (sa suppression tenait la ligne) n'est pas verrouillé : le même 404, pas un 500.
 create or replace function wm.report_upsert(p_uid uuid, p_reported_user_id uuid, p_reason text, p_details text default null,
   p_idem text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare v_resp jsonb;
+declare
+  v_resp jsonb;
+  n int;
 begin
   v_resp := wm.idem_claim(p_uid, p_idem);
   if v_resp is not null then
@@ -35,6 +38,10 @@ begin
   end if;
   perform set_config('lock_timeout', '2s', true);
   perform from public.profiles where id in (p_uid, p_reported_user_id) order by id for key share;
+  get diagnostics n = row_count;
+  if n < 2 then
+    perform wm.raise_err(404, null, 'Joueur introuvable');
+  end if;
   insert into public.reports (reporter_id, reported_user_id, reason, details)
   values (p_uid, p_reported_user_id, p_reason::public.report_reason, nullif(p_details, ''))
   on conflict (reporter_id, reported_user_id) do update set reason = excluded.reason, details = excluded.details;

@@ -14,6 +14,8 @@
 #    L, puis L signale R → aucun 40P01, le signalement écrit après le bloqueur, entre 0,5 et 2 s.
 # 4. Réservation de l'outbox (Task 6) : deux push_claim(500) sur 1 000 lignes, la seconde servie sans attendre (skip locked), ensembles
 #    disjoints.
+# 5. Joueur supprimé entre le contrôle d'existence et l'insertion : sa suppression, tenue 1 s, fait attendre le signalement (for key share) et
+#    l'envoi (lock_users) ; relu absent → 404 « Joueur introuvable », ni violation de clé étrangère (500) ni le 403 de l'amitié emportée.
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 tmp="$(mktemp -d)"
@@ -223,3 +225,18 @@ from (select \$j\$$(cat "$tmp/4s1")\$j\$::jsonb a, \$j\$$(cat "$tmp/4s2")\$j\$::
 SQL
 got="$(q -f "$tmp/4.sql")"
 [[ $got == "500 500 1000 0" ]] || fail "réservation : éléments des deux sessions, notifications distinctes du joueur, lignes restantes : $got"
+
+# 5. Joueur supprimé entre le contrôle et l'insertion : la suppression tient la ligne du profil ; le signalement (for key share) et l'envoi
+# (lock_users) l'attendent, puis la relisent absente.
+for fn in report chat; do
+  u="$(player "d${fn}1")"; v="$(player "d${fn}2")"
+  q -c "insert into public.friendships (requester_id, addressee_id, status) values ('$u', '$v', 'accepted')" >/dev/null
+  if [[ $fn == report ]]; then call="select wm.report_upsert('$u', '$v', 'spam')"; else call="select wm.chat_send('$u', '$v', 'x')"; fi
+  q -v VERBOSITY=verbose -c "begin; delete from auth.users where id = '$v'; select pg_sleep(1); commit;" >/dev/null 2>"$tmp/5b$fn" &
+  blocker=$!
+  sleeping "$tmp/5b$fn"
+  q -v VERBOSITY=verbose -c "set role service_role; $call" >/dev/null 2>"$tmp/5r$fn" && fail "joueur supprimé ($fn) : accepté"
+  wait "$blocker" || fail "joueur supprimé ($fn) : bloqueur en erreur" "$tmp/5b$fn"
+  quiet "$tmp/5b$fn"
+  refusals 'Joueur introuvable' "$tmp/5r$fn"
+done

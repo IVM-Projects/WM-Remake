@@ -31,6 +31,8 @@ end $$;
 -- Liste blanche (B9) : ASCII imprimable sans \, puis schéma://autorité en tête, égale à une origine listée ou hôte https nu d'un suffixe.
 -- Après ces refus, l'hôte lu ici est celui que lit fetch. Un endpoint repris par un autre joueur (navigateur partagé) passe à lui ; au-delà
 -- de push_max_subscriptions, les plus récents restent (M4b-20).
+-- shortcut: deux push_subscribe concurrents du même joueur ne voient pas l'insertion de l'autre et peuvent laisser 9 + N abonnements, N
+-- borné par le pool de connexions ; un pg_advisory_xact_lock par joueur avant l'insertion si un plafond strict devient nécessaire.
 create or replace function wm.push_subscribe(p_uid uuid, p_endpoint text, p_p256dh text, p_auth text, p_idem text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -91,19 +93,21 @@ end $$;
 create or replace trigger notifications_push_enqueue after insert on public.notifications
   referencing new table as new_n for each statement execute function wm.push_enqueue();
 
--- Réservation du drain (M4b-19) : au plus p_limit lignes, les plus anciennes, sans attendre celles d'un autre drain. Une ligne orpheline, ou
--- dont l'abonnement est passé à un autre joueur (navigateur partagé), est consommée sans être rendue. Ni actor ni maintenance (M4b-22).
+-- Réservation du drain (M4b-19) : au plus p_limit lignes, les plus anciennes, sans attendre celles d'un autre drain. Une ligne orpheline,
+-- dont l'abonnement est passé à un autre joueur (navigateur partagé), ou de plus d'une heure (réveil coupé ou arrêté, sa purge avec lui,
+-- M4b-16), est consommée sans être rendue. Ni actor ni maintenance (M4b-22).
 create or replace function wm.push_claim(p_limit int default 500)
 returns jsonb language sql security definer set search_path = '' as $$
   with d as (
     delete from wm.push_outbox where id in (select id from wm.push_outbox order by id limit greatest(coalesce(p_limit, 0), 0)
       for update skip locked)
-    returning id, subscription_id, notification_id
+    returning id, subscription_id, notification_id, created_at
   )
   select coalesce(jsonb_agg(jsonb_build_object('subscription_id', s.id, 'endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth,
     'notification_id', n.id, 'type', n.type, 'data', n.data) order by d.id), '[]')
   from d join public.push_subscriptions s on s.id = d.subscription_id join public.notifications n on n.id = d.notification_id
     and n.user_id = s.user_id
+  where d.created_at > now() - interval '1 hour'
 $$;
 
 -- Abonnements que le service de push dit expirés (404, 410).

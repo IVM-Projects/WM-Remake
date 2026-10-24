@@ -380,7 +380,8 @@ do $$ declare a uuid := pg_temp.player('Contenu1'); b uuid := pg_temp.player('Co
 end $$;
 
 -- Débit aux bornes (M4b-3, M4b-29, Review Focus) : chat_burst à 3 le temps du bloc (PF7). Compté par expéditeur, tous pairs confondus ;
--- un refus ou un rejeu ne compte pas ; le 4ᵉ → 429 (now() figé : retry_after = 60), sans message ; une fenêtre échue repart à 1.
+-- un refus ou un rejeu ne compte pas ; le 4ᵉ → 429 (now() figé : retry_after = 60), sans message ; une fenêtre posée par une transaction
+-- plus tardive (début après now()) donne encore un retry_after de 1 à 60 ; une fenêtre échue repart à 1.
 update wm.config set value = '{"count": 3, "window_s": 60}' where key = 'chat_burst';
 do $$ declare a uuid := pg_temp.player('Debit1'); b uuid := pg_temp.player('Debit2'); c uuid := pg_temp.player('Debit3');
   carol uuid := pg_temp.player('Debit4'); q text := 'select wm.chat_send(%L, %L, %L)'; r jsonb; d jsonb; begin
@@ -395,6 +396,10 @@ do $$ declare a uuid := pg_temp.player('Debit1'); b uuid := pg_temp.player('Debi
   assert d = '{"status":429,"error":"Le site demande de ralentir","message":"Le site demande de ralentir","retry_after":60}',
     coalesce(d::text, 'accepté');
   assert (select count(*) from public.chat_messages where sender_id = a) = 3, 'message écrit par le 429';
+  update wm.user_state set chat_window_start = now() + interval '0.5 seconds' where user_id = a;
+  d := pg_temp.err(format(q, a, b, 'd4'));
+  assert (d ->> 'retry_after')::int between 1 and 60, 'fenêtre posée plus tard : ' || coalesce(d::text, 'accepté');
+  update wm.user_state set chat_window_start = now() where user_id = a;
   assert wm.chat_send(a, c, 'autre', 'k-chat') = r and (select count(*) from public.chat_messages where sender_id = a) = 3
     and (select chat_window_count from wm.user_state where user_id = a) = 3, 'rejeu de la clé';
   update wm.user_state set chat_window_start = chat_window_start - interval '61 seconds' where user_id = a;

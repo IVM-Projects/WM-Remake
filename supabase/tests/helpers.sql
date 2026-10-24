@@ -82,6 +82,8 @@ $$;
 -- Contrôle P5 (M4-2, M4b-2, M4b-31) des fonctions wm.<fs> : null si chacune pose lock_timeout à 2 s avant son premier verrou (le premier
 -- marqueur de p_markers trouvé : for update, for key share, wm.lock_users, wm.lock_user par défaut ; la table de sa première écriture pour
 -- les fonctions du push), sinon la liste des fautives, une fonction absente comprise. Logique de 28_trades.test.sql:81-97.
+-- Base réutilisée : la version à un paramètre (Task 3) rendrait l'appel à un seul argument ambigu.
+drop function if exists tests.lock_timeout_violations(text[]);
 create or replace function tests.lock_timeout_violations(fs text[],
   p_markers text[] default array['for update', 'for key share', 'wm.lock_users(', 'wm.lock_user(']) returns text language sql stable as $$
   select string_agg(f, ', ' order by o) from unnest(fs) with ordinality u (f, o)
