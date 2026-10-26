@@ -1,0 +1,79 @@
+name: Banques de quiz
+
+# Banques de quiz des batailles (M5a-7) : OmniRoute 3.8.51 en mode self-hosted, un seul fournisseur `openai` vers Mistral,
+# lancé par scripts/quiz/omniroute.sh. Job `probe` : la clé Mistral liste les modèles en direct, puis complète un jeton à
+# travers OmniRoute ; elle doit rendre 200 avant toute génération (M5a-3).
+# Dépôt public : aucun énoncé, aucune option, aucune clé dans un journal ni un artefact ; une clé n'est posée que dans l'env:
+# de l'étape qui la lit, jamais dans celui du workflow ou d'un job. Pas de schedule avant un premier run réussi.
+on:
+  push:
+    paths:
+      - 'scripts/quiz/**'
+      - '.github/workflows/quiz-bank.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash # -eo pipefail
+
+permissions:
+  contents: read
+
+env:
+  OMNIROUTE_IMAGE: ghcr.io/diegosouzapw/omniroute:3.8.51@sha256:8bd462c9f60d8eda79329cfbb6ea7ea723505fe7721beb944f3d43835409e218
+  SUPABASE_URL: https://iggurckxmoagsajzrnwd.supabase.co
+  QUIZ_MODEL: ${{ vars.QUIZ_MODEL || 'mistral-small-latest' }}
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Secret
+        id: secrets
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          if [[ -z $MISTRAL_API_KEY ]]; then
+            echo "::notice::Sonde sautée : secret MISTRAL_API_KEY absent (D:1116)"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Checkout
+        if: steps.secrets.outputs.run == 'true'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Verdict sur la clé, sans OmniRoute : le code HTTP et les ids des modèles, rien d'autre.
+      - name: Modèles de Mistral (appel direct)
+        if: steps.secrets.outputs.run == 'true'
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          code=$(curl -sS -o "$RUNNER_TEMP/models.json" -w '%{http_code}' -H "Authorization: Bearer $MISTRAL_API_KEY" https://api.mistral.ai/v1/models)
+          echo "GET /v1/models : $code"
+          [[ $code == 200 ]] || { echo "::error::GET https://api.mistral.ai/v1/models : HTTP $code"; exit 1; }
+          jq -r '.data[].id' "$RUNNER_TEMP/models.json"
+
+      - name: OmniRoute
+        if: steps.secrets.outputs.run == 'true'
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: PROVIDER_KEY="$MISTRAL_API_KEY" scripts/quiz/omniroute.sh https://api.mistral.ai/v1
+
+      # Étape à part, sans secret : OMNIROUTE_KEY n'existe qu'après l'étape qui l'écrit dans $GITHUB_ENV (sinon 401
+      # « Invalid API key »). Sans Content-Type, OmniRoute rend 415. --retry relance une fois un 408, 429 ou 5xx passager.
+      - name: Complétion d'un jeton à travers OmniRoute
+        if: steps.secrets.outputs.run == 'true'
+        run: |
+          out="$RUNNER_TEMP/completion.json"
+          code=$(curl -sS --retry 1 --retry-delay 30 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -H "Authorization: Bearer $OMNIROUTE_KEY" --data-binary '{"messages":[{"role":"user","content":"Réponds ok."}],"max_tokens":1}' http://127.0.0.1:20128/v1/chat/completions)
+          if [[ $code != 200 ]]; then
+            # .error.message seul, jamais le corps entier ; .error.type ne distingue pas la clé partagée de celle de Mistral.
+            msg=$(jq -r '.error.message // "sans message"' "$out" 2> /dev/null || echo 'corps illisible')
+            echo "::error::POST /v1/chat/completions à travers OmniRoute : HTTP $code, $msg"
+            exit 1
+          fi
+          echo "POST /v1/chat/completions : $code, modèle $(jq -r '.model' "$out")"
