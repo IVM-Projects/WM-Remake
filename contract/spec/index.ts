@@ -1,6 +1,7 @@
 import type { RouteSpec } from '../../lib/contract.ts'
 import { accounts } from './accounts.ts'
 import { auth } from './auth.ts'
+import { battles } from './battles.ts'
 import { cards } from './catalog.ts'
 import { chat } from './chat.ts'
 import { collection } from './collection.ts'
@@ -20,4 +21,4 @@ import { trades } from './trades.ts'
 import { wallet } from './wallet.ts'
 
 // Une entrée par route ; recap-coverage.ts compte les routes du recap couvertes ici.
-export const specs: RouteSpec[] = [health, gate, auth, ...packs, wallet, ...collection, cards, credits, cron, ...accounts, ...restSpecs, ...marketWrites, ...marketReads, ...friends, ...trades, ...notifications, ...profile, ...reports, ...chat, ...push]
+export const specs: RouteSpec[] = [health, gate, auth, ...packs, wallet, ...collection, cards, credits, cron, ...accounts, ...restSpecs, ...marketWrites, ...marketReads, ...friends, ...trades, ...notifications, ...profile, ...reports, ...chat, ...push, ...battles]
