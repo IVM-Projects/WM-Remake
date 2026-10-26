@@ -2,7 +2,31 @@
 
 > À lire en premier par toute nouvelle session Claude sur ce dépôt.
 
-## Où on en est (2026-10-23)
+## Où on en est (2026-10-26)
+
+- **M4b livré sur la démo** (2026-10-26) : profil, vitrine, messages privés, signalements et Web Push, tâches 1 à 17 du plan `docs/superpowers/plans/2026-10-23-m4b-profil-messages-push.md` sur la branche `claude/clever-cannon-59x0dj` (base d9ae87c, passation du M4a, fusionnée dans `develop` par 5542f28). Les tâches 1 à 15 ont eu chacune une revue de conformité, une revue adverse et leurs tours de correction ; la Task 16 a été relue par la lentille tests de la revue finale, et `1860` (Task 17) a eu sa propre revue. La revue finale de la branche (cinq lentilles, puis une vérification adverse) n'a trouvé aucun Critical et un Important (`pushUrl` sans le contrôle de `pgText`, 500 au lieu de 400). Elle a donné une vague de corrections (24 points, dont un sauté à raison : 85f644d, e9254c5, 2fbff63, edba7c6) et deux résidus de la re-revue (b38fa7c). L'essai sur un vrai navigateur a fait naître `1860` (0ebe0bc, M4b-4 amendé). Décisions M4b-1 à M4b-33, B1 à B21, écarts au design et rulings : `docs/decisions-graphify.md` ; reportés : `docs/suivi.md`.
+  - Livré :
+    - migrations `0006` (miroir `chat_messages`, `showcase`, `reports`, `push_subscriptions`), `1800` (socle : config, `user_state`, tables `wm`, index, trigger d'avatar, `wm.trade_move` qui vide la vitrine), `1810` (profil, vitrine, `profile_collection`), `1820` (messages), `1830` (signalements), `1840` (préférences, abonnements, outbox, réveil, `health`), `1850` (`friendOwners` de l'overlay), `9020` (pg_net, job `wm-push-wake` toutes les 15 s) et `1860` (une non lue de plus de 10 minutes remplacée, Task 17) ;
+    - les 12 routes du §3.7 (profil, vitrine, messages, signalements) et les routes ajoutées `/api/push/subscribe`, `/api/settings/notifications` et `/api/cron/push` ; `push: true` (drain par `after()`) sur les huit routes du B6 ;
+    - pages `/profile` (éditeur : avatar, bio, visibilité, vitrine de 4 emplacements), `/profile/[username]` (vue publique, signalement), `/dms` et `/dms?with=<id>` (poll du fil de 5 s), section « Notifications » de `/settings` (familles en opt-in, abonnement de l'appareil), `public/sw.js` ; boutons « Message » et « Message à <pseudo> » ; pastille « ami possède » en lien vers le profil ;
+    - bench `load/bench/` : acceptation 100 ↔ 100 avec vitrines pleines et abonnements push, overlay `friendOwners` à 1 000 amis.
+  - Critères du D§13 pour le M4 entier, et leurs preuves :
+    - acceptation 100 ↔ 100 sous 500 ms : au M4a, bench local p95 112,6 et 105,2 ms, et **190 ms** de route sur la démo ; au M4b (Task 16), avec vitrines pleines et abonnements push des deux côtés, p95 118,3 ms au run de la vague finale (120,3 et 144,2 ms aux deux runs du tour 1), vitrines vidées et 100 lignes d'outbox par taille ;
+    - atomicité, une erreur injectée annule tout : au M4a, en SQL (`tests.boom` dans `28_trades.test.sql`), par la route et sous concurrence ; au M4b, `tests.trade_snapshot` gagne la vitrine, l'avatar et l'outbox, et une erreur injectée sur `wm.wb_ledger` (`29_social.test.sql`, Task 2) puis sur `wm.push_outbox` (`30_push.test.sql`, Task 6) laisse l'instantané inchangé ;
+    - rejeu d'`Idempotency-Key` qui renvoie le résultat stocké : au M4a, en SQL, sous concurrence (deux sessions, même clé) et au contrat ;
+    - push reçu sur un point d'entrée de test en CI : `contract/spec/push.ts` (réception, déchiffrement, JWT VAPID), CI 40006196823 sur PG17 (Task 10) ; en plus, un vrai push accepté par Apple et vu sur Safari macOS (Task 17) ;
+    - contrat : `coverage:recap` 66 routes sur 90, le §3.7 vert (les 12 routes, Task 9) et le §3.6 inchangé.
+  - Suite locale (tête 0ebe0bc) : `npm test` 53 fichiers, 499 tests ; `test:db` 24 fichiers ; contrat 256 cas ; E2E 329 tests ; `coverage:recap` 66/90. CI verte sur postgres:17 sur edba7c6 (run 40056899179) et sur la tête fusionnée b38fa7c (run 40058372031) ; CI 40293940531 sur 0ebe0bc : verte (checks + integration sur postgres:17).
+  - Démo, dans l'ordre R32 :
+    - relevé en lecture seule (pg_net préchargé, `net` absent, `CRON_SECRET` dans le Vault) ;
+    - `deploy-m4b.sql` (concaténation de `0006`, `1800`…`1850`, `9020`, de la pose de `push_wake_url`, de l'historique et du `notify`), répété sur une base de `develop` (deux passes, `29_social` et `30_push` verts, même empreinte des 119 fonctions `wm` que la branche) ;
+    - `VAPID_PRIVATE` et `VAPID_SUBJECT` posées par l'utilisateur en Production, puis le fichier lancé dans le SQL Editor ;
+    - contrôles du MCP verts (job, droits, sondes 401 `42501` et 406 `PGRST106`, invariants, conseillers) ; `wm-push-wake` réveillé par `cron.alter_job` (voir « Exploitation du push ») ;
+    - fusion `--no-ff` c57ad37 dans `develop`, production `dpl_Bm12sTfUYV8JhyWojVsWHcqnYbQz` READY, `/api/health` 200 (`push_lag_s` nul), `/sw.js` 200 hors porte ; `health.yml` vert en `workflow_dispatch` (run 40083272609) et aux runs planifiés du 24 et du 25/10 ;
+    - sonde du réveil : `net._http_response` 200, `{"sent":0,"gone":1,"failed":0}` ; vrai push reçu sur Safari macOS le 2026-10-26 ;
+    - `1860` par `deploy-m4b2.sql`, répété (deux passes, `29_social` et `30_push` verts), lancé par l'utilisateur, contrôlé par le MCP, puis prouvé en production le 2026-10-26 à 08:52 UTC : un message de forux2 après une non lue de plus de 10 minutes donne une bannière macOS et la pastille de la cloche à 1. Son commit 0ebe0bc rejoint `develop` avec la passation.
+    Détail : « M4b — livraison » de `docs/verifications.md`.
+  - Comptes de démo : forux et forux2, amis depuis le M4a. forux a les 13 types de push en préférences et, à l'essai du 2026-10-26, un abonnement Safari macOS ; forux2 lui a écrit pendant les essais. La sonde est nettoyée : l'abonnement factice de forux2 retiré par `push_gone`, la notification d'essai et les préférences de forux2 supprimées par l'utilisateur.
 
 - **M4a livré sur la démo** (2026-10-23) : amis et échanges, tâches 1 à 16 du plan `docs/superpowers/plans/2026-10-22-m4a-amis-echanges.md` sur la branche `claude/clever-cannon-59x0dj` (base d27918d, passation du M3, fusionnée dans `develop` par 3961ddc). Chaque tâche a eu une revue de conformité, une revue adverse et ses tours de correction. La revue finale de la branche (cinq lentilles, puis une vérification adverse) n'a trouvé aucun Critical. Elle a donné un envoi de corrections (b6872fc, 70a6e7a : les deux Important, le panneau bloqué sur un corps illisible et cinq Minor, plus la déduplication) et un envoi résiduel (2ff1380, deux Important de la re-revue). Décisions M4-1 à M4-18, P1 à P26, écarts au design et rulings : `docs/decisions-graphify.md` ; reportés : `docs/suivi.md`.
   - Livré :
@@ -82,7 +106,7 @@
 
 ## Étapes humaines ouvertes
 
-1. **Faites** : `SUPABASE_SECRET_KEY` en Production (2026-10-19) et en **Preview** (constaté par le contrôle de production du 2026-10-20) ; branche de production réglée sur `develop`. Au M2 (2026-10-21) : secrets GitHub `SUPABASE_DB_URL` et `CRON_SECRET`, `CRON_SECRET` dans Vercel, migrations `1500` à `1520` lancées dans le SQL Editor.
+1. **Faites** : `SUPABASE_SECRET_KEY` en Production (2026-10-19) et en **Preview** (constaté par le contrôle de production du 2026-10-20) ; branche de production réglée sur `develop`. Au M2 (2026-10-21) : secrets GitHub `SUPABASE_DB_URL` et `CRON_SECRET`, `CRON_SECRET` dans Vercel, migrations `1500` à `1520` lancées dans le SQL Editor. Au M4b : `VAPID_PRIVATE` et `VAPID_SUBJECT` en Production et `deploy-m4b.sql` lancé dans le SQL Editor (2026-10-24) ; `deploy-m4b2.sql` (`1860`) et le nettoyage de la sonde du réveil (2026-10-26).
 2. **Restant du M0** : ajouter le dépôt `IVM-Projects/wm-remake` à un espace de travail Graphify, puis rejouer les notes de `docs/decisions-graphify.md`.
 3. **Restant du M0, facultatif** : ajouter `wm` dans Supabase → Settings → API → Exposed schemas, pour que le réglage du rôle (`pgrst.db_schemas`) ne puisse pas dériver.
 4. **Réglages Auth de la démo** (tableau de bord Supabase, projet `iggurckxmoagsajzrnwd` ; le MCP n'expose pas la configuration Auth) :
@@ -103,6 +127,7 @@
 10. **Facultatif, vérification visuelle du M3** (Task 16, Step 6) : derrière la porte, mettre une carte en vente depuis la modale de `/collection`, voir sa tuile dans `/marketplace` et son détail, miser depuis un second compte si l'on en a un. Pour mesurer le cron seul, fermer l'onglet avant l'échéance : un détail ouvert réglerait par la voie paresseuse.
 11. **Faite (2026-10-23) : préversions Vercel.** La liste des déploiements n'a pas de sélection multiple, et le MCP Vercel ne supprime pas : l'utilisateur a réglé la rétention du projet `wmr` (**Settings → Build and Deployment → Deployment Retention Policy**) à 1 jour pour les déploiements annulés, en erreur et de pré-production (préversions), 30 jours pour la production. Vercel supprime les anciennes en arrière-plan ; reste à relire « Functions Storage » dans l'onglet Usage le lendemain.
 12. **Facultatif, vérification visuelle du M4a** : derrière la porte, avec forux et forux2 (déjà amis) : la cloche et son panneau, une proposition depuis `/trades/new`, une contre-offre, un refus ; pour `/friends` (recherche, demande, « Tout accepter »), un troisième compte, ou retirer puis redemander l'amitié (« Retirer », puis demande de l'un, « Tout accepter » chez l'autre), avant les échanges. Résultat consigné dans `docs/verifications.md`.
+13. **Faite (2026-10-26) : essai du push sur un vrai navigateur** (Safari macOS, compte forux, message de forux2) : la notification « forux2 t'a écrit » est arrivée dans le Centre de notifications de macOS. Reste le clic sur la notification jusqu'à `/dms?with=<id>`, jamais essayé sur un vrai navigateur (`docs/suivi.md`). Pour le refaire, voir « Exploitation du push ».
 
 ## Exploitation du marché
 
@@ -119,19 +144,23 @@
 - Le job tourne à :27 chaque heure, par lots de 5 000 (73 ms au bench pour 5 000).
 - `maintenance = true` (`wm.config`) bloque aussi les échanges et les amitiés (`wm.actor`), mais pas le job d'expiration (M4-5).
 
-## Étape suivante : écrire le plan M4b (profil, vitrine, messages, signalements, Web Push)
+## Exploitation du push
 
-Périmètre (M4-1) :
-- profil et vitrine (`0006_mirror_social.sql`, `18xx`), avec la redéfinition de `wm.trade_move` qui vide aussi les emplacements de vitrine (P13) ;
-- messages privés, et le bouton « Message » absent au M4a (O1) ;
-- signalements ;
-- Web Push : `push_outbox`, job `9020_*`.
+- **Arrêt d'urgence du réveil**, par le MCP : `select cron.alter_job(jobid, active := false) from cron.job where jobname = 'wm-push-wake'`. Reprise avec `active := true`. Pendant l'arrêt :
+  - `after()` continue d'envoyer les push nés d'une requête (les huit routes du B6), et la cloche reste juste : les notifications sont écrites dans la transaction ;
+  - les push nés d'un job attendent le prochain `after()` ; `push_claim` jette sans envoi les lignes de plus d'une heure ;
+  - la purge des lignes d'outbox de plus d'une heure, faite par `wm.push_wake()` à chaque réveil (toutes les 15 s), s'arrête ;
+  - `health.yml` (une fois par jour, planifié à 6 h 17 UTC) n'échoue que si la plus vieille ligne de l'outbox attend depuis plus de 120 s au moment du contrôle (`push_lag_s`, nul sur une outbox vide), par exemple le push d'un job sans trafic depuis : il ne signale pas l'arrêt lui-même.
+- **Job qui ne tourne pas** : après un déploiement qui pose un job, relire `cron.job_run_details` au bout d'une minute ; sans run, `select cron.alter_job(jobid, active := true) from cron.job where jobname = '<job>'`. Au M4b, `wm-push-wake` n'a tourné qu'après ce réveil (3 min 23 s sans run : l'ordonnanceur de pg_cron 1.6.4 n'avait pas relu `cron.job` après le `DO` de `9020`). Le Step 6 du prochain déploiement le vérifie.
+- **Rotation des clés VAPID** : tous les abonnements tombent. Les services de push répondent 401 ou 403, comptés `failed` et jamais `push_gone` : les lignes restent, et `/settings` dit encore « Notifications activées sur cet appareil. ». La purge `delete from public.push_subscriptions where true` (SQL Editor : le MCP demande une confirmation pour un `DELETE`) ne suffit pas : chaque affichage de `/settings` renvoie l'abonnement local du navigateur, encore lié à l'ancienne clé (`pushState` ne compare pas son `applicationServerKey` à `vapid_public`, `lib/push-browser.ts:12-17`), et l'upsert de `wm.push_subscribe` recrée la ligne (B18). La page redit alors « Notifications activées sur cet appareil. », et les envois restent `failed`. Pour recevoir de nouveau des push, chaque joueur doit cliquer « Désactiver sur cet appareil », puis « Activer ». Correctif reporté au M7 (`docs/suivi.md`).
+- **`net` absent après le SQL Editor** : relancer tout `deploy-m4b.sql`, puis `deploy-m4b2.sql` (le premier remet le `wm.chat_send` de `1820`, que `1860` remplace), plutôt que `9020` seul, qui n'écrit pas sa ligne d'historique.
+- **Journaux** : Vercel Hobby garde les journaux d'exécution 1 h, et `net._http_response` ne garde ses lignes que 6 h. Un push manqué s'examine donc en direct, par la ligne `{"push":{"claimed":…,"sent":…,"gone":…,"failed":…}}` de `after()` ou de `/api/cron/push`.
+- **Essai sur un vrai navigateur** : avec deux navigateurs, ou une fenêtre privée pour l'autre compte. « Se déconnecter » désabonne le navigateur et supprime sa ligne (B18), si bien qu'un essai dans le même navigateur n'envoie rien. Un correspondant dont la `chat_message` non lue a moins de 10 minutes ne donne ni notification neuve ni push (M4b-4, `1860`) : lire la cloche d'abord. Sur macOS, le mode Ne pas déranger envoie la notification au Centre de notifications, sans bannière.
+- `maintenance = true` (`wm.config`) n'arrête ni le drain ni le réveil (M4b-22). Sans `VAPID_PRIVATE` ou `VAPID_SUBJECT` valides, le push est coupé : le drain ne réserve rien et `/api/cron/push` répond 503 `push_disabled` (M4b-16).
 
-Terminé quand (D§13) :
-- un push est reçu sur un point d'entrée de test en CI ;
-- le contrat §3.7 est vert.
+## Étape suivante : écrire le plan M5 (batailles, guildes, progression)
 
-Reprendre la section M4b de `docs/suivi.md` (dont le P21 : `friendOwners`, pastille « ami possède », collection d'un profil privé pour ses amis).
+Reprendre la section M5 de `docs/suivi.md`.
 
 ## Points différés
 

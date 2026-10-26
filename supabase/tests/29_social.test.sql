@@ -1,6 +1,6 @@
--- Social (1800_wm_social_core.sql, puis 1810…1850) : config, index, avatar_url, vitrine hors échange et dans trade_move ; profil, vitrine et
+-- Social (1800_wm_social_core.sql, puis 1810…1860) : config, index, avatar_url, vitrine hors échange et dans trade_move ; profil, vitrine et
 -- collection d'un profil privé (1810) ; messages privés, débit, notification chat_message et synchronisation « lu » (1820) ; signalements (1830) ;
--- friendOwners de l'overlay du catalogue (1850).
+-- friendOwners de l'overlay du catalogue (1850) ; chat_message non lue de plus de 10 minutes remplacée à l'envoi (1860).
 -- Une seule transaction pour tout le fichier (now() figé) : chaque bloc crée ses joueurs et ses cartes, et ne filtre que sur eux.
 
 -- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune) ; l'effet de p_sql n'est annulé que si p_sql lève.
@@ -360,6 +360,34 @@ do $$ declare a uuid := pg_temp.player('Chat1'); b uuid := pg_temp.player('Chat2
   assert d = '{"status":503,"code":"maintenance","error":"Maintenance en cours, reviens dans quelques minutes.",
     "message":"Maintenance en cours, reviens dans quelques minutes."}', coalesce(d::text, 'accepté');
   assert (select count(*) from public.chat_messages where sender_id = a) = 3, 'message écrit par un refus';
+end $$;
+
+-- Non lue ancienne (M4b-4 amendé, 1860) : deux envois de suite → une seule non lue, même id ; vieillie de 11 minutes, l'envoi suivant la
+-- remplace (toujours une seule non lue du couple, id neuf, created_at = now()) ; à 9 minutes, rien n'est remplacé ; la non lue d'un autre
+-- expéditeur, vieillie elle aussi, n'est jamais touchée.
+do $$ declare a uuid := pg_temp.player('Renot1'); b uuid := pg_temp.player('Renot2'); carol uuid := pg_temp.player('Renot3');
+  n uuid; o uuid; v uuid[]; t timestamptz; begin
+  perform pg_temp.friends(a, b);
+  perform pg_temp.friends(carol, b);
+  perform wm.chat_send(carol, b, 'ailleurs');
+  o := (select id from public.notifications where user_id = b and type = 'chat_message' and data ->> 'user_id' = carol::text);
+  update public.notifications set created_at = now() - interval '11 minutes' where id = o;
+  perform wm.chat_send(a, b, 'un');
+  n := (select id from public.notifications where user_id = b and type = 'chat_message' and not read and data ->> 'user_id' = a::text);
+  perform wm.chat_send(a, b, 'deux');
+  assert (select array_agg(id) from public.notifications where user_id = b and type = 'chat_message' and not read
+    and data ->> 'user_id' = a::text) = array[n], 'deux envois de suite';
+  update public.notifications set created_at = now() - interval '11 minutes' where id = n;
+  perform wm.chat_send(a, b, 'trois');
+  select array_agg(id), max(created_at) into v, t from public.notifications where user_id = b and type = 'chat_message' and not read
+    and data ->> 'user_id' = a::text;
+  assert cardinality(v) = 1 and v[1] <> n and t = now(), 'non lue de 11 minutes : ' || coalesce(v::text, 'aucune');
+  update public.notifications set created_at = now() - interval '9 minutes' where id = v[1];
+  perform wm.chat_send(a, b, 'quatre');
+  assert (select array_agg(id) from public.notifications where user_id = b and type = 'chat_message' and not read
+    and data ->> 'user_id' = a::text) = v, 'non lue de 9 minutes remplacée';
+  assert (select array_agg(id) from public.notifications where user_id = b and type = 'chat_message' and not read
+    and data ->> 'user_id' = carol::text and created_at = now() - interval '11 minutes') = array[o], 'non lue d''un autre expéditeur';
 end $$;
 
 -- Contenu aux bornes (Review Focus) : blancs seuls ou rien → 400 ; 2 000 émojis (points de code) passent, 2 001 é → 400 ; stocké tel quel.
