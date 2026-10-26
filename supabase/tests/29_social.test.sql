@@ -64,7 +64,7 @@ do $$ begin
       "trade_accepted","trade_cancelled","trade_countered","trade_declined","trade_received","wishlist_listed"],
     "push_wake_url":null}'::jsonb, pg_temp.social_config()::text;
   assert pg_temp.social_config() -> 'list_caps'
-    = '{"conversations":50,"friend_owners":3,"friend_search":20,"messages":100,"notifications":50,"trades_closed":200}', 'list_caps';
+    = '{"battles_closed":50,"conversations":50,"friend_owners":3,"friend_search":20,"messages":100,"notifications":50,"trades_closed":200}', 'list_caps';
   assert not exists (select from wm.config where key in ('chat_burst', 'push_origins', 'push_max_subscriptions', 'push_types', 'push_wake_url',
     'list_caps') and coalesce(note, '') = ''), 'note manquante';
 end $$;
