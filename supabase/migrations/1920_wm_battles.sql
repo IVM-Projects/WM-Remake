@@ -17,8 +17,17 @@ begin
   return n;
 end $$;
 
--- Seul constructeur de l'objet Battle (C6). Un pending échu, que le cron n'a pas encore passé, se lit cancelled. Tant que players a moins de
--- deux entrées, le lecteur ne voit que la sienne (M5a-11).
+-- Statut lu (C6) : un pending échu, que le cron n'a pas encore passé, se lit cancelled. Lu par battle_json, et par battle_action et ses
+-- sous-fonctions (1930) sans construire l'objet Battle.
+create or replace function wm.battle_read_status(b public.battles)
+returns text language sql stable security definer set search_path = '' as $$
+  select case when b.status = 'pending' and b.created_at + make_interval(hours => (value ->> 'invite_ttl_h')::int) <= clock_timestamp()
+    then 'cancelled' else b.status::text end
+  from wm.config where key = 'battle'
+$$;
+
+-- Seul constructeur de l'objet Battle (C6), au statut lu. Tant que players a moins de deux entrées, le lecteur ne voit que la sienne
+-- (M5a-11).
 create or replace function wm.battle_json(b public.battles, p_viewer uuid)
 returns jsonb language sql stable security definer set search_path = '' as $$
   select to_jsonb(b) || jsonb_build_object(
@@ -33,7 +42,7 @@ returns jsonb language sql stable security definer set search_path = '' as $$
       then jsonb_set(b.game_state, '{players}', '{}') else b.game_state end)
   from (select value from wm.config where key = 'battle') c,
     lateral (select b.created_at + make_interval(hours => (c.value ->> 'invite_ttl_h')::int) expires_at) e,
-    lateral (select case when b.status = 'pending' and e.expires_at <= clock_timestamp() then 'cancelled' else b.status::text end status) s
+    lateral (select wm.battle_read_status(b) status) s
 $$;
 
 -- Défis créés par p_uid depuis le début du jour de son fuseau (R:130), quelle que soit leur issue ; 10 en Pro ou VIP (M5a-12).
@@ -138,13 +147,15 @@ begin
   return wm.idem_store(p_uid, p_idem, jsonb_build_object('battle', jsonb_build_object('id', v_id), 'id', v_id));
 end $$;
 
--- PATCH /api/battles/<id> → {battle, decks, reward} (C5). Refus dans l'ordre de C11 : action inconnue, bataille introuvable, statut, rôle.
--- Un refus n'écrit rien. Les réponses au défi ne verrouillent aucun profil.
+-- PATCH /api/battles/<id> → {battle, decks, reward}, plus {correct, correct_answer_id, last_turn, status} pour submit_single_answer (C5).
+-- Refus dans l'ordre de C11 : action inconnue, bataille introuvable, statut, rôle. Un refus n'écrit rien. Les réponses au défi ne verrouillent
+-- aucun profil ; le jeu passe aux sous-fonctions de 1930, avec la bataille déjà tenue.
 create or replace function wm.battle_action(p_uid uuid, p_battle_id uuid, p_action text, p_payload jsonb default '{}', p_idem text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_resp jsonb;
   v_status text;
+  v_answer jsonb := '{}';
   b public.battles;
 begin
   v_resp := wm.idem_claim(p_uid, p_idem);
@@ -162,7 +173,7 @@ begin
   if not found then
     perform wm.raise_err(404, null, 'Bataille introuvable');
   end if;
-  v_status := wm.battle_json(b, p_uid) ->> 'status';
+  v_status := wm.battle_read_status(b);
   if p_action in ('accept', 'decline', 'withdraw_invite') then
     if v_status <> 'pending' then
       perform wm.raise_err(409, null, 'Ce défi n''est plus en attente');
@@ -191,11 +202,16 @@ begin
   elsif p_action = 'forfeit' and v_status <> 'active' then
     -- Choix des cartes (ou generating_quizzes hérité, C18) : annulée, sans argent ni notification (M5a-12).
     update public.battles set status = 'cancelled', updated_at = clock_timestamp() where id = b.id;
+  elsif p_action = 'forfeit' then
+    perform wm.battle_forfeit(b, p_uid);
+  elsif p_action = 'submit_deck' then
+    perform wm.battle_submit_deck(b, p_uid, p_payload);
+  elsif p_action = 'submit_attack' then
+    perform wm.battle_submit_attack(b, p_uid, p_payload);
   else
-    -- Deck, attaque, réponse et abandon en partie : sous-fonctions de 1930, appelées ici avec la ligne déjà tenue.
-    perform wm.raise_err(400, 'invalid_request', 'Action inconnue');
+    v_answer := wm.battle_answer(b, p_uid, p_payload);
   end if;
-  return wm.idem_store(p_uid, p_idem, wm.battle_detail(p_uid, b.id));
+  return wm.idem_store(p_uid, p_idem, wm.battle_detail(p_uid, b.id) || v_answer);
 end $$;
 
 revoke all on schema wm from public, anon, authenticated;
