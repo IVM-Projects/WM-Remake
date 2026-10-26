@@ -152,6 +152,20 @@ do $$ declare a uuid := pg_temp.player('Trig1'); c uuid := pg_temp.player('Trig2
   assert pg_temp.outbox(pg_temp.notify(a, 'trade_received', now() - interval '9 minutes')) = 2, 'notification de 9 minutes';
 end $$;
 
+-- Non lue ancienne (M4b-4 amendé, 1860) : la chat_message non lue de 11 minutes d'un destinataire abonné au type est remplacée par l'envoi
+-- suivant, et la neuve a sa ligne d'outbox.
+do $$ declare a uuid := pg_temp.player('Renot1'); b uuid := pg_temp.player('Renot2'); n uuid; m uuid; begin
+  perform pg_temp.friends(a, b);
+  perform wm.notification_prefs_set(b, array['chat_message']);
+  perform wm.push_subscribe(b, 'https://fcm.googleapis.com/fcm/send/renot', 'p', 'k');
+  perform wm.chat_send(a, b, 'un');
+  n := (select id from public.notifications where user_id = b and type = 'chat_message' and not read);
+  update public.notifications set created_at = now() - interval '11 minutes' where id = n;
+  perform wm.chat_send(a, b, 'deux');
+  m := (select id from public.notifications where user_id = b and type = 'chat_message' and not read);
+  assert m <> n and pg_temp.outbox(m) = 1, 'non lue de 11 minutes : ' || coalesce(m::text, 'aucune') || ' ' || pg_temp.outbox(m);
+end $$;
+
 -- Atomicité : l'outbox suit la notification annulée.
 do $$ declare a uuid := pg_temp.player('Atome1'); k bigint; begin
   perform wm.notification_prefs_set(a, array['trade_received']);
