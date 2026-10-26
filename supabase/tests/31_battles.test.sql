@@ -100,17 +100,24 @@ do $$ declare bad text; begin
 end $$;
 
 -- Tables (C3) : source contrôlée ; une carte supprimée emporte sa banque et sa ligne de file (insérée sans pool_add : la clé de
--- wm.draw_pool est NO ACTION) ; une bataille supprimée emporte ses secrets.
-do $$ declare c uuid := pg_temp.bcard('Bataille au pool', 'R', 1000, 800); k uuid; a uuid := pg_temp.player('BatSecA');
-  b uuid := pg_temp.player('BatSecB'); x uuid; begin
-  assert exists (select from wm.draw_pool where card_id = c), 'bcard hors du pool';
+-- wm.draw_pool est NO ACTION) ; une bataille supprimée emporte ses secrets. bcard vérifiée dans une sous-transaction annulée (WMT00) : le
+-- bloc ne laisse aucune carte au pool des blocs suivants.
+do $$ declare c uuid; pooled boolean; k uuid; a uuid := pg_temp.player('BatSecA'); b uuid := pg_temp.player('BatSecB'); x uuid; begin
   begin
-    insert into wm.card_quizzes (card_id, prompt_version, source, questions) values (c, 1, 'x', '[]');
+    c := pg_temp.bcard('Bataille au pool', 'R', 1000, 800);
+    pooled := exists (select from wm.draw_pool where card_id = c);
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert pooled, 'bcard hors du pool';
+  assert not exists (select from public.cards where id = c), 'carte de bcard restée';
+  insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def)
+  values ('Bataille hors pool', 'https://fr.wikipedia.org/wiki/Bataille_hors_pool', 'R', 1000, 800) returning id into k;
+  begin
+    insert into wm.card_quizzes (card_id, prompt_version, source, questions) values (k, 1, 'x', '[]');
     assert false, 'source x acceptée';
   exception when check_violation then null;
   end;
-  insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def)
-  values ('Bataille hors pool', 'https://fr.wikipedia.org/wiki/Bataille_hors_pool', 'R', 1000, 800) returning id into k;
   insert into wm.card_quizzes (card_id, prompt_version, source, questions) values (k, 1, 'template', '[]');
   insert into wm.quiz_queue (card_id, priority) values (k, 60);
   delete from public.cards where id = k;
@@ -118,38 +125,46 @@ do $$ declare c uuid := pg_temp.bcard('Bataille au pool', 'R', 1000, 800); k uui
   assert not exists (select from wm.quiz_queue where card_id = k), 'ligne de file restée';
   insert into public.battles (challenger_id, opponent_id) values (a, b) returning id into x;
   insert into wm.battle_secrets (battle_id, question_id, turn_number, defender_id, card_id, q_index, correct_option_id)
-  values (x, gen_random_uuid(), 1, b, c, 0, gen_random_uuid()::text);
+  values (x, gen_random_uuid(), 1, b, gen_random_uuid(), 0, gen_random_uuid()::text);
   delete from public.battles where id = x;
   assert not exists (select from wm.battle_secrets where battle_id = x), 'secrets restés';
 end $$;
 
--- battle_money : chaque étape lue dans une sous-transaction annulée (WMT00), d contrôlé après.
+-- battle_money : tout le scénario dans une sous-transaction annulée (WMT00), d contrôlé après ; le bloc ne laisse ni amitié ni bataille.
 do $$ declare a uuid := pg_temp.player('BatMonA'); b uuid := pg_temp.player('BatMonB'); c uuid := pg_temp.player('BatMonCarol');
-  x uuid; d1 jsonb; d2 jsonb; d3 jsonb; d4 jsonb; d5 jsonb; begin
-  perform pg_temp.friends(a, b);
-  insert into public.battles (challenger_id, opponent_id) values (a, b) returning id into x;
+  x uuid; y uuid; d1 jsonb; d2 jsonb; d3 jsonb; d4 jsonb; d5 jsonb; d6 jsonb; begin
   begin
+    perform pg_temp.friends(a, b);
+    insert into public.battles (challenger_id, opponent_id) values (a, b) returning id into x;
     -- (a) Ligne battle:<id> d'une bataille pending.
     perform wm.wallet_apply(a, 50, 'battle', 'battle:' || x);
     d1 := wm.check_invariants();
-    -- (b) Bataille completed sans la ligne du perdant, puis avec.
+    -- (b) Bataille completed sans la ligne de l'opponent, puis avec.
     update public.battles set status = 'completed', winner_id = a where id = x;
     d2 := wm.check_invariants();
     perform wm.wallet_apply(b, 10, 'battle', 'battle:' || x);
     d3 := wm.check_invariants();
+    -- (b) Bataille completed sans la ligne du challenger, puis avec (d5 exact le prouve).
+    insert into public.battles (challenger_id, opponent_id, status, winner_id) values (a, b, 'completed', b) returning id into y;
+    perform wm.wallet_apply(b, 50, 'battle', 'battle:' || y);
+    d4 := wm.check_invariants();
+    perform wm.wallet_apply(a, 10, 'battle', 'battle:' || y);
     -- (a) Ligne d'un tiers, puis ref mal formée d'un joueur de la bataille (un cast y lèverait 22P02) : des violations, pas une erreur.
     perform wm.wallet_apply(c, 10, 'battle', 'battle:' || x);
-    d4 := wm.check_invariants();
-    perform wm.wallet_apply(a, 10, 'battle', 'battle:x');
     d5 := wm.check_invariants();
+    perform wm.wallet_apply(a, 10, 'battle', 'battle:x');
+    d6 := wm.check_invariants();
     raise exception using errcode = 'WMT00';
   exception when sqlstate 'WMT00' then null;
   end;
   assert d1 = jsonb_build_array(jsonb_build_object('check', 'battle_money', 'ref', 'battle:' || x, 'user_id', a)), d1::text;
   assert d2 = jsonb_build_array(jsonb_build_object('check', 'battle_money', 'battle_id', x, 'user_id', b)), d2::text;
   assert d3 = '[]', d3::text;
-  assert d4 = jsonb_build_array(jsonb_build_object('check', 'battle_money', 'ref', 'battle:' || x, 'user_id', c)), d4::text;
-  assert d5 @> jsonb_build_array(jsonb_build_object('check', 'battle_money', 'ref', 'battle:x', 'user_id', a))
-    and jsonb_array_length(d5) = 2, d5::text;
+  assert d4 = jsonb_build_array(jsonb_build_object('check', 'battle_money', 'battle_id', y, 'user_id', a)), d4::text;
+  assert d5 = jsonb_build_array(jsonb_build_object('check', 'battle_money', 'ref', 'battle:' || x, 'user_id', c)), d5::text;
+  assert d6 @> d5 and d6 @> jsonb_build_array(jsonb_build_object('check', 'battle_money', 'ref', 'battle:x', 'user_id', a))
+    and jsonb_array_length(d6) = 2, d6::text;
+  assert not exists (select from public.battles where a in (challenger_id, opponent_id)), 'bataille restée';
+  assert not exists (select from public.friendships where a in (requester_id, addressee_id)), 'amitié restée';
   perform pg_temp.inv('battle_money annulé');
 end $$;
