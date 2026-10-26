@@ -43,6 +43,7 @@ begin
   end loop;
   insert into wm.user_stats as s (user_id, battles_won) values (p_winner, 1)
   on conflict (user_id) do update set battles_won = s.battles_won + 1;
+  -- Deux insertions hors de l'ordre des id (P28) sans risque : l'appelant tient déjà les deux profils en exclusif (lock_users).
   perform wm.notify_battle(array[p_winner], 'battle_won', b.id, v_loser);
   perform wm.notify_battle(array[v_loser], 'battle_lost', b.id, p_winner);
 end $$;

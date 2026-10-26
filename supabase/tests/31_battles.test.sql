@@ -624,9 +624,10 @@ do $$ declare a uuid := gen_random_uuid(); o uuid := gen_random_uuid(); begin
 end $$;
 
 -- submit_deck (C4, C10, C11, C18, M5a-11) : ids de copie chez A (titre et ATK figés de sa première copie retouchés), ids catalogue chez B
--- (deux copies par carte, celle de plus grand id à la plus forte DEF) ; refus exacts ; deck de A tu, file comprise ; second deck → active.
-do $$ declare a uuid; b uuid; carol uuid; c uuid[]; d uuid[]; ka uuid[]; kb uuid[]; k1 uuid; x uuid; x0 uuid; r jsonb; e jsonb; gs jsonb; pa jsonb;
-  q0 bigint; bad jsonb; q text := 'select wm.battle_action(%L, %L, %L, %L)'; begin
+-- (deux copies par carte : la plus forte en DEF a le plus petit id pour d1, le plus grand pour d2 ; DEF égales pour d3, le plus petit id
+-- gagne) ; refus exacts, défi échu compris ; deck de A tu, file comprise ; second deck → active.
+do $$ declare a uuid; b uuid; carol uuid; c uuid[]; d uuid[]; ka uuid[]; kb uuid[]; lo uuid[]; hi uuid[]; k1 uuid; x uuid; x0 uuid; x1 uuid;
+  r jsonb; e jsonb; gs jsonb; pa jsonb; q0 bigint; bad jsonb; q text := 'select wm.battle_action(%L, %L, %L, %L)'; begin
   begin
     a := pg_temp.player('BatDeckA'); b := pg_temp.player('BatDeckB'); carol := pg_temp.player('BatDeckCarol');
     c := pg_temp.bcards('BatDeck A', array[1000, 1100, 1200], array[500, 600, 700]);
@@ -639,13 +640,21 @@ do $$ declare a uuid; b uuid; carol uuid; c uuid[]; d uuid[]; ka uuid[]; kb uuid
     update public.user_cards set snapshot_def = 900 where id = k1;
     perform pg_temp.own(b, d);
     perform pg_temp.own(b, d);
-    kb := array(select (select uc.id from public.user_cards uc where uc.user_id = b and uc.card_id = d[i] order by uc.id desc limit 1)
+    lo := array(select (select uc.id from public.user_cards uc where uc.user_id = b and uc.card_id = d[i] order by uc.id limit 1)
       from generate_series(1, 3) i);
-    update public.user_cards set snapshot_def = snapshot_def + 100 where id = any (kb);
+    hi := array(select (select uc.id from public.user_cards uc where uc.user_id = b and uc.card_id = d[i] order by uc.id desc limit 1)
+      from generate_series(1, 3) i);
+    update public.user_cards set snapshot_def = snapshot_def + 100 where id in (lo[1], hi[2]);
+    kb := array[lo[1], hi[2], lo[3]];
     perform pg_temp.friends(a, b);
     x0 := (wm.battle_create(a, b) ->> 'id')::uuid;
     perform wm.battle_action(a, x0, 'withdraw_invite');
     e := pg_temp.err(format(q, a, x0, 'submit_deck', jsonb_build_object('card_ids', ka)));
+    assert e = pg_temp.berr(409, null, 'Cette bataille est terminée'), coalesce(e::text, 'accepté');
+    -- Défi échu, que le cron n'a pas passé : lu cancelled (C6).
+    x1 := (wm.battle_create(a, b) ->> 'id')::uuid;
+    update public.battles set created_at = created_at - interval '25 hours' where id = x1;
+    e := pg_temp.err(format(q, a, x1, 'submit_deck', jsonb_build_object('card_ids', ka)));
     assert e = pg_temp.berr(409, null, 'Cette bataille est terminée'), coalesce(e::text, 'accepté');
     x := (wm.battle_create(a, b) ->> 'id')::uuid;
     e := pg_temp.err(format(q, a, x, 'submit_deck', jsonb_build_object('card_ids', ka)));
@@ -691,11 +700,11 @@ do $$ declare a uuid; b uuid; carol uuid; c uuid[]; d uuid[]; ka uuid[]; kb uuid
       'turnNumber', 1, 'pendingAttack', null, 'turnHistory', '[]'::jsonb), gs::text;
     assert (select array_agg(k order by k) from jsonb_object_keys(gs -> 'players') k) = (select array_agg(u::text order by u::text)
       from unnest(array[a, b]) u) and gs #> array['players', a::text] = pa, gs::text;
-    assert (gs #> array['players', b::text]) - 'cards' = jsonb_build_object('cardIds', d, 'usedCardIds', '[]'::jsonb, 'currentHp', 1200,
-      'maxHp', 1200), gs::text;
+    assert (gs #> array['players', b::text]) - 'cards' = jsonb_build_object('cardIds', d, 'usedCardIds', '[]'::jsonb, 'currentHp', 1100,
+      'maxHp', 1100), gs::text;
     assert (select jsonb_agg(jsonb_build_array(f -> 'id', f -> 'user_card_id', f -> 'def') order by o)
         from jsonb_array_elements(gs #> array['players', b::text, 'cards']) with ordinality t (f, o))
-      = jsonb_build_array(jsonb_build_array(d[1], kb[1], 500), jsonb_build_array(d[2], kb[2], 400), jsonb_build_array(d[3], kb[3], 300)),
+      = jsonb_build_array(jsonb_build_array(d[1], kb[1], 500), jsonb_build_array(d[2], kb[2], 400), jsonb_build_array(d[3], kb[3], 200)),
       gs::text;
     assert wm.battle_detail(a, x) = wm.battle_detail(b, x) and jsonb_array_length(wm.battle_detail(a, x) -> 'decks') = 2
       and wm.battle_detail(a, x) #> '{battle,game_state}' = gs, wm.battle_detail(a, x)::text;
@@ -735,17 +744,24 @@ do $$ declare a uuid; b uuid; c uuid[]; ka uuid[]; x uuid; p jsonb; begin
   end;
 end $$;
 
--- submit_attack (C7, C10, C11, C23) : refus, attaque, puis Review Focus, fuite : chacun des 12 ids d'option, bonne option comprise, une
--- seule fois dans chaque lecture, réponse et état stocké ; aucun dans les notifications ; aucune clé interdite à aucune profondeur.
-do $$ declare a uuid; b uuid; c uuid[]; d uuid[]; x uuid; r jsonb; e jsonb; pa jsonb; t jsonb; opts text[]; o text; k text; i int := 0;
-  q text := 'select wm.battle_action(%L, %L, %L, %L)'; begin
+-- submit_attack (C7, C10, C11, C23) : refus, attaque, titre figé au deck (M5a-11), puis Review Focus, fuite : chacun des 12 ids d'option,
+-- bonne option comprise, une seule fois dans chaque lecture, réponse et état stocké ; aucun dans les notifications ; aucune clé interdite à
+-- aucune profondeur.
+do $$ declare a uuid; b uuid; c uuid[]; d uuid[]; x uuid; x0 uuid; r jsonb; e jsonb; pa jsonb; t jsonb; opts text[]; o text; k text;
+  i int := 0; q text := 'select wm.battle_action(%L, %L, %L, %L)'; begin
   begin
     a := pg_temp.player('BatAttA'); b := pg_temp.player('BatAttB');
     c := pg_temp.bcards('BatAtt A', array[1000, 1100, 1200], array[500, 600, 700]);
     d := pg_temp.bcards('BatAtt B', array[900, 800, 700], array[400, 300, 200]);
     perform pg_temp.fill();
     perform pg_temp.friends(a, b);
+    x0 := (wm.battle_create(a, b) ->> 'id')::uuid;
+    perform wm.battle_action(a, x0, 'withdraw_invite');
+    e := pg_temp.err(format(q, a, x0, 'submit_attack', jsonb_build_object('attack_card_id', c[1])));
+    assert e = pg_temp.berr(409, null, 'Cette bataille est terminée'), coalesce(e::text, 'accepté');
     x := (wm.battle_create(a, b) ->> 'id')::uuid;
+    e := pg_temp.err(format(q, a, x, 'submit_attack', jsonb_build_object('attack_card_id', c[1])));
+    assert e = pg_temp.berr(409, null, 'Ce défi n''est pas encore accepté'), coalesce(e::text, 'accepté');
     perform wm.battle_action(b, x, 'accept');
     perform wm.battle_action(a, x, 'submit_deck', jsonb_build_object('card_ids', pg_temp.own(a, c)));
     e := pg_temp.err(format(q, a, x, 'submit_attack', jsonb_build_object('attack_card_id', c[1])));
@@ -755,11 +771,14 @@ do $$ declare a uuid; b uuid; c uuid[]; d uuid[]; x uuid; r jsonb; e jsonb; pa j
     assert e = pg_temp.berr(409, null, 'Ce n''est pas à toi d''attaquer'), coalesce(e::text, 'accepté');
     e := pg_temp.err(format(q, a, x, 'submit_attack', jsonb_build_object('attack_card_id', d[1])));
     assert e = pg_temp.berr(400, 'invalid_request', 'Cette carte n''est pas dans ton deck'), coalesce(e::text, 'accepté');
+    -- La carte renommée au catalogue après le deck : l'attaque et la face gardent le titre figé.
+    update public.cards set wikipedia_title = 'BatAtt renommée' where id = c[1];
     r := pg_temp.att(a, x, c[1], 'k-att');
     pa := r #> '{battle,game_state,pendingAttack}';
     assert r #>> '{battle,game_state,phase}' = 'quiz' and r #> array['battle', 'game_state', 'players', a::text, 'usedCardIds'] = to_jsonb(c[1:1])
       and pa - 'questions' = jsonb_build_object('attackerUserId', a, 'defenderId', b, 'attackCardId', c[1], 'attackCardName', 'BatAtt A 1',
-        'answered', '[]'::jsonb), r::text;
+        'answered', '[]'::jsonb)
+      and r #>> array['battle', 'game_state', 'players', a::text, 'cards', '0', 'wikipedia_title'] = 'BatAtt A 1', r::text;
     assert jsonb_array_length(pa -> 'questions') = 3 and not exists (select from jsonb_array_elements(pa -> 'questions') qq
       where (select array_agg(kk order by kk) from jsonb_object_keys(qq) kk) <> array['id', 'options', 'prompt']
         or jsonb_array_length(qq -> 'options') <> 4
@@ -957,8 +976,9 @@ do $$ declare a uuid; b uuid; c uuid[]; x uuid; n int; s1 int[]; s2 int[]; i1 te
 end $$;
 
 -- Review Focus, fins (C8, C10, M5a-2) : KO au 1ᵉʳ tour (Σ DEF de B = 900, ATK de c1 = 1 000, trois mauvaises réponses) ; user_stats des deux
--- supprimées avant (profils migrés, C19) ; second battle_finish direct → XX000, sans rien écrire.
-do $$ declare a uuid; b uuid; c uuid[]; x uuid; r jsonb; g jsonb; m text; begin
+-- supprimées avant (profils migrés, C19) ; état final aux clés exactes, sans clé interdite chez l'un ni l'autre (C23) ; second
+-- battle_finish direct → XX000, sans rien écrire.
+do $$ declare a uuid; b uuid; c uuid[]; x uuid; r jsonb; g jsonb; m text; v jsonb; k text; begin
   begin
     a := pg_temp.player('BatKoA'); b := pg_temp.player('BatKoB');
     c := pg_temp.bcards('BatKo', array[1000, 400, 400, 300, 300, 300], array[500, 500, 500, 300, 300, 300]);
@@ -971,6 +991,13 @@ do $$ declare a uuid; b uuid; c uuid[]; x uuid; r jsonb; g jsonb; m text; begin
         and game_state ->> 'turnNumber' = '1' and game_state -> 'pendingAttack' = 'null'
         and game_state #> array['players', b::text, 'currentHp'] = '0' and game_state #> '{turnHistory,0,damageDealt}' = '1000'
       from public.battles where id = x), (select game_state::text from public.battles where id = x);
+    assert (select array_agg(kk order by kk) from public.battles, jsonb_object_keys(game_state) kk where id = x) = array['currentTurnUserId',
+      'pendingAttack', 'phase', 'players', 'turnHistory', 'turnNumber', 'winnerId'], (select game_state::text from public.battles where id = x);
+    foreach v in array array[wm.battle_detail(a, x), wm.battle_detail(b, x)] loop
+      foreach k in array array['correct_option_id', 'evidence', 'answer', 'q_index', 'correct'] loop
+        assert not jsonb_path_exists(v, ('lax $.**.' || k)::jsonpath), 'fin : clé ' || k;
+      end loop;
+    end loop;
     assert pg_temp.rewards(x) = jsonb_build_object(a, 50, b, 10), pg_temp.rewards(x)::text;
     assert (select battles_won from wm.user_stats where user_id = a) = 1 and not exists (select from wm.user_stats where user_id = b), 'battles_won';
     assert (select jsonb_agg(n order by n ->> 'type') from jsonb_array_elements(pg_temp.bnotes(x)) n where n ->> 'type' in ('battle_won', 'battle_lost'))
@@ -1022,8 +1049,9 @@ do $$ declare a uuid; b uuid; c uuid[]; x uuid; r jsonb; begin
   end;
 end $$;
 
--- Review Focus, fins : forfeit de B en active → A gagne, +50 et +10 ; de nouveau → 409.
-do $$ declare a uuid; b uuid; c uuid[]; x uuid; r jsonb; e jsonb; begin
+-- Review Focus, fins : forfeit de B en active → A gagne, +50 et +10 ; de nouveau, ou une attaque de A, → 409 (C11). Puis, pendant un quiz,
+-- forfeit de l'attaquant A → B gagne, et la réponse de B → 409.
+do $$ declare a uuid; b uuid; c uuid[]; x uuid; q1 uuid; r jsonb; e jsonb; begin
   begin
     a := pg_temp.player('BatFfA'); b := pg_temp.player('BatFfB');
     c := pg_temp.bcards('BatFf', array[1000, 400, 400, 400, 400, 400], array[500, 500, 500, 500, 500, 500]);
@@ -1036,6 +1064,20 @@ do $$ declare a uuid; b uuid; c uuid[]; x uuid; r jsonb; e jsonb; begin
     perform pg_temp.inv('forfeit');
     e := pg_temp.err(format('select wm.battle_action(%L, %L, %L)', b, x, 'forfeit'));
     assert e = pg_temp.berr(409, null, 'Cette bataille est terminée'), coalesce(e::text, 'accepté');
+    e := pg_temp.err(format('select wm.battle_action(%L, %L, %L, %L)', a, x, 'submit_attack', jsonb_build_object('attack_card_id', c[1])));
+    assert e = pg_temp.berr(409, null, 'Cette bataille est terminée'), coalesce(e::text, 'accepté');
+    -- Abandon pendant un quiz : la question en attente n'a plus de réponse possible.
+    x := pg_temp.active(a, b, c[1:3], c[4:6]);
+    perform pg_temp.att(a, x, c[1]);
+    q1 := pg_temp.q(x, 1);
+    r := wm.battle_action(a, x, 'forfeit');
+    assert r #>> '{battle,status}' = 'completed' and r #>> '{battle,winner_id}' = b::text and r #> '{battle,game_state,pendingAttack}' = 'null',
+      r::text;
+    assert pg_temp.rewards(x) = jsonb_build_object(a, 10, b, 50), pg_temp.rewards(x)::text;
+    e := pg_temp.err(format('select wm.battle_action(%L, %L, %L, %L)', b, x, 'submit_single_answer',
+      jsonb_build_object('questionId', q1, 'answerId', pg_temp.secret(x, q1))));
+    assert e = pg_temp.berr(409, null, 'Cette bataille est terminée'), coalesce(e::text, 'accepté');
+    perform pg_temp.inv('forfeit pendant un quiz');
     raise exception using errcode = 'WMT00';
   exception when sqlstate 'WMT00' then null;
   end;
