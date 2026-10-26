@@ -10,7 +10,8 @@
 # 3. Même question, deux sessions sans clé (C5) : deux réponses de B à q1 derrière la bataille tenue → deux succès au même
 #    correct_answer_id, un seul answered_at, q1 une fois dans answered. Puis, au tour 2, deux submit_attack de B derrière la bataille tenue →
 #    un succès, un 409 « Ce n'est pas à toi d'attaquer », 3 secrets au tour 2.
-# 4. Même clé, deux sessions (M4-8) : la seconde attend au moins 0,5 s, puis rejoue la réponse de la première, au même corps.
+# 4. Même clé, deux sessions (M4-8) : la seconde attend au moins 0,5 s, puis rend la réponse stockée de la première, au même corps, bien que
+#    la première ait changé la bataille après son appel.
 # 5. quiz_ensure croisé, 20 tours sur deux cartes neuves : quiz_ensure(array[a, b]) et quiz_ensure(array[b, a]) ensemble, chacun tenu 0,2 s
 #    dans sa transaction → aucun 40P01, une banque par carte.
 # 5 b. Second deck contre deux profils pris dans l'ordre des id (M4b-31) : un bloqueur prend L puis R for update, comme lock_users ; le second
@@ -130,9 +131,9 @@ for f in "${fs[@]}"; do bg "2-$f" "select wm.battle_create('$a', '$f')"; done
 released s2 3
 waitall
 refusals 'Limite quotidienne de défis atteinte' "$tmp"/2-*
-got="$(cat "$tmp"/2-* | grep -c '^ERROR:  P0001: Limite quotidienne de défis atteinte$') $(q -c "select count(*) from public.battles
-  where challenger_id = '$a'")"
-[[ $got == "3 3" ]] || fail "quota en rafale : refus, batailles : $got"
+got="$(cat "$tmp"/2-* | grep -c '^ERROR:  P0001: Limite quotidienne de défis atteinte$') $(cat "$tmp"/2-* | grep -c '"status": 429') $(q -c "select
+  count(*) from public.battles where challenger_id = '$a'")"
+[[ $got == "3 3 3" ]] || fail "quota en rafale : refus, refus 429, batailles : $got"
 
 # 3. Partie de A contre B : c1 à c3 à A, c4 à c6 à B, une copie chacun ; c7 et c8 au pool seulement (T5 tire ses pairs par 30 seq au hasard :
 # 31_battles.test.sql:526-527). A attaque avec c1, B défend.
@@ -183,10 +184,14 @@ got="$(cat "$tmp/3b1" "$tmp/3b2" | grep -c '"status": 409') $(q -c "select count
   where battle_id = '$x' and turn_number = 2")"
 [[ $got == "1 3" ]] || fail "attaque doublée : refus 409, secrets du tour 2 : $got"
 
-# 4. Même clé, deux sessions : la seconde attend l'unicité de la clé tenue par la première, puis lit sa réponse. B rejoue sa réponse à q1
-# (C5), le seul appel de réponse qui lui réussisse encore, A défendant au tour 2.
+# 4. Même clé, deux sessions : la seconde attend l'unicité de la clé tenue par la première, puis lit sa réponse stockée. B rejoue sa
+# réponse à q1 (C5), le seul appel de réponse qui lui réussisse encore, A défendant au tour 2. La session 1 tient aussi la bataille : sans
+# la clé, la seconde attendrait autant, puis rejouerait q1. Elle avance donc updated_at d'une minute après son appel : une réponse
+# recalculée la montrerait (updated_at, idle_at), la réponse stockée non.
 dup="select wm.battle_action('$b', '$x', 'submit_single_answer', jsonb_build_object('questionId', '$q1', 'answerId', '$o'), 'k-dup')::text"
-q -v VERBOSITY=verbose -c "set role service_role; begin; $dup; select pg_sleep(1); commit;" >"$tmp/4s1" 2>"$tmp/4s1.err" &
+q -v VERBOSITY=verbose -c "set role service_role; begin; $dup; reset role;
+  update public.battles set updated_at = updated_at + interval '1 minute' where id = '$x'; select pg_sleep(1); commit;" \
+  >"$tmp/4s1" 2>"$tmp/4s1.err" &
 blocker=$!
 sleeping "$tmp/4s1.err"
 t0=$EPOCHREALTIME
@@ -202,13 +207,13 @@ quiet "$tmp/4s1.err" "$tmp/4s2.err"
 # 5. quiz_ensure croisé : chaque insertion suit l'ordre des card_id (1910_wm_quiz_templates.sql:333 et :339). Dans deux ordres, chaque
 # session attendrait l'unicité de la banque insérée par l'autre (40P01).
 for i in $(seq 20); do
-  a="$(card "q${i}a")"; b="$(card "q${i}b")"
-  bg "5-a$i" "begin; select wm.quiz_ensure(array['$a', '$b']::uuid[]); select pg_sleep(0.2); commit;"
-  bg "5-b$i" "begin; select wm.quiz_ensure(array['$b', '$a']::uuid[]); select pg_sleep(0.2); commit;"
+  ca="$(card "q${i}a")"; cb="$(card "q${i}b")"
+  bg "5-a$i" "begin; select wm.quiz_ensure(array['$ca', '$cb']::uuid[]); select pg_sleep(0.2); commit;"
+  bg "5-b$i" "begin; select wm.quiz_ensure(array['$cb', '$ca']::uuid[]); select pg_sleep(0.2); commit;"
   waitall
   refusals . "$tmp/5-a$i" "$tmp/5-b$i"
   quiet "$tmp/5-a$i" "$tmp/5-b$i"
-  got="$(q -c "select count(*) from wm.card_quizzes where card_id in ('$a', '$b')")"
+  got="$(q -c "select count(*) from wm.card_quizzes where card_id in ('$ca', '$cb')")"
   [[ $got == 2 ]] || fail "quiz_ensure croisé, tour $i : $got banques"
 done
 
