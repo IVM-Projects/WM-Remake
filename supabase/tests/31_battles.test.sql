@@ -241,6 +241,8 @@ do $$ declare a uuid; c uuid; dd uuid; e uuid; h uuid; xc uuid; xd uuid; d jsonb
     perform pg_temp.friends(e, a);
     xc := (wm.battle_create(a, c, 'Europe/Paris') ->> 'id')::uuid;
     xd := (wm.battle_create(a, dd, 'Europe/Paris') ->> 'id')::uuid;
+    -- Défi reçu par A aujourd'hui : seuls les défis créés comptent.
+    insert into public.battles (challenger_id, opponent_id, status) values (e, a, 'cancelled');
     d := pg_temp.err(format('select wm.battle_create(%L, %L, %L)', a, e, 'Europe/Paris'));
     assert d = pg_temp.berr(429, null, 'Limite quotidienne de défis atteinte', jsonb_build_object('retry_after', reset,
       'challenge_quota', jsonb_build_object('used', 2, 'limit', 2, 'resets_at', reset))), coalesce(d::text, 'accepté');
@@ -279,7 +281,8 @@ end $$;
 
 -- Review Focus, saut de fuseau (M5a-12) : quota_free à 3 ; dans le fuseau dont le jour a commencé il y a moins de 22 h (Etc/GMT+12 ou
 -- Etc/GMT-14, débuts de jour à 2 h ou 22 h d'écart), 6 défis juste avant d0 : aucun ce jour-là, mais 6 = 2 × limit sur 24 h → 429,
--- retry_after = le plus ancien + 24 h. Sans la garde des 24 h, l'appel passe.
+-- retry_after = le plus ancien + 24 h. Sans la garde des 24 h, l'appel passe. Un défi reçu par A aujourd'hui, donc dans la fenêtre, ne
+-- compte ni pour le jour ni pour les 24 h.
 do $$ declare a uuid; f uuid; o uuid; tz text; d0 timestamptz; d jsonb; begin
   begin
     a := pg_temp.player('BatJumpA'); f := pg_temp.player('BatJumpF'); o := pg_temp.player('BatJumpO');
@@ -289,6 +292,7 @@ do $$ declare a uuid; f uuid; o uuid; tz text; d0 timestamptz; d jsonb; begin
     d0 := (now() at time zone tz)::date::timestamp at time zone tz;
     insert into public.battles (challenger_id, opponent_id, status, created_at)
     select a, o, 'cancelled', d0 - i * interval '1 second' from generate_series(1, 6) i;
+    insert into public.battles (challenger_id, opponent_id, status) values (o, a, 'cancelled');
     assert wm.battles_list(a, tz) #> '{challenge_quota,used}' = '0', tz || ' : défis d''avant d0 comptés';
     d := pg_temp.err(format('select wm.battle_create(%L, %L, %L)', a, f, tz));
     assert d = pg_temp.berr(429, null, 'Limite quotidienne de défis atteinte', jsonb_build_object(
@@ -301,7 +305,8 @@ do $$ declare a uuid; f uuid; o uuid; tz text; d0 timestamptz; d jsonb; begin
 end $$;
 
 -- Review Focus, les deux bornes (M5a-12) : Etc/GMT-14, sans heure d'été (resets_at = d0 + 24 h) ; 6 défis de d0 + 1 s à d0 + 6 s → les
--- deux bornes atteintes, retry_after = le plus tardif, d0 + 1 s + 24 h. La borne du jour seule rendrait resets_at.
+-- deux bornes atteintes, retry_after = le plus tardif, d0 + 1 s + 24 h. La borne du jour seule rendrait resets_at. Puis 8 défis : le
+-- (n − 2 × limit + 1)ᵉ plus ancien, d0 + 3 s + 24 h.
 do $$ declare a uuid; f uuid; o uuid; d0 timestamptz := (now() at time zone 'Etc/GMT-14')::date::timestamp at time zone 'Etc/GMT-14'; d jsonb; begin
   begin
     a := pg_temp.player('BatBothA'); f := pg_temp.player('BatBothF'); o := pg_temp.player('BatBothO');
@@ -314,6 +319,13 @@ do $$ declare a uuid; f uuid; o uuid; d0 timestamptz := (now() at time zone 'Etc
       'retry_after', d0 + interval '1 second' + interval '24 hours',
       'challenge_quota', jsonb_build_object('used', 6, 'limit', 3, 'resets_at', d0 + interval '24 hours'))), coalesce(d::text, 'accepté');
     assert (select count(*) from public.battles where challenger_id = a) = 6, 'ligne de plus aux deux bornes';
+    -- Au-delà de 2 × limit (limite baissée, Pro perdu) : 8 défis, n repasse sous 6 quand le 3ᵉ plus ancien sort → d0 + 3 s + 24 h.
+    insert into public.battles (challenger_id, opponent_id, status, created_at)
+    select a, o, 'cancelled', d0 + i * interval '1 second' from generate_series(7, 8) i;
+    d := pg_temp.err(format('select wm.battle_create(%L, %L, %L)', a, f, 'Etc/GMT-14'));
+    assert d = pg_temp.berr(429, null, 'Limite quotidienne de défis atteinte', jsonb_build_object(
+      'retry_after', d0 + interval '3 seconds' + interval '24 hours',
+      'challenge_quota', jsonb_build_object('used', 8, 'limit', 3, 'resets_at', d0 + interval '24 hours'))), coalesce(d::text, 'accepté');
     raise exception using errcode = 'WMT00';
   exception when sqlstate 'WMT00' then null;
   end;
@@ -333,8 +345,9 @@ do $$ declare a uuid; b uuid; r1 jsonb; r2 jsonb; begin
   end;
 end $$;
 
--- Défi échu (C6) : lu cancelled ; accept → 409 ; un nouveau défi de la paire solde l'ancien (stocké cancelled) et passe.
-do $$ declare a uuid; b uuid; x uuid; y uuid; d jsonb; begin
+-- Défi échu (C6) : lu cancelled ; accept → 409 ; un nouveau défi de la paire solde l'ancien (stocké cancelled) et passe, dans les deux sens :
+-- A → B échu, puis B → A ; B → A échu, puis B → A de nouveau.
+do $$ declare a uuid; b uuid; x uuid; y uuid; z uuid; d jsonb; begin
   begin
     a := pg_temp.player('BatEchA'); b := pg_temp.player('BatEchB');
     perform pg_temp.friends(a, b);
@@ -343,9 +356,13 @@ do $$ declare a uuid; b uuid; x uuid; y uuid; d jsonb; begin
     assert (select wm.battle_json(t, a) @> '{"status": "cancelled", "expires_at": null}' from public.battles t where t.id = x), 'échu lu pending';
     d := pg_temp.err(format('select wm.battle_action(%L, %L, %L)', b, x, 'accept'));
     assert d = pg_temp.berr(409, null, 'Ce défi n''est plus en attente'), coalesce(d::text, 'accepté');
-    y := (wm.battle_create(a, b) ->> 'id')::uuid;
-    assert y <> x and (select status from public.battles where id = x) = 'cancelled' and (select status from public.battles where id = y) = 'pending',
-      'ancien défi non soldé';
+    y := (wm.battle_create(b, a) ->> 'id')::uuid;
+    assert (select status from public.battles where id = x) = 'cancelled' and (select status from public.battles where id = y) = 'pending',
+      'A → B échu non soldé par B → A';
+    update public.battles set created_at = created_at - interval '25 hours' where id = y;
+    z := (wm.battle_create(b, a) ->> 'id')::uuid;
+    assert (select status from public.battles where id = y) = 'cancelled' and (select status from public.battles where id = z) = 'pending',
+      'B → A échu non soldé par B → A';
     raise exception using errcode = 'WMT00';
   exception when sqlstate 'WMT00' then null;
   end;
@@ -442,19 +459,25 @@ do $$ declare a uuid; b uuid; x uuid; k uuid := gen_random_uuid(); begin
   end;
 end $$;
 
--- Liste (C6) : clés exactes ; ouvertes avec game_state, closes sans ; 2 ouvertes et les 50 closes les plus récentes sur 51, created_at desc.
-do $$ declare a uuid; b uuid; c uuid; oldest uuid; l jsonb; bad jsonb; begin
+-- Liste (C6) : clés exactes ; ouvertes avec game_state, closes sans ; 3 ouvertes et les 50 closes les plus récentes sur 51, mêlées en
+-- created_at desc (la deck_selection, à now() − 90 s, entre les closes de −1 et −2 min), puis id desc à created_at égal (les deux pending,
+-- insérées dans l'ordre croissant des id).
+do $$ declare a uuid; b uuid; c uuid; dd uuid; oldest uuid; p1 uuid := gen_random_uuid(); p2 uuid := gen_random_uuid(); s uuid; m1 uuid;
+  l jsonb; bad jsonb; begin
   begin
-    a := pg_temp.player('BatLstA'); b := pg_temp.player('BatLstB'); c := pg_temp.player('BatLstC');
+    a := pg_temp.player('BatLstA'); b := pg_temp.player('BatLstB'); c := pg_temp.player('BatLstC'); dd := pg_temp.player('BatLstD');
     insert into public.battles (challenger_id, opponent_id, status, created_at)
     select a, b, 'cancelled', now() - i * interval '1 minute' from generate_series(1, 51) i;
     select id into oldest from public.battles where challenger_id = a and created_at = now() - interval '51 minutes';
-    insert into public.battles (challenger_id, opponent_id) values (a, b);
-    insert into public.battles (challenger_id, opponent_id, status, game_state)
-    values (c, a, 'deck_selection', '{"players": {}, "turnHistory": [], "pendingAttack": null}');
+    select id into m1 from public.battles where challenger_id = a and created_at = now() - interval '1 minute';
+    insert into public.battles (id, challenger_id, opponent_id) values (least(p1, p2), a, b);
+    insert into public.battles (id, challenger_id, opponent_id) values (greatest(p1, p2), dd, a);
+    insert into public.battles (challenger_id, opponent_id, status, game_state, created_at)
+    values (c, a, 'deck_selection', '{"players": {}, "turnHistory": [], "pendingAttack": null}', now() - interval '90 seconds')
+    returning id into s;
     l := wm.battles_list(a, 'Europe/Paris');
     assert (select array_agg(k order by k) from jsonb_object_keys(l) k) = array['battles', 'challenge_quota', 'rules'], l::text;
-    assert jsonb_array_length(l -> 'battles') = 52, 'entrées : ' || jsonb_array_length(l -> 'battles');
+    assert jsonb_array_length(l -> 'battles') = 53, 'entrées : ' || jsonb_array_length(l -> 'battles');
     select jsonb_agg(j) into bad from jsonb_array_elements(l -> 'battles') j
     where not j ?& array['id', 'challenger_id', 'opponent_id', 'winner_id', 'status', 'created_at', 'updated_at', 'challenger', 'opponent',
         'expires_at', 'idle_at']
@@ -462,7 +485,10 @@ do $$ declare a uuid; b uuid; c uuid; oldest uuid; l jsonb; bad jsonb; begin
     assert bad is null, bad::text;
     assert (select count(*) from jsonb_array_elements(l -> 'battles') j where j ->> 'status' = 'cancelled') = 50, 'closes';
     assert not (l -> 'battles') @> jsonb_build_array(jsonb_build_object('id', oldest)), 'la 51ᵉ close listée';
-    assert (select bool_and(x.c >= x.n) from (select (j ->> 'created_at')::timestamptz c, lead((j ->> 'created_at')::timestamptz) over (order by o) n
+    assert (select array_agg((j ->> 'id')::uuid order by o) from jsonb_array_elements(l -> 'battles') with ordinality e (j, o) where o <= 4)
+      = array[greatest(p1, p2), least(p1, p2), m1, s], 'tête de liste';
+    assert (select bool_and(x.c > x.n or x.c = x.n and x.i > x.ni) from (select (j ->> 'created_at')::timestamptz c, (j ->> 'id')::uuid i,
+        lead((j ->> 'created_at')::timestamptz) over (order by o) n, lead((j ->> 'id')::uuid) over (order by o) ni
       from jsonb_array_elements(l -> 'battles') with ordinality e (j, o)) x where x.n is not null), 'ordre';
     raise exception using errcode = 'WMT00';
   exception when sqlstate 'WMT00' then null;

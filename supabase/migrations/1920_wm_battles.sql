@@ -85,9 +85,10 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_resp jsonb;
   v_q jsonb;
+  v_lim int;
   v_day boolean;
   v_n int;
-  v_oldest timestamptz;
+  v_roll timestamptz;
   v_id uuid;
 begin
   v_resp := wm.idem_claim(p_uid, p_idem);
@@ -119,13 +120,18 @@ begin
   end if;
   -- Quota du jour et borne glissante de 2 × limit sur 24 h (saut de fuseau), jugés ensemble : un seul 429, retry_after le plus tardif.
   v_q := wm.battle_quota(p_uid, p_tz);
-  v_day := (v_q ->> 'used')::int >= (v_q ->> 'limit')::int;
-  select count(*), min(created_at) into v_n, v_oldest from public.battles where challenger_id = p_uid and created_at > now() - interval '24 hours';
-  if v_day or v_n >= 2 * (v_q ->> 'limit')::int then
+  v_lim := (v_q ->> 'limit')::int;
+  v_day := (v_q ->> 'used')::int >= v_lim;
+  select count(*) into v_n from public.battles where challenger_id = p_uid and created_at > now() - interval '24 hours';
+  -- Le (n − 2 × limit + 1)ᵉ plus ancien : sa sortie de la fenêtre ramène n sous 2 × limit, même au-delà (limite baissée, Pro perdu).
+  if v_n >= 2 * v_lim then
+    select created_at + interval '24 hours' into v_roll from public.battles
+    where challenger_id = p_uid and created_at > now() - interval '24 hours'
+    order by created_at offset v_n - 2 * v_lim limit 1;
+  end if;
+  if v_day or v_roll is not null then
     perform wm.raise_err(429, null, 'Limite quotidienne de défis atteinte', jsonb_build_object('retry_after',
-      greatest(case when v_day then (v_q ->> 'resets_at')::timestamptz end,
-        case when v_n >= 2 * (v_q ->> 'limit')::int then v_oldest + interval '24 hours' end),
-      'challenge_quota', v_q));
+      greatest(case when v_day then (v_q ->> 'resets_at')::timestamptz end, v_roll), 'challenge_quota', v_q));
   end if;
   insert into public.battles (challenger_id, opponent_id) values (p_uid, p_opponent_id) returning id into v_id;
   perform wm.notify_battle(array[p_opponent_id], 'battle_invite', v_id, p_uid);
