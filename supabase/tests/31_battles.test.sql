@@ -500,7 +500,7 @@ do $$ declare bad text; begin
   assert (select jsonb_object_agg(proname, provolatile::text) from pg_proc where pronamespace = 'wm'::regnamespace
     and proname in ('battle_json', 'battles_list', 'battle_detail', 'battle_read_status'))
     = '{"battle_json": "s", "battles_list": "s", "battle_detail": "s", "battle_read_status": "s"}', 'volatilité';
-  bad := tests.lock_timeout_violations(array['battle_create', 'battle_action'],
+  bad := tests.lock_timeout_violations(array['battle_create', 'battle_action', 'expire_battles'],
     array['update public.battles', 'for update', 'for key share', 'wm.lock_users(', 'wm.lock_user(']);
   assert bad is null, 'lock_timeout : ' || bad;
   assert (select strpos(prosrc, 'update public.battles') between 1 and strpos(prosrc, 'wm.lock_users(') from pg_proc
@@ -1139,4 +1139,132 @@ do $$ declare bad text; begin
   assert (select strpos(prosrc, 'for key share') between 1 and least(strpos(prosrc, 'wm.quiz_ensure('), strpos(prosrc, 'wm.notify_battle('))
     from pg_proc where oid = to_regproc('wm.battle_submit_attack')), 'battle_submit_attack : for key share';
   assert (select provolatile = 'i' from pg_proc where oid = to_regproc('wm.battle_winner')), 'battle_winner non immutable';
+end $$;
+
+-- Échéances et santé (1940_wm_battle_expire.sql, 9030_wm_battle_cron.sql). Même règle : chaque bloc fait tout dans une sous-transaction
+-- annulée (WMT00).
+
+-- Review Focus, fins par le temps (M5a-12, C18) : le reliquat des blocs précédents soldé d'abord ; chaque compte vaut pour l'appel suivant.
+-- Défi de 25 h → cancelled, celui de 23 h intact ; choix des cartes (ou generating_quizzes hérité) inactif depuis 49 h → cancelled, sans
+-- argent ; partie inactive en phase d'attaque → l'attaquant attendu perd, en phase de quiz → le défenseur perd, récompenses normales ;
+-- aucune notification d'annulation.
+-- Maintenance → 0, et rien ne change (un défi et une partie échus) ; elle finie, les deux sont soldés au premier passage.
+do $$ declare a uuid; b uuid; c uuid; d uuid; e uuid; k uuid[]; p25 uuid; p23 uuid; ds uuid; gq uuid; x uuid; y uuid; z uuid; nt jsonb; g jsonb;
+  w int; begin
+  begin
+    perform wm.expire_battles(5000);
+    a := pg_temp.player('BatExpA'); b := pg_temp.player('BatExpB'); c := pg_temp.player('BatExpC'); d := pg_temp.player('BatExpD');
+    e := pg_temp.player('BatExpE');
+    perform pg_temp.friends(c, a); perform pg_temp.friends(d, a); perform pg_temp.friends(e, a);
+    k := pg_temp.bcards('BatExp', array[1000, 400, 400, 400, 400, 400], array[500, 500, 500, 500, 500, 500]);
+    perform pg_temp.fill();
+    perform pg_temp.own(a, k[1:3]); perform pg_temp.own(b, k[4:6]);
+    -- Défis : 25 h et 23 h.
+    p25 := (wm.battle_create(c, a) ->> 'id')::uuid;
+    p23 := (wm.battle_create(d, a) ->> 'id')::uuid;
+    update public.battles set created_at = created_at - interval '25 hours' where id = p25;
+    update public.battles set created_at = created_at - interval '23 hours' where id = p23;
+    nt := pg_temp.bnotes(p25);
+    assert wm.expire_battles() = 1, 'défi de 25 h';
+    assert (select status from public.battles where id = p25) = 'cancelled' and (select status from public.battles where id = p23) = 'pending',
+      'défis de 25 h et 23 h';
+    assert pg_temp.bnotes(p25) = nt, 'défi échu : ' || pg_temp.bnotes(p25)::text;
+    -- Choix des cartes inactif depuis 49 h, et un generating_quizzes hérité (C18).
+    ds := (wm.battle_create(e, a) ->> 'id')::uuid;
+    perform wm.battle_action(a, ds, 'accept');
+    perform pg_temp.friends(c, e);
+    gq := (wm.battle_create(c, e) ->> 'id')::uuid;
+    perform wm.battle_action(e, gq, 'accept');
+    update public.battles set status = 'generating_quizzes' where id = gq;
+    update public.battles set updated_at = updated_at - interval '49 hours' where id in (ds, gq);
+    nt := pg_temp.bnotes(ds) || pg_temp.bnotes(gq);
+    assert wm.expire_battles() = 2, 'choix des cartes inactif';
+    assert (select status from public.battles where id = ds) = 'cancelled' and (select status from public.battles where id = gq) = 'cancelled',
+      'choix des cartes : statuts';
+    assert not exists (select from wm.wb_ledger where ref in ('battle:' || ds, 'battle:' || gq)) and pg_temp.bnotes(ds) || pg_temp.bnotes(gq) = nt,
+      'choix des cartes : argent ou notification';
+    -- Partie en phase d'attaque, au tour de A : B gagne.
+    x := pg_temp.active(a, b, k[1:3], k[4:6]);
+    update public.battles set updated_at = updated_at - interval '49 hours' where id = x;
+    w := coalesce((select battles_won from wm.user_stats where user_id = b), 0);
+    assert wm.expire_battles() = 1, 'phase d''attaque';
+    assert (select status = 'completed' and winner_id = b and game_state ->> 'winnerId' = b::text from public.battles where id = x), 'attaque : vainqueur';
+    assert pg_temp.rewards(x) = jsonb_build_object(a, 10, b, 50), pg_temp.rewards(x)::text;
+    assert (select battles_won from wm.user_stats where user_id = b) = w + 1, 'attaque : battles_won';
+    assert (select jsonb_agg(n order by n ->> 'type') from jsonb_array_elements(pg_temp.bnotes(x)) n where n ->> 'type' in ('battle_won', 'battle_lost'))
+      = jsonb_build_array(
+        jsonb_build_object('user_id', a, 'type', 'battle_lost', 'data', jsonb_build_object('battle_id', x, 'user_id', b, 'username', 'BatExpB')),
+        jsonb_build_object('user_id', b, 'type', 'battle_won', 'data', jsonb_build_object('battle_id', x, 'user_id', a, 'username', 'BatExpA'))),
+      pg_temp.bnotes(x)::text;
+    -- Partie en phase de quiz, défenseur B : A gagne.
+    y := pg_temp.active(a, b, k[1:3], k[4:6]);
+    perform pg_temp.att(a, y, k[1]);
+    update public.battles set updated_at = updated_at - interval '49 hours' where id = y;
+    assert wm.expire_battles() = 1, 'phase de quiz';
+    assert (select status = 'completed' and winner_id = a from public.battles where id = y), 'quiz : vainqueur';
+    assert pg_temp.rewards(y) = jsonb_build_object(a, 50, b, 10), pg_temp.rewards(y)::text;
+    -- Maintenance : le défi de 23 h échu à son tour, une partie de B inactive (son tour).
+    z := pg_temp.active(b, a, k[4:6], k[1:3]);
+    update public.battles set updated_at = updated_at - interval '49 hours' where id = z;
+    update public.battles set created_at = created_at - interval '2 hours' where id = p23;
+    update wm.config set value = 'true' where key = 'maintenance';
+    g := jsonb_build_array(pg_temp.bsnap(z), pg_temp.bsnap(p23));
+    assert wm.expire_battles() = 0, 'maintenance';
+    assert jsonb_build_array(pg_temp.bsnap(z), pg_temp.bsnap(p23)) = g, 'maintenance : état changé';
+    update wm.config set value = 'false' where key = 'maintenance';
+    assert wm.expire_battles() = 2, 'après la maintenance';
+    assert (select status from public.battles where id = p23) = 'cancelled'
+      and (select status = 'completed' and winner_id = a from public.battles where id = z), 'après la maintenance : statuts';
+    perform pg_temp.inv('échéances');
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+end $$;
+
+-- 9030 sans pg_cron : sans erreur, ni schéma cron ni job.
+do $$ begin
+  assert to_regnamespace('cron') is null, 'schéma cron avant 9030';
+end $$;
+\ir ../migrations/9030_wm_battle_cron.sql
+do $$ begin
+  assert to_regnamespace('cron') is null, 'schéma cron créé par 9030 sans pg_cron';
+end $$;
+
+-- Santé (M5a-14) : quiz compte les lignes encore proposées (attempts < 3) ; file vide → 0 et null ; une ligne de 30 s → 1 et 30 ; une ligne
+-- à 3 essais, plus vieille, n'est pas comptée. La file vidée d'abord, comme 30_push.test.sql:270.
+do $$ declare k1 uuid; k2 uuid; begin
+  begin
+    delete from wm.quiz_queue where true;
+    assert wm.health() -> 'quiz' = '{"queued": 0, "oldest_s": null}', wm.health()::text;
+    k1 := pg_temp.bcard('BatSanté 1', 'R', 1, 1); k2 := pg_temp.bcard('BatSanté 2', 'R', 1, 1);
+    insert into wm.quiz_queue (card_id, priority, enqueued_at) values (k1, 60, now() - interval '30 seconds');
+    assert wm.health() -> 'quiz' = '{"queued": 1, "oldest_s": 30}', wm.health()::text;
+    insert into wm.quiz_queue (card_id, priority, enqueued_at, attempts) values (k2, 60, now() - interval '1 hour', 3);
+    assert wm.health() -> 'quiz' = '{"queued": 1, "oldest_s": 30}', 'ligne à 3 essais : ' || wm.health()::text;
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+end $$;
+
+-- Review Focus, deck tu par la santé (M5a-11) : 6 cartes neuves, sans banque ni ligne de file ; queued ne bouge pas au deck de A, et prend
+-- les 6 cartes au second deck.
+do $$ declare a uuid; b uuid; c uuid[]; x uuid; q0 int; begin
+  begin
+    a := pg_temp.player('BatSanA'); b := pg_temp.player('BatSanB');
+    c := pg_temp.bcards('BatSan', array[1000, 400, 400, 400, 400, 400], array[500, 500, 500, 500, 500, 500]);
+    perform pg_temp.fill();
+    perform pg_temp.own(a, c[1:3]); perform pg_temp.own(b, c[4:6]);
+    perform pg_temp.friends(a, b);
+    x := (wm.battle_create(a, b) ->> 'id')::uuid;
+    perform wm.battle_action(b, x, 'accept');
+    assert not exists (select from wm.card_quizzes where card_id = any (c)) and not exists (select from wm.quiz_queue where card_id = any (c)),
+      'cartes déjà en banque ou en file';
+    q0 := (wm.health() #>> '{quiz,queued}')::int;
+    perform wm.battle_action(a, x, 'submit_deck', jsonb_build_object('card_ids', c[1:3]));
+    assert (wm.health() #>> '{quiz,queued}')::int = q0, 'deck de A compté : ' || wm.health()::text;
+    perform wm.battle_action(b, x, 'submit_deck', jsonb_build_object('card_ids', c[4:6]));
+    assert (wm.health() #>> '{quiz,queued}')::int = q0 + 6, 'second deck : ' || wm.health()::text;
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
 end $$;

@@ -1192,11 +1192,11 @@ do $$ declare s uuid := pg_temp.player('Sante1'); x uuid := pg_temp.listing(s, p
   update public.auctions set end_at = now() - interval '2 minutes' where id = x;
   alter table cron.job rename column jobname to name;
   h := wm.health();
-  assert h - 'now' = '{"ok":true,"db":"ok","settle_lag_s":86400,"overdue_s":null,"push_lag_s":null}', 'lecture en erreur : ' || h::text;
+  assert h - 'now' = '{"ok":true,"db":"ok","settle_lag_s":86400,"overdue_s":null,"push_lag_s":null,"quiz":{"queued":0,"oldest_s":null}}', 'lecture en erreur : ' || h::text;
   -- Droit manquant sur le schéma cron : to_regclass lève 42501 lui-même. Propriétaire sans droit sur cron (défait par le rollback du banc).
   alter table cron.job rename column name to jobname;
   assert wm.health() -> 'settle_lag_s' = '5', 'colonne rétablie';
   alter function wm.health() owner to authenticated;
   h := wm.health();
-  assert h - 'now' = '{"ok":true,"db":"ok","settle_lag_s":86400,"overdue_s":null,"push_lag_s":86400}', 'schéma cron sans droit : ' || h::text;
+  assert h - 'now' = '{"ok":true,"db":"ok","settle_lag_s":86400,"overdue_s":null,"push_lag_s":86400,"quiz":{"queued":null,"oldest_s":86400}}', 'schéma cron sans droit : ' || h::text;
 end $$;

@@ -16,6 +16,15 @@
 #    dans sa transaction → aucun 40P01, une banque par carte.
 # 5 b. Second deck contre deux profils pris dans l'ordre des id (M4b-31) : un bloqueur prend L puis R for update, comme lock_users ; le second
 #    deck de R, puis celui de L → aucun 40P01 ni 55P03, servi entre 0,5 et 2 s, bataille active, battle_started pour le premier joueur.
+# 6. Dernière réponse contre le cron, le cron d'abord (M5a-12, C11) : KO à sa dernière question, défenseur B, inactif depuis 49 h ; le cron
+#    tient la bataille et attend les profils tenus, puis la dernière réponse de B attend la bataille → le cron rend 1, A gagne, deux lignes
+#    battle:<id>, battles_won de A + 1, la réponse rend 409 « Cette bataille est terminée ».
+# 7. Bataille tenue : une partie inactive tenue 1 s par un bloqueur → expire_battles la saute (skip locked) et rend 0 en moins de 0,5 s,
+#    puis la finit au passage suivant.
+# 8. Défi contre le cron, 10 tours (C4, C6) : battle_create(A, F), qui solde le défi échu P(A, F), et expire_battles, qui finit la partie
+#    inactive Y(A, G), derrière les trois profils tenus → aucun 40P01 ni 55P03, P cancelled, une bataille ouverte A–F, Y completed.
+# 9. Fins croisées, 10 tours : la dernière réponse d'un KO et les abandons de A et de B derrière la bataille tenue → une seule fin (deux
+#    lignes battle:<id>, battles_won + 1, une battle_won et une battle_lost), deux 409 « Cette bataille est terminée ».
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 tmp="$(mktemp -d)"
@@ -36,11 +45,11 @@ trap cleanup EXIT
 fail() { echo "$1" >&2; shift; (( $# == 0 )) || cat "$@" >&2; exit 1; }  # $2… : sorties d'erreur à montrer
 
 player() { q -c "select tests.make_user('${tag}_$1')"; }
-# Carte R du tag au pool, titrée « $tag $1 » ; k = nombre de cartes du tag déjà créées. Rend son id (pool_add, void, n'imprime qu'une
-# ligne vide, que $(…) retire).
+# Carte R du tag au pool, titrée « $tag $1 », ATK $2 et DEF $3 (1 000 et 800 par défaut) ; k = nombre de cartes du tag déjà créées. Rend
+# son id (pool_add, void, n'imprime qu'une ligne vide, que $(…) retire).
 card() {
   q -c "insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, pageviews)
-    select '$tag $1', 'https://fr.wikipedia.org/wiki/${tag}_$1', 'R', 1000, 800, round(100 * 1.2 ^ (count(*) % 60))::int
+    select '$tag $1', 'https://fr.wikipedia.org/wiki/${tag}_$1', 'R', ${2:-1000}, ${3:-800}, round(100 * 1.2 ^ (count(*) % 60))::int
     from public.cards where wikipedia_title like '$tag %' returning id" \
     -c "select wm.pool_add(id, rarity) from public.cards where wikipedia_title = '$tag $1'"
 }
@@ -227,15 +236,15 @@ q -c "insert into public.friendships (requester_id, addressee_id, status) values
 dl="$(deck "${c[0]}" "${c[1]}" "${c[2]}")"; dr="$(deck "${c[3]}" "${c[4]}" "${c[5]}")"
 for pass in 1 2; do
   if [[ $pass == 1 ]]; then first=$L d1=$dl second=$R d2=$dr; else first=$R d1=$dr second=$L d2=$dl; fi
-  x="$(q -c "select wm.battle_create('$L', '$R') ->> 'id'")"
-  q -c "select wm.battle_action('$R', '$x', 'accept')" -c "select wm.battle_action('$first', '$x', 'submit_deck', $d1)" >/dev/null
+  y="$(q -c "select wm.battle_create('$L', '$R') ->> 'id'")"
+  q -c "select wm.battle_action('$R', '$y', 'accept')" -c "select wm.battle_action('$first', '$y', 'submit_deck', $d1)" >/dev/null
   q -v VERBOSITY=verbose -c "begin; select from public.profiles where id = '$L' for update; select pg_sleep(1);
     select from public.profiles where id = '$R' for update; commit;" >/dev/null 2>"$tmp/5bb$pass" &
   blocker=$!
   sleeping "$tmp/5bb$pass"
   t0=$EPOCHREALTIME
   # Échecs lus dans les sorties d'erreur, pour montrer un 40P01 de l'un ou de l'autre.
-  q -v VERBOSITY=verbose -c "set role service_role; select wm.battle_action('$second', '$x', 'submit_deck', $d2)" >/dev/null \
+  q -v VERBOSITY=verbose -c "set role service_role; select wm.battle_action('$second', '$y', 'submit_deck', $d2)" >/dev/null \
     2>"$tmp/5bd$pass" || true
   d="$(ms)"
   wait "$blocker" || true
@@ -244,7 +253,134 @@ for pass in 1 2; do
   quiet "$tmp/5bb$pass" "$tmp/5bd$pass"
   (( d >= 500 && d <= 2000 )) || fail "second deck, passe $pass : servi en $d ms (0,5 à 2 s)"
   got="$(q -c "select status || ' ' || (select count(*) from public.notifications where user_id = '$first' and type = 'battle_started'
-    and data ->> 'battle_id' = '$x') from public.battles where id = '$x'")"
+    and data ->> 'battle_id' = '$y') from public.battles where id = '$y'")"
   [[ $got == "active 1" ]] || fail "second deck, passe $pass : statut, battle_started du premier joueur : $got"
-  q -c "select wm.battle_action('$L', '$x', 'forfeit')" >/dev/null  # une seule bataille ouverte par paire
+  q -c "select wm.battle_action('$L', '$y', 'forfeit')" >/dev/null  # une seule bataille ouverte par paire
+done
+
+# Parties des scénarios 6 à 9, joueurs neufs à chaque partie (quota, une bataille ouverte par paire). k1 (ATK 1 000) à k3 pour A, k4 à k6
+# (DEF 300, Σ 900) pour B : trois mauvaises réponses à l'attaque de k1 font un KO.
+kc=("$(card k1 1000 500)" "$(card k2 400 500)" "$(card k3 400 500)" "$(card k4 400 300)" "$(card k5 400 300)" "$(card k6 400 300)")
+# Partie active de $1 (A, challenger, à qui revient l'attaque) contre $2 (B), amis. Rend son id.
+live() {
+  local x
+  x="$(q -c "insert into public.friendships (requester_id, addressee_id, status) values ('$1', '$2', 'accepted')" \
+    -c "select from unnest(array['${kc[0]}', '${kc[1]}', '${kc[2]}']::uuid[]) u, wm.grant_copy('$1', u, false)" \
+    -c "select from unnest(array['${kc[3]}', '${kc[4]}', '${kc[5]}']::uuid[]) u, wm.grant_copy('$2', u, false)" \
+    -c "select wm.battle_create('$1', '$2') ->> 'id'")"
+  q -c "select wm.battle_action('$2', '$x', 'accept')" \
+    -c "select wm.battle_action('$1', '$x', 'submit_deck', $(deck "${kc[0]}" "${kc[1]}" "${kc[2]}"))" \
+    -c "select wm.battle_action('$2', '$x', 'submit_deck', $(deck "${kc[3]}" "${kc[4]}" "${kc[5]}"))" >/dev/null
+  echo "$x"
+}
+# Question $2 (1 à 3) de l'attaque en cours de la bataille $1 et sa plus petite mauvaise option, « question option ».
+wrong() {
+  q -c "select (e ->> 'id') || ' ' || (select min(o ->> 'id') from jsonb_array_elements(e -> 'options') o where o ->> 'id' <> s.correct_option_id)
+    from public.battles t, jsonb_array_elements(t.game_state #> '{pendingAttack,questions}') with ordinality u (e, i), wm.battle_secrets s
+    where t.id = '$1' and u.i = $2 and s.battle_id = t.id and s.question_id = (e ->> 'id')::uuid"
+}
+# La même partie à la dernière question d'un KO : A attaque avec k1, B a mal répondu aux deux premières. Rend « bataille question option »,
+# l'option fausse.
+ko() {
+  local x i qq oo
+  x="$(live "$1" "$2")"
+  q -c "select wm.battle_action('$1', '$x', 'submit_attack', jsonb_build_object('attack_card_id', '${kc[0]}'))" >/dev/null
+  for i in 1 2; do
+    read -r qq oo <<<"$(wrong "$x" "$i")"
+    q -c "select wm.battle_action('$2', '$x', 'submit_single_answer', jsonb_build_object('questionId', '$qq', 'answerId', '$oo'))" >/dev/null
+  done
+  echo "$x $(wrong "$x" 3)"
+}
+reply() { echo "select wm.battle_action('$2', '$1', 'submit_single_answer', jsonb_build_object('questionId', '$3', 'answerId', '$4'))"; }
+waiting() { q -c "select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query like 'set role service_role;%'"; }
+
+# 6. Dernière réponse contre le cron, le cron d'abord : il prend la bataille (skip locked), puis les deux profils d'un seul lock_users ; la
+# réponse attend la bataille, puis la relit completed (C11). L'ordre inverse (la bataille tenue, le cron qui la saute) est le scénario 7.
+pa="$(player 6a)"; pb="$(player 6b)"
+read -r bt q3 o3 <<<"$(ko "$pa" "$pb")"
+w="$(q -c "update public.battles set updated_at = updated_at - interval '49 hours' where id = '$bt'" \
+  -c "select coalesce((select battles_won from wm.user_stats where user_id = '$pa'), 0)")"
+hold s6 "perform from public.profiles where id in ('$pa', '$pb') order by id for update" 2
+q -v VERBOSITY=verbose -c "set role service_role; select wm.expire_battles(500)" >"$tmp/6c.out" 2>"$tmp/6c" & pids+=($!)
+cron=$!
+until (( $(waiting) >= 1 )); do
+  kill -0 "$cron" 2>/dev/null || fail "cron jamais en attente des profils" "$tmp/6c"
+  sleep 0.05
+done
+bg 6r "$(reply "$bt" "$pb" "$q3" "$o3")"
+released s6 2
+waitall
+refusals 'Cette bataille est terminée' "$tmp/6c" "$tmp/6r"
+quiet "$tmp/6c"
+got="$(cat "$tmp/6c.out") $(grep -c '^ERROR:  P0001: Cette bataille est terminée$' "$tmp/6r") $(grep -c '"status": 409' "$tmp/6r") $(q -c "select
+  concat_ws(' ', status, (winner_id = '$pa')::text, (select count(*) from wm.wb_ledger where reason = 'battle' and ref = 'battle:$bt'),
+    (select battles_won from wm.user_stats where user_id = '$pa') - $w, wm.check_invariants()) from public.battles where id = '$bt'")"
+[[ $got == "1 1 1 completed true 2 1 []" ]] || fail "réponse contre le cron : rendu du cron, refus, refus 409, statut, A vainqueur, lignes battle,
+  battles_won de A, invariants : $got"
+
+# 7. Bataille tenue : le cron saute la ligne tenue (skip locked) sans l'attendre, puis la finit au passage suivant. Bloqueur à la main
+# (18_social_concurrency.test.sh:182-183) : hold attend un appel en attente, que le cron ne fait jamais.
+pa="$(player 7a)"; pb="$(player 7b)"
+bt="$(live "$pa" "$pb")"
+q -c "update public.battles set updated_at = updated_at - interval '49 hours' where id = '$bt'" >/dev/null
+q -v VERBOSITY=verbose -c "begin; select from public.battles where id = '$bt' for update; select pg_sleep(1); commit;" >/dev/null 2>"$tmp/7b" &
+blocker=$!
+sleeping "$tmp/7b"
+t0=$EPOCHREALTIME
+got="$(q -v VERBOSITY=verbose -c "set role service_role; select wm.expire_battles(500)" 2>"$tmp/7c")" \
+  || fail "bataille tenue : cron en erreur" "$tmp/7c"
+d="$(ms)"
+wait "$blocker" || fail "bataille tenue : bloqueur en erreur" "$tmp/7b"
+echo "19_battles_concurrency : bataille tenue : cron servi en $d ms" >&2
+quiet "$tmp/7b" "$tmp/7c"
+(( d < 500 )) || fail "bataille tenue : cron servi en $d ms (moins de 500)"
+got="$got $(q -c "set role service_role; select wm.expire_battles(500)") $(q -c "select status || ' ' || (winner_id = '$pb')
+  from public.battles where id = '$bt'")"
+[[ $got == "0 1 completed true" ]] || fail "bataille tenue : rendus des deux passages, statut, B vainqueur : $got"
+
+# 8. Défi contre le cron : battle_create prend le défi échu de la paire avant les profils (C4, C6), le cron ses batailles avant les profils ;
+# chacun saute ou attend la ligne de l'autre, jamais un profil contre une bataille. Le solde remis après lock_users ferait un cycle : le défi
+# tient A et attend P, que le cron tient en attendant A (40P01).
+for i in $(seq 10); do
+  pa="$(player "8a$i")"; pf="$(player "8f$i")"; pg="$(player "8g$i")"
+  by="$(live "$pa" "$pg")"
+  bp="$(q -c "insert into public.friendships (requester_id, addressee_id, status) values ('$pa', '$pf', 'accepted')" \
+    -c "select wm.battle_create('$pa', '$pf') ->> 'id'")"
+  q -c "update public.battles set created_at = created_at - interval '25 hours' where id = '$bp'" \
+    -c "update public.battles set updated_at = updated_at - interval '49 hours' where id = '$by'" >/dev/null
+  hold s8 "perform from public.profiles where id in ('$pa', '$pf', '$pg') order by id for update" 2
+  bg "8b$i" "select wm.battle_create('$pa', '$pf')"
+  bg "8c$i" "select wm.expire_battles(500)"
+  released s8 1
+  waitall
+  refusals . "$tmp/8b$i" "$tmp/8c$i"  # aucun 40P01 ni 55P03, puis aucune erreur du tout
+  quiet "$tmp/8b$i" "$tmp/8c$i"
+  got="$(q -c "select concat_ws(' ', (select status from public.battles where id = '$bp'),
+    (select count(*) from public.battles where challenger_id in ('$pa', '$pf') and opponent_id in ('$pa', '$pf')
+      and status in ('pending', 'deck_selection', 'generating_quizzes', 'active')),
+    (select status from public.battles where id = '$by'), (select count(*) from wm.wb_ledger where reason = 'battle' and ref = 'battle:$by'),
+    wm.check_invariants())")"
+  [[ $got == "cancelled 1 completed 2 []" ]] || fail "défi contre le cron, tour $i : P, ouvertes A–F, Y, lignes battle de Y, invariants : $got"
+done
+
+# 9. Fins croisées : chaque fin prend la bataille for update avant les profils ; la première finit, les deux autres la relisent completed
+# (C11). Lue sans for update, la seconde fin passerait aussi : XX000 par la garde de battle_finish.
+for i in $(seq 10); do
+  pa="$(player "9a$i")"; pb="$(player "9b$i")"
+  read -r bt q3 o3 <<<"$(ko "$pa" "$pb")"
+  hold s9 "perform from public.battles where id = '$bt' for update" 3
+  bg "9r$i" "$(reply "$bt" "$pb" "$q3" "$o3")"
+  bg "9a$i" "select wm.battle_action('$pa', '$bt', 'forfeit')"
+  bg "9b$i" "select wm.battle_action('$pb', '$bt', 'forfeit')"
+  released s9 1
+  waitall
+  refusals 'Cette bataille est terminée' "$tmp/9r$i" "$tmp/9a$i" "$tmp/9b$i"
+  e="$(cat "$tmp/9r$i" "$tmp/9a$i" "$tmp/9b$i")"
+  got="$(grep -c '^ERROR:  P0001: Cette bataille est terminée$' <<<"$e") $(grep -c '"status": 409' <<<"$e") $(q -c "select concat_ws(' ', status,
+      (select count(*) from wm.wb_ledger where reason = 'battle' and ref = 'battle:$bt'),
+      (select sum(battles_won) || ' ' || sum(battles_won) filter (where user_id = b.winner_id) from wm.user_stats where user_id in ('$pa', '$pb')),
+      (select count(*) filter (where type = 'battle_won') || ' ' || count(*) filter (where type = 'battle_lost') from public.notifications
+        where data ->> 'battle_id' = '$bt'), wm.check_invariants()) from public.battles b where id = '$bt'")"
+  [[ $got == "2 2 completed 2 1 1 1 1 []" ]] || fail "fins croisées, tour $i : refus, refus 409, statut, lignes battle, battles_won (total,
+    vainqueur), battle_won, battle_lost, invariants : $got"
 done
