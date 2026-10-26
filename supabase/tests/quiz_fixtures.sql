@@ -10,7 +10,8 @@ create function pg_temp.layout_bad(p_b jsonb) returns text language sql as $$
       or not (o[2]::int - o[1]::int in (1, 2, 5, 10) and o[3]::int - o[2]::int = o[2]::int - o[1]::int
         and o[4]::int - o[3]::int = o[2]::int - o[1]::int and o[4]::int <= extract(year from now()))
     when 'word' then (select max(char_length(x)) - min(char_length(x)) from unnest(o) x) > 3
-    when 'sentence' then (select count(*) from unnest(o) x where strpos(x, '…') > 0) not in (0, 4)
+    when 'sentence' then (select count(*) from unnest(o) x where x ~ '….') not in (0, 4)
+      or (select count(*) from unnest(o) x where x ~ '…$') not in (0, 4)
     else false end
 $$;
 

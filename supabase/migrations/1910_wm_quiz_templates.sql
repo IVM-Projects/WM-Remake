@@ -107,6 +107,15 @@ returns text language sql immutable security definer set search_path = '' as $$
   select case when char_length(p) <= 79 then p else rtrim(regexp_replace(left(p, 80), '\s+\S*$', ''), ' ,;:') || '…' end
 $$;
 
+-- Pas de T3 possibles pour l'année p_y : ceux qui laissent possibles les 4 positions de la bonne année (entre 1000 et l'année courante,
+-- aucune année Y + j·s du texte de la carte, j de −3 à 3 et j ≠ 0), sinon elle se devinerait. stable : now().
+create or replace function wm.quiz_steps(p_y int, p_text text)
+returns int[] language sql stable security definer set search_path = '' as $$
+  select coalesce(array_agg(s order by s), '{}') from unnest('{1,2,5,10}'::int[]) s
+  where p_y + 3 * s <= extract(year from now()) and p_y - 3 * s >= 1000
+    and not exists (select from generate_series(-3, 3) j where j <> 0 and strpos(p_text, (p_y + j * s)::text) > 0)
+$$;
+
 -- Candidat gardable (C9) : les règles de quiz_check_one, et ni la bonne réponse ni l'evidence (la phrase source de T4, T3 et T2) d'une
 -- question déjà gardée.
 create or replace function wm.quiz_fits(p_out jsonb, p_q jsonb, p_title text)
@@ -126,6 +135,7 @@ declare
   v_long boolean;                 -- titre de plus de 80 caractères : hors des options de T5, 4 pairs par question (C9)
   v_text text;                    -- texte de la carte
   v_peers uuid[];
+  v_pt text[]; v_pc text[]; v_ps text[]; v_pv int[];  -- titres, category, résumés et vues des pairs, dans l'ordre du tirage
   v_out jsonb := '[]';
   v_pw text[]; v_pn text[];       -- mots des pairs, distracteurs possibles de T4 (forme, quiz_norm)
   v_tt text[]; v_tv int[];        -- titres et vues des pairs, options possibles de T5
@@ -156,19 +166,26 @@ begin
     v_peers := array(select p.card_id from (select o, 1 + floor(random() * v_m)::int s from generate_series(1, 30) o) x
       join wm.draw_pool p on p.rarity = c.rarity and p.seq = x.s where p.card_id <> p_card_id group by p.card_id order by min(x.o));
   end if;
+  -- Lus une fois : aucune requête des modèles ne joint public.cards (un plan générique mis en cache quand la table était petite y
+  -- appliquait similarity ou quiz_sentences à toutes les cartes, 2 000 fois par appel sur le seed).
+  select array_agg(pc.wikipedia_title order by u.i), array_agg(pc.category order by u.i), array_agg(pc.summary order by u.i),
+    array_agg(pc.pageviews order by u.i)
+  into v_pt, v_pc, v_ps, v_pv
+  from unnest(v_peers) with ordinality u (id, i) join public.cards pc on pc.id = u.id;
 
-  -- T4 (mot) : phrases sans année hors du titre (laissées à T3 : une banque mot et année vaut mieux que deux mots). Mots de 6 lettres ou
+  -- T4 (mot) : phrases sans année utilisable par T3 (une banque mot et année vaut mieux que deux mots). Mots de 6 lettres ou
   -- plus, en minuscule (un nom propre parmi des noms communs se devinerait), seuls dans la phrase, absents du titre ; 3 mots des pairs de
   -- même terminaison, de longueur dans une fenêtre [b, b + 3] tirée autour de la leur.
   select array_agg(w order by n), array_agg(n order by n) into v_pw, v_pn
-  from (select distinct on (n) x.w, n from (select distinct m[1] w from public.cards pc,
-      regexp_matches(pc.summary, '\m[[:lower:]][[:alpha:]]{2,}\M', 'g') m where pc.id = any (v_peers)) x, wm.quiz_norm(x.w) n
+  from (select distinct on (n) x.w, n from (select distinct m[1] w from unnest(v_ps) s,
+      regexp_matches(s, '\m[[:lower:]][[:alpha:]]{2,}\M', 'g') m) x, wm.quiz_norm(x.w) n
     order by n, x.w) y
   where strpos(v_text, n) = 0 and n <> all (v_stop);
   v_m := 0;
   for r in select t.s, wm.quiz_mask(t.s, c.wikipedia_title) m from wm.quiz_sentences(c.summary) t
            where char_length(t.s) between 40 and 150
-             and not exists (select from regexp_matches(t.s, '\m(1[0-9]{3}|20[0-2][0-9])\M', 'g') y where strpos(c.wikipedia_title, y[1]) = 0)
+             and not exists (select from regexp_matches(t.s, '\m(1[0-9]{3}|20[0-2][0-9])\M', 'g') y
+               where strpos(c.wikipedia_title, y[1]) = 0 and wm.quiz_steps(y[1]::int, v_text) <> '{}')
            order by random() loop
     exit when v_m = 2;
     for v_w in select x[1] from regexp_matches(r.m, '\m[[:lower:]][[:alpha:]]{5,}\M', 'g') x order by random() loop
@@ -191,7 +208,7 @@ begin
     end loop;
   end loop;
 
-  -- T3 (année) : pas s parmi ceux qui laissent possibles les 4 positions de la bonne année (sinon elle se devinerait), puis position k.
+  -- T3 (année) : pas s tiré parmi ceux de quiz_steps, puis position k.
   v_m := 0;
   for r in select t.s, x.y::int y from wm.quiz_sentences(c.summary) t,
              lateral (select distinct m[1] y from regexp_matches(t.s, '\m(1[0-9]{3}|20[0-2][0-9])\M', 'g') m) x
@@ -199,10 +216,7 @@ begin
              and not exists (select from jsonb_array_elements(v_out) e where e ->> 'evidence' = t.s)
            order by random() loop
     exit when v_m = 2;
-    v_s := (select s from unnest('{1,2,5,10}'::int[]) s
-      where r.y + 3 * s <= extract(year from now()) and r.y - 3 * s >= 1000
-        and not exists (select from generate_series(-3, 3) j where j <> 0 and strpos(v_text, (r.y + j * s)::text) > 0)
-      order by random() limit 1);
+    v_s := (select s from unnest(wm.quiz_steps(r.y, v_text)) s order by random() limit 1);
     continue when v_s is null;
     v_k := floor(random() * 4)::int;
     v_q := jsonb_build_object('kind', 'year',
@@ -214,18 +228,22 @@ begin
     end if;
   end loop;
 
-  -- T2 (phrase) : une phrase de la carte contre la phrase de même rang des pairs à la category la plus proche, masquées et coupées de même ;
-  -- tout « … » (titre masqué ou coupe) est aux 4 options ou à aucune (PF2), sinon un autre pair.
+  -- T2 (phrase) : une phrase de la carte contre la phrase de même rang des pairs à la category la plus proche, masquées (titre du pair, puis
+  -- celui de la carte) et coupées de même. Le « … » d'un titre masqué (dans la phrase) et celui d'une coupe (en fin) sont chacun aux 4
+  -- options ou à aucune (brief, PF2), sinon un autre pair. Une phrase de la carte qui garde un mot du titre (majuscule, 4 lettres ou plus,
+  -- « Verhoeven » pour « Jan Verhoeven ») est sautée.
   for r in select t.rk, t.s, wm.quiz_cut(wm.quiz_mask(t.s, c.wikipedia_title)) o from wm.quiz_sentences(c.summary) t
            where char_length(t.s) between 40 and 150 and not exists (select from jsonb_array_elements(v_out) e where e ->> 'evidence' = t.s)
            order by random() loop
+    continue when exists (select from regexp_matches(c.wikipedia_title, '\m[[:upper:]][[:alpha:]]{3,}\M', 'g') w
+      where r.o ~ ('\m' || w[1] || '\M'));
     v_d := array(select y.o from (
-        select distinct on (n) o, coalesce(extensions.similarity(pc.category, c.category), 0) sim, u.i
-        from unnest(v_peers) with ordinality u (id, i) join public.cards pc on pc.id = u.id, wm.quiz_sentences(pc.summary) ps,
-          wm.quiz_cut(wm.quiz_mask(ps.s, pc.wikipedia_title)) o, wm.quiz_norm(o) n
+        select distinct on (n) o, coalesce(extensions.similarity(p.cat, c.category), 0) sim, p.i
+        from unnest(v_pt, v_pc, v_ps) with ordinality p (t, cat, s, i), wm.quiz_sentences(p.s) ps,
+          wm.quiz_cut(wm.quiz_mask(wm.quiz_mask(ps.s, p.t), c.wikipedia_title)) o, wm.quiz_norm(o) n
         where ps.rk = r.rk and char_length(ps.s) between 40 and 150 and strpos(v_text, n) = 0
-          and (strpos(o, '…') > 0) = (strpos(r.o, '…') > 0)
-        order by n, sim desc, u.i) y
+          and (o ~ '….') = (r.o ~ '….') and (o ~ '…$') = (r.o ~ '…$')
+        order by n, sim desc, p.i) y
       order by y.sim desc, y.i limit 3);
     continue when cardinality(v_d) < 3;
     v_k := floor(random() * 4)::int;
@@ -240,9 +258,9 @@ begin
   -- T1 (description) : la category contre celle de 3 pairs, les plus proches sous 0,6, sans inclusion de l'une dans l'autre.
   if char_length(c.category) <= 80 then
     v_d := '{}';
-    for r in select pc.category x, wm.quiz_norm(pc.category) n from unnest(v_peers) with ordinality u (id, i) join public.cards pc on pc.id = u.id
-             where char_length(pc.category) <= 80 and extensions.similarity(pc.category, c.category) < 0.6
-             order by extensions.similarity(pc.category, c.category) desc, u.i loop
+    for r in select p.x, wm.quiz_norm(p.x) n from unnest(v_pc) with ordinality p (x, i)
+             where char_length(p.x) <= 80 and extensions.similarity(p.x, c.category) < 0.6
+             order by extensions.similarity(p.x, c.category) desc, p.i loop
       exit when cardinality(v_d) = 3;
       continue when r.n = '' or strpos(v_text, r.n) > 0
         or exists (select from unnest(v_d || c.category) e, wm.quiz_norm(e) m where strpos(m, r.n) > 0 or strpos(r.n, m) > 0);
@@ -260,8 +278,8 @@ begin
 
   -- T5 (vues, C9) : la carte et 3 pairs, ou 4 pairs pour un titre long ; « le plus » si la bonne réponse dépasse la suivante de 10 % au
   -- moins (entiers), « le moins » de même, jamais une égalité ; jusqu'à 200 combinaisons par question.
-  select array_agg(pc.wikipedia_title order by u.i), array_agg(pc.pageviews order by u.i) into v_tt, v_tv
-  from unnest(v_peers) with ordinality u (id, i) join public.cards pc on pc.id = u.id where char_length(pc.wikipedia_title) <= 80;
+  select array_agg(p.t order by p.i), array_agg(p.v order by p.i) into v_tt, v_tv
+  from unnest(v_pt, v_pv) with ordinality p (t, v, i) where char_length(p.t) <= 80;
   v_m := 0;
   while v_m < 3 and jsonb_array_length(v_out) < (b ->> 'pool')::int loop
     v_try := 0;

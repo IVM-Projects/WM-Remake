@@ -36,8 +36,8 @@ create function pg_temp.ordered(p_b jsonb) returns boolean language sql as $$
 $$;
 
 -- Positions et longueurs (finition de M5a-10), rangs fautifs d'une banque : year → 4 années de 4 chiffres, triées en suite de pas 1, 2, 5
--- ou 10, aucune après l'année courante ; word → longueurs à 3 près ; sentence → « … » aux 4 options ou à aucune. Même texte dans
--- quiz_fixtures.sql.
+-- ou 10, aucune après l'année courante ; word → longueurs à 3 près ; sentence → « … » dans la phrase (titre masqué) aux 4 options ou à
+-- aucune, et « … » final (coupe) de même. Même texte dans quiz_fixtures.sql.
 create function pg_temp.layout_bad(p_b jsonb) returns text language sql as $$
   select string_agg((i - 1)::text, ', ') from jsonb_array_elements(p_b) with ordinality e (q, i),
     lateral (select array_agg(x order by j) o from jsonb_array_elements_text(q -> 'options') with ordinality t (x, j)) t
@@ -46,7 +46,8 @@ create function pg_temp.layout_bad(p_b jsonb) returns text language sql as $$
       or not (o[2]::int - o[1]::int in (1, 2, 5, 10) and o[3]::int - o[2]::int = o[2]::int - o[1]::int
         and o[4]::int - o[3]::int = o[2]::int - o[1]::int and o[4]::int <= extract(year from now()))
     when 'word' then (select max(char_length(x)) - min(char_length(x)) from unnest(o) x) > 3
-    when 'sentence' then (select count(*) from unnest(o) x where strpos(x, '…') > 0) not in (0, 4)
+    when 'sentence' then (select count(*) from unnest(o) x where x ~ '….') not in (0, 4)
+      or (select count(*) from unnest(o) x where x ~ '…$') not in (0, 4)
     else false end
 $$;
 
@@ -167,16 +168,20 @@ do $$ declare c uuid := (select id from mini where t = 'Valcourt-sur-Lys'); n in
   assert chi < 11.345, format('position de la bonne année : χ² = %s', chi);
 end $$;
 
--- Cartes pauvres (Review Focus) : sans résumé ni category, titre à parenthèse, résumé sans année.
+-- Cartes pauvres (Review Focus) : sans résumé ni category, titre à parenthèse, résumé sans année. La deuxième phrase de Mercure n'a qu'un
+-- mot possible pour T4, « planète », pris dans le titre : seule la règle « absent du titre » l'écarte (les pairs ont assez de mots en -te).
+-- Une phrase à l'année courante (aucun pas possible pour T3) reste à T4.
 select setseed(0.42);
 do $$ declare
   bare uuid := pg_temp.bcard('Carte nue', 'R', 1000, 1000, 900, null, null);
   merc uuid := pg_temp.bcard('Mercure (planète)', 'R', 1000, 1000, 1200, 'planète du Système solaire',
-    'Mercure est la planète la plus proche du Soleil et la plus petite des huit planètes du Système solaire. Sa surface, couverte de '
-    || 'cratères, rappelle celle de la Lune. La sonde Messenger, lancée en 2004, a cartographié la totalité de la surface de Mercure.');
+    'Mercure est la planète la plus proche du Soleil et la plus petite des huit planètes du Système solaire. Cette planète a peu d''air, '
+    || 'un sol gris et des trous sans fin. La sonde Messenger, lancée en 2004, a cartographié la totalité de la surface de Mercure.');
   dry uuid := pg_temp.bcard('Lac de Sérane', 'R', 1000, 1000, 1600, 'lac de montagne',
     'Le lac occupe le fond d''une ancienne vallée glaciaire, au pied de sommets enneigés une grande partie de l''année. Ses eaux froides '
-    || 'abritent truites et ombles. Un sentier de randonnée permet d''en faire le tour complet en une demi-journée de marche tranquille.');
+    || 'abritent truites et ombles. Un sentier suit une crête abrupte, puis une route étroite, et offre une vue parfaite sur toute la vallée.');
+  s text := format('Le théâtre, rénové en %s pour accueillir de grands spectacles, rouvre ses portes au public.', extract(year from now()));
+  th uuid := pg_temp.bcard('Théâtre de Valmont', 'R', 1000, 1000, 2100, 'salle de spectacle', s);
   b jsonb;
 begin
   b := wm.template_quiz(bare);
@@ -185,9 +190,15 @@ begin
   b := wm.template_quiz(merc);
   assert wm.quiz_check(b, 'Mercure (planète)') is null and not exists (select from jsonb_array_elements(b) q
     where q ->> 'kind' <> 'views' and wm.quiz_norm(q -> 'options' ->> (q ->> 'correct')::int) = 'mercure'), 'Mercure : ' || b::text;
+  assert not exists (select from jsonb_array_elements(b) q where q ->> 'kind' <> 'views'
+    and strpos(wm.quiz_norm('Mercure (planète)'), wm.quiz_norm(q -> 'options' ->> (q ->> 'correct')::int)) > 0),
+    'Mercure, réponse prise dans le titre : ' || b::text;
   b := wm.template_quiz(dry);
   assert wm.quiz_check(b, 'Lac de Sérane') is null and not exists (select from jsonb_array_elements(b) q where q ->> 'kind' = 'year'),
     'résumé sans année : ' || b::text;
+  b := wm.template_quiz(th);
+  assert exists (select from jsonb_array_elements(b) q where q ->> 'kind' = 'word' and q ->> 'evidence' = s),
+    'phrase à l''année courante perdue pour T4 : ' || b::text;
 end $$;
 
 -- T5 sur 6 Légendaires aux vues du seed (13 % d'écart au plus serré) : 3 views chacune, bonnes réponses distinctes, écart de 10 % au
@@ -224,13 +235,47 @@ begin
   assert (select source from wm.card_quizzes where card_id = c) = 'template', 'titre long : pas de banque';
 end $$;
 
--- Égalités : une C à 0 vue, 2 pairs à 0 et 3 à 100 : aucune question views dont la bonne option a les vues d'une autre.
+-- Égalités : une C à 0 vue, 3 pairs à 0 (les 4 options à 0 sont possibles) et 3 à 100, sur 20 banques : aucune question views dont la
+-- bonne option a les vues d'une autre.
 select setseed(0.42);
 do $$ declare c uuid := pg_temp.bcard('Commune nulle', 'C', 1000, 1000, 0); b jsonb; begin
-  perform pg_temp.bcard('Commune à zéro ' || i, 'C', 1000, 1000, 0) from generate_series(1, 2) i;
+  perform pg_temp.bcard('Commune à zéro ' || i, 'C', 1000, 1000, 0) from generate_series(1, 3) i;
   perform pg_temp.bcard('Commune à cent ' || i, 'C', 1000, 1000, 100) from generate_series(1, 3) i;
-  b := wm.template_quiz(c);
-  assert jsonb_array_length(b) >= 3 and pg_temp.views_bad(b) is null, 'égalités : ' || b::text;
+  for i in 1..20 loop
+    b := wm.template_quiz(c);
+    assert jsonb_array_length(b) >= 3 and pg_temp.views_bad(b) is null, 'égalités : ' || b::text;
+  end loop;
+end $$;
+
+-- T2 et ses « … » (PC) : quatre pairs dont la phrase 1 est coupée (« … » final) et la phrase 2 entière. Les phrases des cartes testées
+-- n'ont aucun mot pour T4.
+-- - Lorvan : phrase 1 entière, titre masqué (« … » dans la phrase) : jamais face à des phrases coupées.
+-- - Sorbec : phrase 1 coupée ; le pair à la même category cite « Sorbec », masqué à son tour, donc écarté : aucune option ne montre le titre.
+-- - Jan Ostval : sa phrase 2 garde « Ostval » (le masque ne prend que le titre entier) : jamais bonne réponse de T2.
+create temp table pc as select pg_temp.bcard(t, 'PC', 1000, 1000, null, c, s) id, t from (values
+  ('Lorvan', 'fleuve côtier', 'Le Lorvan naît dans les monts et file vers la mer du Nord.'),
+  ('Sorbec', 'bourg du Quercy', 'Le bourg a un pont, une tour, un four, un puits, une halle et une forge du roi Jean II.'),
+  ('Jan Ostval', 'peintre hollandais', 'Jan Ostval est un peintre. Ostval part en Italie, puis vit dix ans à Rome avec sa femme et ses fils.'),
+  ('Marché de Pradel', 'bourg du Quercy', 'Le marché aux bestiaux du vendredi attire les éleveurs de Sorbec et de toute la vallée voisine '
+    || 'depuis longtemps. La foire de printemps réunit chaque année les marchands du canton.'),
+  ('Gorges de Lambre', 'rivière des Causses', 'La rivière traverse des gorges profondes creusées dans le calcaire avant de rejoindre '
+    || 'un affluent plus large. Ses eaux claires abritent des écrevisses et des truites sauvages.'),
+  ('Col de Maure', 'col des Pyrénées', 'Le passage, emprunté par les muletiers et les pèlerins, reste fermé par la neige pendant '
+    || 'plusieurs mois chaque hiver. Une petite chapelle de pierre se dresse près du sommet du col.'),
+  ('Abbaye de Sylvanès', 'abbaye cistercienne', 'Les moines défrichent les terres alentour et construisent un cloître dont subsistent '
+    || 'aujourd''hui quelques arcades. Les bâtiments conventuels servent aujourd''hui de musée régional.')) v (t, c, s);
+select setseed(0.42);
+do $$ declare b jsonb := wm.template_quiz((select id from pc where t = 'Lorvan')); begin
+  assert pg_temp.layout_bad(b) is null, 'Lorvan, « … » mêlés : ' || b::text;
+end $$;
+do $$ declare b jsonb := wm.template_quiz((select id from pc where t = 'Sorbec')); begin
+  assert exists (select from jsonb_array_elements(b) q where q ->> 'kind' = 'sentence')
+    and not exists (select from jsonb_array_elements(b) q, jsonb_array_elements_text(q -> 'options') o
+      where q ->> 'kind' = 'sentence' and o ~ '\mSorbec\M'), 'Sorbec : ' || b::text;
+end $$;
+do $$ declare b jsonb := wm.template_quiz((select id from pc where t = 'Jan Ostval')); begin
+  assert not exists (select from jsonb_array_elements(b) q where q ->> 'kind' = 'sentence'
+    and q -> 'options' ->> (q ->> 'correct')::int ~ '\mOstval\M'), 'Jan Ostval : ' || b::text;
 end $$;
 
 -- quiz_ensure : banques template et file à 100 ; doublons du tableau ; rejeu sans effet ; banque llm intacte et hors file ; priorité
