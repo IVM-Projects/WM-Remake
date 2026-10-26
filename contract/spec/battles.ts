@@ -148,6 +148,8 @@ export const battleCreate: RouteSpec = {
           const after = res.headers.get('retry-after') ?? ''
           assert.match(after, /^[1-9][0-9]*$/)
           assert.ok(Number(after) <= 86_400, `Retry-After: ${after}`)
+          // Calculé depuis retry_after, pas le repli à 1 de route().
+          assert.ok(Math.abs(Number(after) - (Date.parse(String(body.retry_after)) - Date.now()) / 1000) <= 2, `Retry-After: ${after}`)
           assert.equal(sql(env, `select count(*) from public.battles where challenger_id = :'uid'`, { uid: a.uid }), '1')
         } finally {
           // Sans assertion : un échec ici masquerait celui du cas.
@@ -250,6 +252,12 @@ export const battleAction: RouteSpec = {
         await write(b, Detail, { action: 'accept' })
         await write(a, Detail, { action: 'submit_deck', card_ids: a.cards })
         assert.equal((await write(b, Detail, { action: 'submit_deck', card_ids: b.cards })).battle.status, 'active')
+        // Fin scriptée au 6ᵉ tour : A, seul touché, encaisse aux tours 2 et 4 l'ATK des deux premières cartes de B, sous sa DEF totale.
+        assert.equal(sql(env, `select (select sum(snapshot_atk) from public.user_cards where id in (:'b0', :'b1'))
+  < (select sum(snapshot_def) from public.user_cards where id in (:'a0', :'a1', :'a2'))`,
+        { b0: b.cards[0], b1: b.cards[1], a0: a.cards[0], a1: a.cards[1], a2: a.cards[2] }), 't',
+        'cartes C de supabase/seed.sql : KO de A avant le 6ᵉ tour, le déroulé est à revoir')
+        let replayQ1 = async (): Promise<void> => {}
         for (let turn = 1; turn <= 6; turn++) {
           const [att, def] = turn % 2 ? [a, b] : [b, a]
           const attack = { action: 'submit_attack', attack_card_id: att.cards[(turn - 1) >> 1] }
@@ -267,19 +275,24 @@ export const battleAction: RouteSpec = {
             // Refus gardés aussi : réponse de l'attaquant, option inconnue.
             await refused(await call(att.uid, 'PATCH', at(id), reply), 409, NO_QUESTION)
             await refused(await call(def.uid, 'PATCH', at(id), { ...reply, answerId: randomUUID() }), 400, 'Réponse inconnue', 'invalid_request')
-            // Review Focus, double clic : sans clé avec l'autre option → le résultat enregistré ; même clé → le même corps.
+            // Review Focus, double clic : sans clé avec l'autre option → le résultat enregistré ; même clé, tour fini → le même corps.
             const qKey = idem()
             const first = await write(def, Answer, reply, qKey)
+            assert.deepEqual([first.correct, first.last_turn, first.status], [true, false, 'active'])
             const other = q.options.find((o) => o.id !== reply.answerId)?.id
             const again = await write(def, Answer, { ...reply, answerId: other })
             assert.deepEqual([again.correct, again.correct_answer_id, again.battle.game_state?.pendingAttack?.answered],
               [first.correct, first.correct_answer_id, [q.id]])
-            assert.deepEqual(await write(def, Answer, reply, qKey), first)
+            replayQ1 = async () => assert.deepEqual(await write(def, Answer, reply, qKey), first)
             assert.deepEqual(JSON.parse(sql(env, `select json_agg(answer_id) filter (where answered_at is not null) from wm.battle_secrets
 where battle_id = :'id'`, { id })), [reply.answerId])
           }
-          // La réponse stockée de l'attaque, rejouée par sa clé, une fois le tour fini.
-          if (turn === 1) assert.deepEqual(await ok(await call(att.uid, 'PATCH', at(id), attack, key), Detail), attacked)
+          // Réponses stockées de q1 et de l'attaque, rejouées par leur clé une fois le tour fini : un recalcul montrerait la phase et
+          // l'historique nouveaux.
+          if (turn === 1) {
+            await replayQ1()
+            assert.deepEqual(await ok(await call(att.uid, 'PATCH', at(id), attack, key), Detail), attacked)
+          }
         }
         for (const [p, reward] of [[a, 10], [b, 50]] as const) {
           const { battle, reward: got } = await ok(await call(p.uid, 'GET', at(id)), Detail)
@@ -299,6 +312,7 @@ where battle_id = :'id'`, { id })), [reply.answerId])
             for (const q of PendingAttack.parse(x.game_state.pendingAttack).questions) {
               const ids = q.options.map((o) => o.id)
               assert.deepEqual(ids, [...ids].sort(), `options de ${q.id}`)
+              assert.deepEqual(options.get(q.id) ?? ids, ids, `options de ${q.id}`)
               options.set(q.id, ids)
             }
           }
