@@ -508,6 +508,10 @@ do $$ declare bad text; begin
   assert (select strpos(prosrc, 'from public.battles') between 1 and strpos(prosrc, 'for update')
       and (strpos(prosrc, 'wm.lock_users(') = 0 or strpos(prosrc, 'for update') < strpos(prosrc, 'wm.lock_users('))
     from pg_proc where oid = to_regproc('wm.battle_action')), 'battle_action : profils avant la bataille';
+  -- expire_battles : un seul lock_users de tous les joueurs du lot, avant la boucle des fins (wallet_apply prendrait sinon chaque paire à part,
+  -- hors de l'ordre des id du lot).
+  assert (select strpos(prosrc, 'wm.lock_users(') between 1 and least(strpos(prosrc, 'foreach'), strpos(prosrc, 'wm.battle_finish('))
+    from pg_proc where oid = to_regproc('wm.expire_battles')), 'expire_battles : lock_users avant les fins';
 end $$;
 
 -- Partie (1930_wm_battle_play.sql) : vainqueur, deck figé, attaque, réponses une à une, fins et récompenses. Même règle que plus haut :
@@ -1145,9 +1149,9 @@ end $$;
 -- annulée (WMT00).
 
 -- Review Focus, fins par le temps (M5a-12, C18) : le reliquat des blocs précédents soldé d'abord ; chaque compte vaut pour l'appel suivant.
--- Défi de 25 h → cancelled, celui de 23 h intact ; choix des cartes (ou generating_quizzes hérité) inactif depuis 49 h → cancelled, sans
--- argent ; partie inactive en phase d'attaque → l'attaquant attendu perd, en phase de quiz → le défenseur perd, récompenses normales ;
--- aucune notification d'annulation.
+-- Défi de 25 h → cancelled, celui de 23 h intact ; choix des cartes, generating_quizzes hérité et partie inactifs depuis 47 h → rien ; choix
+-- des cartes (ou generating_quizzes) inactif depuis 49 h → cancelled, sans argent ; partie inactive en phase d'attaque → l'attaquant attendu
+-- perd, en phase de quiz → le défenseur perd, récompenses normales ; aucune notification d'annulation.
 -- Maintenance → 0, et rien ne change (un défi et une partie échus) ; elle finie, les deux sont soldés au premier passage.
 do $$ declare a uuid; b uuid; c uuid; d uuid; e uuid; k uuid[]; p25 uuid; p23 uuid; ds uuid; gq uuid; x uuid; y uuid; z uuid; nt jsonb; g jsonb;
   w int; begin
@@ -1169,23 +1173,28 @@ do $$ declare a uuid; b uuid; c uuid; d uuid; e uuid; k uuid[]; p25 uuid; p23 uu
     assert (select status from public.battles where id = p25) = 'cancelled' and (select status from public.battles where id = p23) = 'pending',
       'défis de 25 h et 23 h';
     assert pg_temp.bnotes(p25) = nt, 'défi échu : ' || pg_temp.bnotes(p25)::text;
-    -- Choix des cartes inactif depuis 49 h, et un generating_quizzes hérité (C18).
+    -- Choix des cartes, generating_quizzes hérité (C18) et partie au tour de A, inactifs depuis 47 h : rien.
     ds := (wm.battle_create(e, a) ->> 'id')::uuid;
     perform wm.battle_action(a, ds, 'accept');
     perform pg_temp.friends(c, e);
     gq := (wm.battle_create(c, e) ->> 'id')::uuid;
     perform wm.battle_action(e, gq, 'accept');
     update public.battles set status = 'generating_quizzes' where id = gq;
-    update public.battles set updated_at = updated_at - interval '49 hours' where id in (ds, gq);
+    x := pg_temp.active(a, b, k[1:3], k[4:6]);
+    update public.battles set updated_at = updated_at - interval '47 hours' where id in (ds, gq, x);
+    g := jsonb_build_array(pg_temp.bsnap(ds), pg_temp.bsnap(gq), pg_temp.bsnap(x));
+    assert wm.expire_battles() = 0, 'inactifs depuis 47 h';
+    assert jsonb_build_array(pg_temp.bsnap(ds), pg_temp.bsnap(gq), pg_temp.bsnap(x)) = g, '47 h : état changé';
+    -- Les deux premiers, inactifs depuis 49 h.
+    update public.battles set updated_at = updated_at - interval '2 hours' where id in (ds, gq);
     nt := pg_temp.bnotes(ds) || pg_temp.bnotes(gq);
     assert wm.expire_battles() = 2, 'choix des cartes inactif';
     assert (select status from public.battles where id = ds) = 'cancelled' and (select status from public.battles where id = gq) = 'cancelled',
       'choix des cartes : statuts';
     assert not exists (select from wm.wb_ledger where ref in ('battle:' || ds, 'battle:' || gq)) and pg_temp.bnotes(ds) || pg_temp.bnotes(gq) = nt,
       'choix des cartes : argent ou notification';
-    -- Partie en phase d'attaque, au tour de A : B gagne.
-    x := pg_temp.active(a, b, k[1:3], k[4:6]);
-    update public.battles set updated_at = updated_at - interval '49 hours' where id = x;
+    -- La partie au tour de A, inactive depuis 49 h : B gagne.
+    update public.battles set updated_at = updated_at - interval '2 hours' where id = x;
     w := coalesce((select battles_won from wm.user_stats where user_id = b), 0);
     assert wm.expire_battles() = 1, 'phase d''attaque';
     assert (select status = 'completed' and winner_id = b and game_state ->> 'winnerId' = b::text from public.battles where id = x), 'attaque : vainqueur';
@@ -1216,6 +1225,40 @@ do $$ declare a uuid; b uuid; c uuid; d uuid; e uuid; k uuid[]; p25 uuid; p23 uu
     assert (select status from public.battles where id = p23) = 'cancelled'
       and (select status = 'completed' and winner_id = a from public.battles where id = z), 'après la maintenance : statuts';
     perform pg_temp.inv('échéances');
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+end $$;
+
+-- Partie en erreur dans le lot (M4-7 A, modèle 27_market.test.sql:724-755) : la fin de la première partie échoue au grand livre (tests.boom)
+-- → elle reste active, sans rien écrire ; la seconde partie et le défi échu du même appel sont soldés, et l'appel rend 2.
+do $$ declare a uuid; b uuid; c uuid; d uuid; k uuid[]; x1 uuid; x2 uuid; p uuid; g jsonb; n int; l text := current_setting('client_min_messages');
+  begin
+  begin
+    perform wm.expire_battles(5000);
+    a := pg_temp.player('BatLotA'); b := pg_temp.player('BatLotB'); c := pg_temp.player('BatLotC'); d := pg_temp.player('BatLotD');
+    k := pg_temp.bcards('BatLot', array[1000, 400, 400, 400, 400, 400], array[500, 500, 500, 500, 500, 500]);
+    perform pg_temp.fill();
+    perform pg_temp.own(a, k[1:3]); perform pg_temp.own(b, k[4:6]); perform pg_temp.own(c, k[1:3]); perform pg_temp.own(d, k[4:6]);
+    x1 := pg_temp.active(a, b, k[1:3], k[4:6]);
+    x2 := pg_temp.active(c, d, k[1:3], k[4:6]);
+    perform pg_temp.friends(a, c);
+    p := (wm.battle_create(a, c) ->> 'id')::uuid;
+    update public.battles set updated_at = updated_at - interval '49 hours' where id in (x1, x2);
+    update public.battles set created_at = created_at - interval '25 hours' where id = p;
+    execute format('create trigger zz_boom after insert on wm.wb_ledger for each row when (new.ref = %L) execute function tests.boom()',
+      'battle:' || x1);
+    g := pg_temp.bsnap(x1);
+    perform set_config('client_min_messages', 'error', true);  -- avertissement attendu de la sous-transaction en erreur
+    n := wm.expire_battles();
+    perform set_config('client_min_messages', l, true);
+    drop trigger zz_boom on wm.wb_ledger;
+    assert n = 2, 'rendu du lot : ' || n;
+    assert pg_temp.bsnap(x1) = g, 'partie en erreur changée : ' || pg_temp.bsnap(x1)::text;
+    assert (select status = 'completed' and winner_id = d from public.battles where id = x2)
+      and pg_temp.rewards(x2) = jsonb_build_object(c, 10, d, 50), 'seconde partie : ' || coalesce(pg_temp.rewards(x2)::text, 'non finie');
+    assert (select status from public.battles where id = p) = 'cancelled', 'défi échu du lot';
+    perform pg_temp.inv('lot en erreur');
     raise exception using errcode = 'WMT00';
   exception when sqlstate 'WMT00' then null;
   end;

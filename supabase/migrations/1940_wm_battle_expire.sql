@@ -41,6 +41,7 @@ begin
   foreach v_id in array v_ids loop
     begin
       select * into b from public.battles where id = v_id;
+      -- shortcut: perdant illisible (game_state hérité, hors des joueurs) → le challenger gagne ; le runbook (Task 16) vérifie qu'aucune n'est ouverte.
       v_loser := case when b.game_state ->> 'phase' = 'quiz' then b.game_state #>> '{pendingAttack,defenderId}'
         else b.game_state ->> 'currentTurnUserId' end;
       perform wm.battle_finish(b.id, case when v_loser = b.challenger_id then b.opponent_id else b.challenger_id end);

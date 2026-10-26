@@ -294,6 +294,9 @@ ko() {
 reply() { echo "select wm.battle_action('$2', '$1', 'submit_single_answer', jsonb_build_object('questionId', '$3', 'answerId', '$4'))"; }
 waiting() { q -c "select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query like 'set role service_role;%'"; }
 
+# Les comptes du cron (scénarios 6 et 7) valent pour toute la base : le reliquat soldé d'abord, comme 31_battles.test.sql.
+q -c "select wm.expire_battles(5000)" >/dev/null
+
 # 6. Dernière réponse contre le cron, le cron d'abord : il prend la bataille (skip locked), puis les deux profils d'un seul lock_users ; la
 # réponse attend la bataille, puis la relit completed (C11). L'ordre inverse (la bataille tenue, le cron qui la saute) est le scénario 7.
 pa="$(player 6a)"; pb="$(player 6b)"
