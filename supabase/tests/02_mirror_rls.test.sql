@@ -1,11 +1,12 @@
 -- RLS et droits de la surface PostgREST d'origine (0002_mirror_rls.sql, 0004_mirror_market.sql, 0005_mirror_trades.sql,
--- 0006_mirror_social.sql).
+-- 0006_mirror_social.sql, 0007_mirror_battles.sql).
 -- Fixtures communes posées en superutilisateur : Alice et Bob ont chacun une copie, une étiquette, une liaison, un souhait ;
 -- Alice vend « Paris », Bob y a misé, chacun a une notification ; Alice et Bob sont amis, Alice propose à Bob
 -- un échange de leurs deux copies ; Carol, authentifiée, n'a rien. Alice écrit « Salut » à Bob (non lu), met sa copie
--- en vitrine (emplacement 0), signale Bob pour spam et a un abonnement push.
+-- en vitrine (emplacement 0), signale Bob pour spam et a un abonnement push. Alice défie Bob (bataille en attente)
+-- et y a déjà un deck, trois fois « Paris ».
 
-do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob'); c uuid; t uuid; begin
+do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob'); c uuid; t uuid; bt uuid; begin
   insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def)
   values ('Paris', 'https://fr.wikipedia.org/wiki/Paris', 'R', 10, 10) returning id into c;
   insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_atk, snapshot_def)
@@ -29,17 +30,20 @@ do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob
   insert into public.reports (reporter_id, reported_user_id, reason) values (a, b, 'spam');
   insert into public.push_subscriptions (user_id, endpoint, p256dh, auth)
   values (a, 'https://fcm.googleapis.com/fcm/send/fixture', 'k', 'a');
+  insert into public.battles (challenger_id, opponent_id, status) values (a, b, 'pending') returning id into bt;
+  insert into public.battle_decks (battle_id, user_id, card_ids) values (bt, a, array[c, c, c]);
 end $$;
 
 do $$ begin
   assert (select array[count(*), count(*) filter (where not c.relrowsecurity)] from pg_class c
-          where c.relnamespace = 'public'::regnamespace and c.relkind = 'r') = '{16, 0}',
-    'tables de public : 16 attendues, toutes sous RLS';
+          where c.relnamespace = 'public'::regnamespace and c.relkind = 'r') = '{18, 0}',
+    'tables de public : 18 attendues, toutes sous RLS';
 end $$;
 
 -- Droits exacts sur toutes les tables de public : anon lit le catalogue seul (0003), rien pour PUBLIC (grantee 0) ;
 -- en écriture, seuls starred, tags.name/color, chat_messages.read et les insert/delete listés ; le marché (0004), les échanges
--- et amitiés (0005) en lecture seule ; ni vitrine, ni signalements, ni abonnements push (0006, M4b-28).
+-- et amitiés (0005) en lecture seule ; ni vitrine, ni signalements, ni abonnements push (0006, M4b-28) ; ni batailles,
+-- ni decks (0007, M5a-11).
 do $$ declare got text; begin
   select string_agg(g, ', ' order by g collate "C") into got from (
     select format('%s %s %s', coalesce(nullif(a.grantee, 0)::regrole::text, 'public'), c.relname, a.privilege_type) g
@@ -111,7 +115,8 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
 end $$;
 
 -- Échanges et amitiés : Bob et Alice lisent l'échange, ses deux éléments et l'amitié ; Carol, étrangère, rien (M4-14) ;
--- aucune écriture client ; anon ne lit pas les échanges. Vitrine, signalements et abonnements push : aucun droit client (M4b-28).
+-- aucune écriture client ; anon ne lit pas les échanges. Vitrine, signalements et abonnements push : aucun droit client (M4b-28) ;
+-- batailles et decks non plus, même pour le défié (M5a-11).
 do $$ declare a uuid := (select id from public.profiles where username = 'Alice');
               b uuid := (select id from public.profiles where username = 'Bob');
               ca uuid := (select id from public.profiles where username = 'Carol');
@@ -148,7 +153,16 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
     'insert into public.push_subscriptions (user_id, endpoint, p256dh, auth)'
       ' values ($1, ''https://fcm.googleapis.com/fcm/send/bob'', ''k'', ''a'')',
     'update public.push_subscriptions set auth = ''x'' where user_id = $3',
-    'delete from public.push_subscriptions where user_id = $3'] loop
+    'delete from public.push_subscriptions where user_id = $3',
+    'select count(*) from public.battles',
+    'insert into public.battles (challenger_id, opponent_id) values ($1, $3)',
+    'update public.battles set status = ''active'' where opponent_id = $1',
+    'delete from public.battles where opponent_id = $1',
+    'select count(*) from public.battle_decks',
+    'insert into public.battle_decks (battle_id, user_id, card_ids)'
+      ' values (gen_random_uuid(), $1, array[gen_random_uuid(), gen_random_uuid(), gen_random_uuid()])',
+    'update public.battle_decks set created_at = now() where user_id = $3',
+    'delete from public.battle_decks where user_id = $3'] loop
     begin execute s using b, tr, a; assert false, format('écriture client permise : %s', s);
     exception when insufficient_privilege then null; end;
   end loop;
@@ -287,11 +301,13 @@ do $$ begin
   perform tests.reset_role();
 end $$;
 
--- Contraintes du miroir social (M4b-7, M4b-10), en superutilisateur. En dernier : les blocs précédents comptent la copie d'Alice
--- et le message unique.
+-- Contraintes des miroirs social (M4b-7, M4b-10) et des batailles, en superutilisateur. En dernier : les blocs précédents
+-- comptent la copie d'Alice et le message unique, et le profil de Bob y est supprimé.
 do $$ declare a uuid := (select id from public.profiles where username = 'Alice');
               b uuid := (select id from public.profiles where username = 'Bob');
-              ca uuid := (select id from public.user_cards where user_id = a); begin
+              ca uuid := (select id from public.user_cards where user_id = a);
+              bt uuid := (select id from public.battles);
+              dk uuid[] := (select card_ids from public.battle_decks); begin
   begin insert into public.chat_messages (sender_id, recipient_id, content) values (a, b, repeat('é', 2001));
     assert false, 'message de 2001 caractères';
   exception when check_violation then null; end;
@@ -314,4 +330,15 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
   exception when unique_violation then null; end;
   delete from public.user_cards where id = ca;
   assert not exists (select from public.showcase where user_id = a), 'emplacement d''une copie supprimée';
+  begin insert into public.battles (challenger_id, opponent_id) values (a, a); assert false, 'bataille d''Alice contre elle-même';
+  exception when check_violation then null; end;
+  begin insert into public.battles (challenger_id, opponent_id, status) values (a, b, 'x'); assert false, 'statut inconnu';
+  exception when invalid_text_representation then null; end;
+  begin insert into public.battle_decks (battle_id, user_id, card_ids) values (bt, b, dk[1:2]); assert false, 'deck de 2 cartes';
+  exception when check_violation then null; end;
+  begin insert into public.battle_decks (battle_id, user_id, card_ids) values (bt, a, dk); assert false, 'second deck d''Alice';
+  exception when unique_violation then null; end;
+  delete from public.profiles where id = b;
+  assert not exists (select from public.battles) and not exists (select from public.battle_decks),
+    'bataille ou deck d''un profil supprimé';
 end $$;
