@@ -7,6 +7,8 @@ const RARITY_LABEL = '(Légendaire|Ultra rare|Super rare|Rare|Peu commune|Commun
 const counter = (page: Page, n: number, total = 5) => page.getByText(`Carte ${n} / ${total}`, { exact: true })
 const openButton = (page: Page) => page.getByRole('button', { name: 'Ouvrir', exact: true })
 const stockFrame = (page: Page) => page.locator('div.card-frame').filter({ hasText: 'paquets disponibles' })
+// Un seul paquet, posé : la dotation de départ est de 10 (1870). Sans date, la première synchro démarre l'horloge.
+const onePack = (uid: string) => sql(`update public.profiles set packs_remaining = 1 where id = :'uid'`, { uid })
 
 async function openPack(page: Page) {
   await openButton(page).click()
@@ -39,7 +41,7 @@ async function rewriteOpen(page: Page, edit: (body: { cards: unknown[] }) => voi
 }
 
 test('repos : stock, compte à rebours, barre de 10, Ouvrir, Pro du jour, aide', async ({ page, login }) => {
-  await login()
+  onePack((await login()).uid)
   await page.goto('/pulls')
   const frame = stockFrame(page)
   await expect(frame).toContainText('1 / 10')
@@ -65,7 +67,7 @@ test('repos : stock, compte à rebours, barre de 10, Ouvrir, Pro du jour, aide',
 })
 
 test('première ouverture → vérification anti-bot → révélation', async ({ page, login }) => {
-  await login()
+  onePack((await login()).uid)
   await page.goto('/pulls')
   const checks: string[] = []
   page.on('request', (r) => { if (r.url().endsWith('/api/human-check')) checks.push(r.postData() ?? '') })
@@ -170,7 +172,7 @@ test('paquet d\'une carte : le focus va sur « Continuer », pas sur body', asyn
 })
 
 test('paquet vide (cards: []) : pas de révélation, retour au repos', async ({ page, login }) => {
-  await login({ humanVerified: true })
+  onePack((await login({ humanVerified: true })).uid)
   await rewriteOpen(page, (body) => { body.cards = [] })
   await page.goto('/pulls')
   await openButton(page).click()
@@ -179,7 +181,7 @@ test('paquet vide (cards: []) : pas de révélation, retour au repos', async ({ 
 })
 
 test('une relecture du stock partie avant l\'ouverture n\'écrase pas le stock qu\'elle a rendu', async ({ page, login }) => {
-  await login({ humanVerified: true })
+  onePack((await login({ humanVerified: true })).uid)
   await page.goto('/pulls')
   await expect(stockFrame(page)).toContainText('1 / 10')
   // La relecture suivante (retour sur la page gardée par Activity) lit le stock tout de suite (1), mais sa réponse est retenue.
@@ -227,7 +229,7 @@ async function failNextRead(page: Page) {
 const readFailed = (page: Page) => page.getByRole('status').filter({ hasText: 'Ton stock de paquets n\'a pas pu être lu.' })
 
 test('relecture du stock en échec : message et « Réessayer » à côté du stock ; réussite → focus sur « Ouvrir »', async ({ page, login }) => {
-  await login()
+  onePack((await login()).uid)
   await page.goto('/pulls')
   await failNextRead(page)
   await expect(readFailed(page)).toBeVisible()
@@ -240,7 +242,7 @@ test('relecture du stock en échec : message et « Réessayer » à côté du st
 })
 
 test('relecture en échec puis ouverture réussie : le stock frais efface le message', async ({ page, login }) => {
-  await login({ humanVerified: true })
+  onePack((await login({ humanVerified: true })).uid)
   await page.goto('/pulls')
   await failNextRead(page)
   await expect(readFailed(page)).toBeVisible()
@@ -253,7 +255,7 @@ test('relecture en échec puis ouverture réussie : le stock frais efface le mes
 })
 
 test('Pro du jour récupéré avant la toute première lecture du stock : le stock s\'affiche quand même', async ({ page, login }) => {
-  await login({ pro: true, humanVerified: true })
+  onePack((await login({ pro: true, humanVerified: true })).uid)
   let release = () => {}
   const held = new Promise<void>((r) => { release = r })
   let delivered = () => {}
@@ -371,6 +373,7 @@ test('réponse perdue après l\'ouverture (504) : message français, stock relu,
 
 test('stock vidé ailleurs : « Ouvrir » refusé (0 paquet) garde le focus dans la page et annonce le stock vide', async ({ page, login }) => {
   const { uid } = await login({ humanVerified: true })
+  onePack(uid)
   await page.goto('/pulls')
   await expect(stockFrame(page)).toContainText('1 / 10')
   // Un autre onglet vient d'ouvrir le dernier paquet : la base dit 0, la page montre encore 1.
@@ -385,7 +388,7 @@ test('stock vidé ailleurs : « Ouvrir » refusé (0 paquet) garde le focus dans
 })
 
 test('dernier paquet ouvert, réponse perdue (504) : stock relu à 0, le focus passe à la zone de repos, le message est annoncé', async ({ page, login }) => {
-  await login({ humanVerified: true })
+  onePack((await login({ humanVerified: true })).uid)
   // L'ouverture du dernier paquet se fait côté serveur ; sa réponse est remplacée par la page d'erreur de la plateforme.
   await routeOnce(page, '**/api/packs/open', async (route) => {
     await route.fetch()

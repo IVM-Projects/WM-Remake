@@ -65,6 +65,7 @@ export const packsOpen: RouteSpec = {
       name: 'corps { count: 1 } ignoré → cartes à toutes les clés de l\'union, triées par rareté croissante, owned_copies tableau',
       run: async (env) => {
         const { uid } = makeUser(env.backend.databaseUrl, { humanVerified: true })
+        sql(env, `update public.profiles set packs_remaining = 1 where id = :'uid'`, uid)
         const { cards, packs_remaining } = await ok(await post(env, '/api/packs/open', uid, { count: 1 }), Opened)
         assert.equal(cards.length, 5)
         assert.equal(packs_remaining, 0)

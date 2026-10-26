@@ -18,9 +18,11 @@ declare v uuid := gen_random_uuid(); begin
   return v;
 end $$;
 
--- Trigger : profil de départ (1 paquet, 0 WB) et une ligne dans chaque table wm.
+-- Trigger : profil de départ (10 paquets de wm.config.start_packs, réserve pleine donc horloge nulle ; 0 WB) et une ligne dans chaque table wm.
 do $$ declare u uuid := pg_temp.signup('{"username":"alice","age_confirmed":true,"terms_version":"t"}'); begin
-  assert (select format('%s %s %s', username, packs_remaining, wikibidous_balance) from public.profiles where id = u) = 'alice 1 0';
+  assert (select username = 'alice' and packs_remaining = 10 and pack_cap = 10 and packs_last_regen_at is null and wikibidous_balance = 0
+    from public.profiles where id = u),
+    (select format('%s %s/%s %s %s', username, packs_remaining, pack_cap, packs_last_regen_at, wikibidous_balance) from public.profiles where id = u);
   assert exists (select from wm.user_state where user_id = u) and exists (select from wm.user_stats where user_id = u)
     and (select hide_sensitive from wm.user_prefs where user_id = u), 'lignes wm absentes';
 end $$;
@@ -151,4 +153,35 @@ do $$ begin
   assert (select value from wm.config where key = 'human_check_ttl_h') = '12'::jsonb;
   assert (select value from wm.config where key = 'reserved_usernames') = '["admin","administrateur","administrator","staff","moderateur","moderator","modo","support","wikimasters","wikicartes","system","systeme"]'::jsonb;
   assert not exists (select from wm.config where key in ('reserved_usernames', 'username_change_days', 'human_check_ttl_h') and note is null);
+  assert (select (value, note) = ('10'::jsonb, 'Dotation de départ en paquets, décision de l''utilisateur du 2026-10-26 (écart à D:369)')
+    from wm.config where key = 'start_packs'), 'start_packs';
 end $$;
+
+-- Dotation (1870) : start_packs 3 → 3 paquets, horloge démarrée à l'inscription comme l'aurait fait wm.apply_regen, qui ne réécrit
+-- rien ; pack_cap (défaut de colonne) plus petit que la dotation → borné, réserve pleine, horloge nulle.
+do $$ declare a uuid; b uuid; c tid; p public.profiles; begin
+  update wm.config set value = '3' where key = 'start_packs';
+  a := pg_temp.signup('{"username":"Start3","age_confirmed":true,"terms_version":"t"}');
+  select * into p from public.profiles where id = a;
+  assert p.packs_remaining = 3 and p.pack_cap = 10 and p.packs_last_regen_at = now() and wm.next_regen_at(p) = now() + interval '600 seconds',
+    format('%s/%s %s', p.packs_remaining, p.pack_cap, p.packs_last_regen_at);
+  c := (select ctid from public.profiles where id = a);
+  assert wm.apply_regen(a) = p and (select ctid from public.profiles where id = a) = c, 'apply_regen réécrit la dotation';
+  update wm.config set value = '10' where key = 'start_packs';
+  alter table public.profiles alter column pack_cap set default 4;
+  b := pg_temp.signup('{"username":"Cap4","age_confirmed":true,"terms_version":"t"}');
+  alter table public.profiles alter column pack_cap set default 10;
+  select * into p from public.profiles where id = b;
+  assert p.packs_remaining = 4 and p.pack_cap = 4 and p.packs_last_regen_at is null, format('%s/%s %s', p.packs_remaining, p.pack_cap, p.packs_last_regen_at);
+end $$;
+
+-- Rejeu de 1870, deux fois : une valeur déjà posée garde sa valeur, aucun profil existant ne change (pas de rattrapage).
+create temp table start_profiles as select jsonb_agg(to_jsonb(p) order by p.id) v from public.profiles p;
+update wm.config set value = '7' where key = 'start_packs';
+\ir ../migrations/1870_wm_start_packs.sql
+\ir ../migrations/1870_wm_start_packs.sql
+do $$ begin
+  assert (select value from wm.config where key = 'start_packs') = '7'::jsonb, 'start_packs écrasé par le rejeu';
+  assert (select jsonb_agg(to_jsonb(p) order by p.id) from public.profiles p) = (select v from start_profiles), 'profils existants modifiés';
+end $$;
+update wm.config set value = '10' where key = 'start_packs';
