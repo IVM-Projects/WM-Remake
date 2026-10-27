@@ -46,16 +46,41 @@ jobs:
         with:
           persist-credentials: false
 
-      # Verdict sur la clé, sans OmniRoute : le code HTTP et les ids des modèles, rien d'autre.
+      # Verdict sur la clé, sans OmniRoute : le code HTTP et les ids des modèles, rien d'autre. Un 401 ou 403 n'est pas
+      # relancé par --retry ; un échec réseau donne 000 et passe par ::error::.
       - name: Modèles de Mistral (appel direct)
         if: steps.secrets.outputs.run == 'true'
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
         run: |
-          code=$(curl -sS -o "$RUNNER_TEMP/models.json" -w '%{http_code}' -H "Authorization: Bearer $MISTRAL_API_KEY" https://api.mistral.ai/v1/models)
+          code=$(curl -sS --max-time 30 --retry 1 --retry-delay 30 -o "$RUNNER_TEMP/models.json" -w '%{http_code}' -H "Authorization: Bearer $MISTRAL_API_KEY" https://api.mistral.ai/v1/models || true)
           echo "GET /v1/models : $code"
-          [[ $code == 200 ]] || { echo "::error::GET https://api.mistral.ai/v1/models : HTTP $code"; exit 1; }
+          if [[ $code != 200 ]]; then
+            hint=''
+            case $code in 401 | 403) hint=" : recrée la clé avec l'accès API (console.mistral.ai)" ;; esac
+            echo "::error::GET https://api.mistral.ai/v1/models : HTTP $code$hint"
+            exit 1
+          fi
           jq -r '.data[].id' "$RUNNER_TEMP/models.json"
+
+      # Diagnostic, jamais bloquant : complétion d'un jeton en direct, modèle par modèle, pour choisir le repli de QUIZ_MODEL.
+      # Une ligne par modèle : id, code HTTP et message d'erreur de Mistral (`detail` sur un 401) ; ni corps, ni en-tête, ni
+      # texte généré.
+      - name: Complétion directe par modèle (diagnostic)
+        if: steps.secrets.outputs.run == 'true'
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          out="$RUNNER_TEMP/direct.json"
+          models=$(printf '%s\n' "$QUIZ_MODEL" mistral-small-2603 ministral-8b-latest ministral-14b-latest mistral-medium-latest codestral-2508 | awk '!seen[$0]++')
+          for model in $models; do
+            : > "$out"
+            body=$(jq -cn --arg m "$model" '{model: $m, messages: [{role: "user", content: "Réponds ok."}], max_tokens: 1}')
+            code=$(curl -sS --max-time 30 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -H "Authorization: Bearer $MISTRAL_API_KEY" --data-binary "$body" https://api.mistral.ai/v1/chat/completions || true)
+            msg=$(jq -r '(.message // .error.message // .detail // "") | if type == "string" then . else tojson end' "$out" 2> /dev/null || true)
+            echo "$model $code $msg"
+            sleep 2
+          done
 
       - name: OmniRoute
         if: steps.secrets.outputs.run == 'true'
@@ -69,10 +94,12 @@ jobs:
         if: steps.secrets.outputs.run == 'true'
         run: |
           out="$RUNNER_TEMP/completion.json"
-          code=$(curl -sS --retry 1 --retry-delay 30 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -H "Authorization: Bearer $OMNIROUTE_KEY" --data-binary '{"messages":[{"role":"user","content":"Réponds ok."}],"max_tokens":1}' http://127.0.0.1:20128/v1/chat/completions)
+          rm -f "$out"
+          code=$(curl -sS --retry 1 --retry-delay 30 --max-time 60 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -H "Authorization: Bearer $OMNIROUTE_KEY" --data-binary '{"messages":[{"role":"user","content":"Réponds ok."}],"max_tokens":1}' http://127.0.0.1:20128/v1/chat/completions || true)
           if [[ $code != 200 ]]; then
-            # .error.message seul, jamais le corps entier ; .error.type ne distingue pas la clé partagée de celle de Mistral.
-            msg=$(jq -r '.error.message // "sans message"' "$out" 2> /dev/null || echo 'corps illisible')
+            # .error.message seul, jamais le corps entier ; .error.type ne distingue pas la clé partagée de celle de Mistral,
+            # mais upstream_details n'existe que sur une erreur recopiée de l'amont (buildErrorBody d'OmniRoute).
+            msg=$(jq -er '(.error.message // "sans message") + (if .upstream_details then " [source : amont]" else " [source : OmniRoute]" end)' "$out" 2> /dev/null) || msg='aucune réponse lisible'
             echo "::error::POST /v1/chat/completions à travers OmniRoute : HTTP $code, $msg"
             exit 1
           fi

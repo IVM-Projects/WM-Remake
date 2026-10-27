@@ -29,12 +29,14 @@ const stepsOf = (lines: string[]) =>
     .slice(1)
 const steps = stepsOf(block(yml, 'jobs:'))
 
-test('image OmniRoute épinglée par digest, ni artefact, ni set -x, ni docker logs dans le workflow', () => {
+test('image OmniRoute épinglée par digest ; ni artefact ni docker logs dans le workflow, aucune trace du shell nulle part', () => {
   expect(yml).toContain(
     'ghcr.io/diegosouzapw/omniroute:3.8.51@sha256:8bd462c9f60d8eda79329cfbb6ea7ea723505fe7721beb944f3d43835409e218',
   )
-  for (const s of ['upload-artifact', 'set -x', 'docker logs']) expect(yml).not.toContain(s)
-  expect(sh).not.toMatch(/set -\w*x/)
+  for (const s of ['upload-artifact', 'docker logs']) expect(yml).not.toContain(s)
+  const trace = /\bset -[a-z]*x\b|xtrace|\bbash -[a-z]*x\b/
+  expect(yml).not.toMatch(trace)
+  expect(sh).not.toMatch(trace)
 })
 
 test('déclencheurs : push sur les deux chemins et workflow_dispatch, sans pull_request ; aucun concurrency à la racine', () => {
@@ -60,15 +62,23 @@ test('chaque actions/checkout porte persist-credentials: false', () => {
   for (const s of checkouts) expect(s).toContain('persist-credentials: false')
 })
 
-test('secrets. n’apparaît que sous un env: d’étape', () => {
+test('secrets n’apparaît, dans une expression ${{ }}, que sous l’env: d’une étape', () => {
   const ls = yml.split('\n')
-  const uses = ls.flatMap((l, i) => (secretRef.test(l) ? [i] : []))
-  expect(uses.length).toBeGreaterThan(0)
-  for (const i of uses) {
+  const parent = (i: number) => {
     const ind = ls[i].search(/\S/)
     let p = i - 1
-    while (ls[p].trim() === '' || ls[p].search(/\S/) >= ind) p--
-    expect(ls[p], `ligne ${i + 1}`).toBe('        env:')
+    while (ls[p].trim() === '' || ls[p].trimStart().startsWith('#') || ls[p].search(/\S/) >= ind) p--
+    return p
+  }
+  // `steps.secrets.` est la sortie de l'étape de contrôle (id `secrets`), pas le contexte des secrets.
+  const uses = ls.flatMap((l, i) =>
+    [...l.matchAll(/\$\{\{(.*?)\}\}/g)].some((m) => /\bsecrets\b/.test(m[1].replaceAll('steps.secrets.', ''))) ? [i] : [],
+  )
+  expect(uses.length).toBeGreaterThan(0)
+  for (const i of uses) {
+    const env = parent(i)
+    expect(ls[env], `ligne ${i + 1}`).toBe('        env:')
+    expect(ls[parent(env)], `ligne ${i + 1}`).toMatch(/^ {6}- /)
   }
 })
 
@@ -90,6 +100,37 @@ test('probe : sans if: au niveau du job ; complétion par la clé partagée, dan
   expect(launch).toBeGreaterThanOrEqual(0)
   expect(call).toBeGreaterThan(launch)
   expect(own[call]).not.toMatch(secretRef)
+})
+
+test('probe : le contrôle du secret d’abord (notice exacte), puis chaque étape gardée par sa sortie', () => {
+  const [check, ...rest] = stepsOf(block(yml, '  probe:'))
+  expect(check).toContain('        id: secrets\n')
+  expect(check).toContain('echo "::notice::Sonde sautée : secret MISTRAL_API_KEY absent (D:1116)"')
+  expect(check).toContain('echo "run=false" >> "$GITHUB_OUTPUT"')
+  expect(rest.length).toBeGreaterThan(0)
+  for (const s of rest) expect(s).toContain("\n        if: steps.secrets.outputs.run == 'true'\n")
+})
+
+test('probe : aucune étape n’imprime un corps ni un en-tête ; le diagnostic direct ne bloque pas, entre /v1/models et omniroute.sh', () => {
+  const own = stepsOf(block(yml, '  probe:'))
+  for (const s of own) expect(s).not.toMatch(/\b(cat|head|tail|less|tee)\b|\s-[vDi]\s|--verbose|--include|--dump-header|--trace/)
+  const models = own.findIndex((s) => s.includes('api.mistral.ai/v1/models'))
+  const diag = own.findIndex((s) => s.includes('api.mistral.ai/v1/chat/completions'))
+  const launch = own.findIndex((s) => s.includes('omniroute.sh'))
+  expect(models).toBeGreaterThanOrEqual(0)
+  expect(diag).toBeGreaterThan(models)
+  expect(launch).toBeGreaterThan(diag)
+  const d = own[diag]
+  expect(d).toContain('        env:\n          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}\n')
+  expect(d).toContain(`jq -r '(.message // .error.message // .detail // "") | if type == "string" then . else tojson end'`)
+  expect(d).toContain('--max-time 30')
+  expect(d).not.toContain('--retry')
+  expect(d.match(/\$\(curl .*\|\| true\)/g)).toHaveLength(1)
+  // Chaque curl de la sonde a un délai, et un échec réseau (code 000) passe par le test du code, pas par set -e.
+  for (const c of own.join('\n').match(/\$\(curl [^\n]*/g) ?? []) {
+    expect(c).toContain('--max-time')
+    expect(c).toMatch(/\|\| true\)$/)
+  }
 })
 
 test('aucune étape qui appelle omniroute.sh ne contient 20128 ni generate.ts', () => {

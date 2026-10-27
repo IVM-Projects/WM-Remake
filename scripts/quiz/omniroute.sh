@@ -24,9 +24,10 @@ OMNIROUTE_SELF_HOSTED_PROVIDERS=$(BASE_URL=$base_url node -e '
   }))')
 export OMNIROUTE_SELF_HOSTED_PROVIDERS OMNIROUTE_SELF_HOSTED_API_KEY
 
-# Journaux d'appels coupés : OmniRoute y garde sinon les corps (docs/reference/ENVIRONMENT.md:910-932).
-cid=$(docker run -d --network host -e REQUIRE_API_KEY=false -e APP_LOG_LEVEL=warn -e ENABLE_REQUEST_LOGS=false \
-  -e OMNIROUTE_SELF_HOSTED_PROVIDERS -e OMNIROUTE_SELF_HOSTED_API_KEY "$OMNIROUTE_IMAGE")
+# Journaux d'appels coupés : OmniRoute y garde sinon les corps (docs/reference/ENVIRONMENT.md:910-932). Écoute sur la
+# boucle locale seule : son lanceur pose HOSTNAME = OMNIROUTE_HOSTNAME || 0.0.0.0 (scripts/build/runtime-env.mjs:177).
+cid=$(docker run -d --network host -e OMNIROUTE_HOSTNAME=127.0.0.1 -e REQUIRE_API_KEY=false -e APP_LOG_LEVEL=warn \
+  -e ENABLE_REQUEST_LOGS=false -e OMNIROUTE_SELF_HOSTED_PROVIDERS -e OMNIROUTE_SELF_HOSTED_API_KEY "$OMNIROUTE_IMAGE")
 
 deadline=$((SECONDS + 90))
 until curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:20128/healthz 2> /dev/null; do
