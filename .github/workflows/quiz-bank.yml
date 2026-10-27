@@ -22,7 +22,7 @@ permissions:
 env:
   OMNIROUTE_IMAGE: ghcr.io/diegosouzapw/omniroute:3.8.51@sha256:8bd462c9f60d8eda79329cfbb6ea7ea723505fe7721beb944f3d43835409e218
   SUPABASE_URL: https://iggurckxmoagsajzrnwd.supabase.co
-  QUIZ_MODEL: ${{ vars.QUIZ_MODEL || 'mistral-small-latest' }}
+  QUIZ_MODEL: ${{ vars.QUIZ_MODEL || 'ministral-14b-latest' }} # l'offre de la clé n'a pas de quota pour small et medium (run 40423917678)
 
 jobs:
   probe:
@@ -53,7 +53,9 @@ jobs:
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
         run: |
-          code=$(curl -sS --max-time 30 --retry 1 --retry-delay 30 -o "$RUNNER_TEMP/models.json" -w '%{http_code}' -H "Authorization: Bearer $MISTRAL_API_KEY" https://api.mistral.ai/v1/models || true)
+          out="$RUNNER_TEMP/models.json"
+          rm -f "$out"
+          code=$(curl -sS --max-time 30 --retry 1 --retry-delay 30 -o "$out" -w '%{http_code}' -H "Authorization: Bearer $MISTRAL_API_KEY" https://api.mistral.ai/v1/models || true)
           echo "GET /v1/models : $code"
           if [[ $code != 200 ]]; then
             hint=''
@@ -61,26 +63,8 @@ jobs:
             echo "::error::GET https://api.mistral.ai/v1/models : HTTP $code$hint"
             exit 1
           fi
-          jq -r '.data[].id' "$RUNNER_TEMP/models.json"
-
-      # Diagnostic, jamais bloquant : complétion d'un jeton en direct, modèle par modèle, pour choisir le repli de QUIZ_MODEL.
-      # Une ligne par modèle : id, code HTTP et message d'erreur de Mistral (`detail` sur un 401) ; ni corps, ni en-tête, ni
-      # texte généré.
-      - name: Complétion directe par modèle (diagnostic)
-        if: steps.secrets.outputs.run == 'true'
-        env:
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-        run: |
-          out="$RUNNER_TEMP/direct.json"
-          models=$(printf '%s\n' "$QUIZ_MODEL" mistral-small-2603 ministral-8b-latest ministral-14b-latest mistral-medium-latest codestral-2508 | awk '!seen[$0]++')
-          for model in $models; do
-            : > "$out"
-            body=$(jq -cn --arg m "$model" '{model: $m, messages: [{role: "user", content: "Réponds ok."}], max_tokens: 1}')
-            code=$(curl -sS --max-time 30 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -H "Authorization: Bearer $MISTRAL_API_KEY" --data-binary "$body" https://api.mistral.ai/v1/chat/completions || true)
-            msg=$(jq -r '(.message // .error.message // .detail // "") | if type == "string" then . else tojson end' "$out" 2> /dev/null || true)
-            echo "$model $code $msg"
-            sleep 2
-          done
+          ids=$(jq -er '.data[].id' "$out" 2> /dev/null) || { echo "::error::GET https://api.mistral.ai/v1/models : HTTP 200, réponse illisible"; exit 1; }
+          echo "$ids"
 
       - name: OmniRoute
         if: steps.secrets.outputs.run == 'true'
@@ -88,8 +72,8 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
         run: PROVIDER_KEY="$MISTRAL_API_KEY" scripts/quiz/omniroute.sh https://api.mistral.ai/v1
 
-      # Étape à part, sans secret : OMNIROUTE_KEY n'existe qu'après l'étape qui l'écrit dans $GITHUB_ENV (sinon 401
-      # « Invalid API key »). Sans Content-Type, OmniRoute rend 415. --retry relance une fois un 408, 429 ou 5xx passager.
+      # La garde : étape à part, sans secret ; OMNIROUTE_KEY n'existe qu'après l'étape qui l'écrit dans $GITHUB_ENV (sinon
+      # 401 « Invalid API key »). Sans Content-Type, OmniRoute rend 415. --retry relance une fois un 408, 429 ou 5xx passager.
       - name: Complétion d'un jeton à travers OmniRoute
         if: steps.secrets.outputs.run == 'true'
         run: |
@@ -97,10 +81,30 @@ jobs:
           rm -f "$out"
           code=$(curl -sS --retry 1 --retry-delay 30 --max-time 60 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -H "Authorization: Bearer $OMNIROUTE_KEY" --data-binary '{"messages":[{"role":"user","content":"Réponds ok."}],"max_tokens":1}' http://127.0.0.1:20128/v1/chat/completions || true)
           if [[ $code != 200 ]]; then
-            # .error.message seul, jamais le corps entier ; .error.type ne distingue pas la clé partagée de celle de Mistral,
-            # mais upstream_details n'existe que sur une erreur recopiée de l'amont (buildErrorBody d'OmniRoute).
-            msg=$(jq -er '(.error.message // "sans message") + (if .upstream_details then " [source : amont]" else " [source : OmniRoute]" end)' "$out" 2> /dev/null) || msg='aucune réponse lisible'
+            # .error.message seul, jamais le corps entier. upstream_details n'existe que sur une erreur recopiée de l'amont
+            # (buildErrorBody d'OmniRoute) ; son absence ne prouve pas qu'OmniRoute l'a produite.
+            msg=$(jq -er '(.error.message // "sans message" | tostring | gsub("[\r\n]+"; " ")) + (if .upstream_details then " [source : amont]" else " [source : ?]" end)' "$out" 2> /dev/null) || msg='aucune réponse lisible'
             echo "::error::POST /v1/chat/completions à travers OmniRoute : HTTP $code, $msg"
             exit 1
           fi
-          echo "POST /v1/chat/completions : $code, modèle $(jq -r '.model' "$out")"
+          model=$(jq -er '.model' "$out" 2> /dev/null) || { echo "::error::POST /v1/chat/completions à travers OmniRoute : HTTP 200, réponse illisible"; exit 1; }
+          echo "POST /v1/chat/completions : $code, modèle $model"
+
+      # Diagnostic après un échec seulement (il ne consomme rien avant la garde) : complétion d'un jeton en direct, modèle
+      # par modèle, pour choisir le repli de QUIZ_MODEL. Une ligne par modèle : id, code HTTP et message d'erreur de Mistral
+      # (`detail` sur un 401) ; ni corps, ni en-tête, ni texte généré. Jamais bloquant.
+      - name: Complétion directe par modèle (diagnostic)
+        if: failure() && steps.secrets.outputs.run == 'true'
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          out="$RUNNER_TEMP/direct.json"
+          models=$(printf '%s\n' "$QUIZ_MODEL" mistral-small-latest mistral-small-2603 ministral-8b-latest ministral-14b-latest mistral-medium-latest codestral-2508 | awk '!seen[$0]++')
+          for model in $models; do
+            rm -f "$out"
+            body=$(jq -cn --arg m "$model" '{model: $m, messages: [{role: "user", content: "Réponds ok."}], max_tokens: 1}')
+            code=$(curl -sS --max-time 30 -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' -H "Authorization: Bearer $MISTRAL_API_KEY" --data-binary "$body" https://api.mistral.ai/v1/chat/completions || true)
+            msg=$(jq -r '.message // .error.message // .detail // "" | tostring | gsub("[\r\n]+"; " ")' "$out" 2> /dev/null || true)
+            echo "$model $code $msg"
+            sleep 2
+          done
