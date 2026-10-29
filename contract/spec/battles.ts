@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
+import { fakeQuestions, startFakeUpstream } from '../../scripts/quiz/fake-upstream.ts'
+import { run, type QueueCard } from '../../scripts/quiz/generate.ts'
+import { SECRET_KEY } from '../harness.ts'
 import { forbiddenKeys, idCounts } from '../leak.ts'
 import { api, created, failed, giveCards, idem, Iso, makeUser, noSession, ok, psql, refused, send } from '../users.ts'
 import { befriend } from './friends.ts'
@@ -329,6 +333,64 @@ where battle_id = :'id'`, { id })) as Array<[string, string]>)
           }
         }
         for (const k of kept) assert.deepEqual(forbiddenKeys(JSON.parse(k.text), k.answered !== undefined), [], k.req)
+      },
+    },
+    {
+      name: 'critère 2 au banc : six cartes neuves d\'après scripts/quiz/fixtures/cards.json, deux decks → six lignes de file à 100 ; '
+        + 'generate.ts contre le faux serveur → six banques llm (fake-quiz) ; chaque attaque tire ses énoncés de fakeQuestions de sa carte, '
+        + 'la bataille se joue jusqu\'au bout',
+      timeout: 60_000,
+      run: async (env) => {
+        // Le contrat est séquentiel : la file ne contient ensuite que les cartes de ce cas.
+        sql(env, `delete from wm.quiz_queue where true`)
+        const fiches = (JSON.parse(readFileSync(new URL('../../scripts/quiz/fixtures/cards.json', import.meta.url), 'utf8')) as QueueCard[])
+          .map((c, o) => ({ title: `Zz quiz contrat ${randomUUID()} z`, category: c.category, summary: c.summary ?? '', rarity: c.rarity, o }))
+        assert.equal(fiches.length, 6)
+        const ids = JSON.parse(sql(env, `with x as (select * from jsonb_to_recordset(:'cards'::jsonb)
+    as t (title text, category text, summary text, rarity public.rarity, o int)),
+  ins as (insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def, category, summary)
+    select title, 'https://fr.wikipedia.org/wiki/' || replace(title, ' ', '_'), rarity, 100, 1000, category, summary from x
+    returning id, wikipedia_title)
+select json_agg(ins.id order by x.o) from ins join x on x.title = ins.wikipedia_title`, { cards: JSON.stringify(fiches) })) as string[]
+        // Copies des cartes `from` jusqu'à `from + 3`, dans cet ordre.
+        const copies = (uid: string, from: number) => JSON.parse(sql(env, `with ins as (insert into public.user_cards (user_id, card_id,
+    snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+  select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards where id = any (string_to_array(:'ids', ',')::uuid[])
+  returning id, card_id)
+select json_agg(id order by array_position(string_to_array(:'ids', ',')::uuid[], card_id)) from ins`,
+        { uid, ids: ids.slice(from, from + 3).join(',') })) as string[]
+        const [a, b] = friends(env)
+        const deck = new Map([[a.uid, copies(a.uid, 0)], [b.uid, copies(b.uid, 3)]])
+        const id = challenged(env, a.uid, b.uid, true)
+        await ok(await act(env, a.uid, id, { action: 'submit_deck', card_ids: deck.get(a.uid) }), Detail)
+        assert.equal((await ok(await act(env, b.uid, id, { action: 'submit_deck', card_ids: deck.get(b.uid) }), Detail)).battle.status, 'active')
+        assert.deepEqual(JSON.parse(sql(env, `select json_agg(json_build_array(card_id, priority) order by card_id) from wm.quiz_queue`)),
+          [...ids].sort().map((c) => [c, 100]))
+
+        const fake = await startFakeUpstream()
+        const summary = await run({ baseUrl: `${fake.url}/v1`, max: 6, text: 'summary', minGapS: 0, deadlineMin: 5, dryRun: false,
+          store: { url: env.backend.supabaseUrl, key: SECRET_KEY }, log: () => {} }).finally(() => fake.close())
+        assert.deepEqual([summary.cards, summary.stored, summary.failed, summary.skipped, summary.stopped], [6, 6, 0, 0, null])
+        assert.equal(sql(env, `select count(*) filter (where source = 'llm' and model = 'fake-quiz') || ' ' || count(*) from wm.card_quizzes
+where card_id = any (string_to_array(:'ids', ',')::uuid[])`, { ids: ids.join(',') }), '6 6')
+        assert.equal(sql(env, `select count(*) from wm.quiz_queue where card_id = any (string_to_array(:'ids', ',')::uuid[])`,
+          { ids: ids.join(',') }), '0')
+
+        // Six tours, toutes les réponses justes : aucun dégât, fin au 6ᵉ tour. Énoncés de chaque attaque : 3 de la banque de sa carte.
+        for (let turn = 1; turn <= 6; turn++) {
+          const [att, def] = turn % 2 ? [a, b] : [b, a]
+          const slot = (turn - 1) >> 1
+          const fiche = fiches[(att === a ? 0 : 3) + slot]
+          const attacked = await ok(await act(env, att.uid, id, { action: 'submit_attack', attack_card_id: deck.get(att.uid)?.[slot] }), Detail)
+          const pa = PendingAttack.parse(attacked.battle.game_state?.pendingAttack)
+          const prompts = fakeQuestions(fiche.summary, fiche.title).map((q) => q.prompt)
+          assert.ok(pa.questions.every((q) => prompts.includes(q.prompt)), `tour ${turn} : énoncés hors de fakeQuestions`)
+          for (const [i, q] of pa.questions.entries()) {
+            const res = await ok(await act(env, def.uid, id, { action: 'submit_single_answer', questionId: q.id,
+              answerId: answer(env, id, q.id, true) }), Answer)
+            assert.deepEqual([res.correct, res.status], [true, turn === 6 && i === 2 ? 'completed' : 'active'], `tour ${turn}, question ${i}`)
+          }
+        }
       },
     },
   ],

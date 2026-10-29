@@ -359,6 +359,67 @@ do $$ begin
   assert (select provolatile from pg_proc where oid = 'wm.quiz_check(jsonb, text)'::regprocedure) = 's', 'quiz_check';
 end $$;
 
+-- Exécute p_sql et renvoie le detail JSON de l'erreur P0001 levée (null si aucune), comme 31_battles.test.sql:8-15.
+create function pg_temp.err(p_sql text) returns jsonb language plpgsql as $$
+declare d text; begin
+  execute p_sql;
+  return null;
+exception when sqlstate 'P0001' then
+  get stacked diagnostics d = pg_exception_detail;
+  return d::jsonb;
+end $$;
+
+-- quiz_store (1950_wm_quiz_bank.sql, C12, C20) : refus au corps exact, banque et file intactes ; une question que le générateur
+-- étiquette views reçoit kind llm, donc la règle answer_is_title (minor de la Task 3) ; puis 6 questions → banque llm, ligne de file
+-- supprimée.
+do $$ declare
+  c uuid := pg_temp.bcard('Banque générée', 'UR', 1000, 1000);
+  six jsonb := (select jsonb_agg(pg_temp.vq('réponse ' || i) - 'kind' order by i) from generate_series(1, 6) i);
+  call text := 'select wm.quiz_store(%L, 2, %L, %L)';
+  invalid jsonb := '{"status": 400, "code": "invalid_request", "error": "Banque de questions invalide",
+    "message": "Banque de questions invalide"}';
+  before jsonb; bad text;
+begin
+  perform wm.quiz_ensure(array[c]);
+  update wm.card_quizzes set created_at = now() - interval '1 day' where card_id = c;
+  before := (select to_jsonb(q) from wm.card_quizzes q where card_id = c);
+  select string_agg(format('%s → %s', v.label, coalesce(pg_temp.err(format(call, v.card, v.model, v.bank))::text, 'null')), ' ; ') into bad
+  from (values
+    ('2 questions', c, 'modèle', jsonb_build_array(six -> 0, six -> 1), invalid || '{"rule": "count"}'),
+    ('option en double', c, 'modèle', jsonb_set(six, '{0,options,1}', '"Réponse 1 !"'), invalid || '{"rule": "options_distinct"}'),
+    ('views', c, 'modèle', jsonb_set(six, '{0}', pg_temp.vq('Banque générée', 'views')), invalid || '{"rule": "answer_is_title"}'),
+    ('modèle vide', c, '', six, invalid || '{"rule": "model"}'),
+    ('modèle de 101', c, repeat('m', 101), six, invalid || '{"rule": "model"}'),
+    ('carte inconnue', gen_random_uuid(), 'modèle', six, '{"status": 404, "error": "Carte introuvable", "message": "Carte introuvable"}')
+  ) v (label, card, model, bank, want)
+  where pg_temp.err(format(call, v.card, v.model, v.bank)) is distinct from v.want;
+  assert bad is null, bad;
+  assert (select to_jsonb(q) from wm.card_quizzes q where card_id = c) = before, 'banque touchée par un refus';
+  assert exists (select from wm.quiz_queue where card_id = c and priority = 100), 'file touchée par un refus';
+  assert wm.quiz_store(c, 2, 'modèle d''essai', six) = '{"ok": true}'::jsonb, 'quiz_store';
+  assert (select (source, model, prompt_version, created_at) = ('llm', 'modèle d''essai', 2, now())
+      and questions = (select jsonb_agg(q || '{"kind": "llm"}' order by i) from jsonb_array_elements(six) with ordinality t (q, i))
+    from wm.card_quizzes where card_id = c), (select to_jsonb(q) from wm.card_quizzes q where card_id = c)::text;
+  assert not exists (select from wm.quiz_queue where card_id = c), 'ligne de file restée';
+end $$;
+
+-- quiz_fail (C12) : attempts + 1, next_try_at à now() + attempts jours, last_error coupé à 200.
+do $$ declare c uuid := pg_temp.bcard('Carte refusée', 'UR', 1000, 1000); r wm.quiz_queue; begin
+  insert into wm.quiz_queue (card_id, priority) values (c, 100);
+  assert wm.quiz_fail(c, repeat('x', 250)) = '{"ok": true}'::jsonb, 'quiz_fail';
+  select * into r from wm.quiz_queue where card_id = c;
+  assert (r.attempts, r.next_try_at, r.last_error) = (1, now() + interval '1 day', repeat('x', 200)), to_jsonb(r)::text;
+  perform wm.quiz_fail(c, 'json');
+  select * into r from wm.quiz_queue where card_id = c;
+  assert (r.attempts, r.next_try_at, r.last_error) = (2, now() + interval '2 days', 'json'), to_jsonb(r)::text;
+end $$;
+
+-- P5 : lock_timeout avant la première écriture de chacune.
+do $$ declare bad text := tests.lock_timeout_violations(array['quiz_next', 'quiz_store', 'quiz_fail'],
+  array['insert into wm.quiz_queue', 'insert into wm.card_quizzes', 'update wm.quiz_queue']); begin
+  assert bad is null, 'lock_timeout : ' || bad;
+end $$;
+
 -- Seed du banc (2 000 cartes, résumé et category communs par rareté, environ 20 C par valeur de vues, 0 compris) : template_quiz sans
 -- exception, des views seules, sans égalité ni écart sous 10 %.
 delete from wm.draw_pool;
@@ -372,4 +433,57 @@ do $$ declare bad text; begin
   where jsonb_array_length(b) < 3 or exists (select from jsonb_array_elements(b) q where q ->> 'kind' <> 'views')
     or pg_temp.views_bad(b) is not null;
   assert bad is null, 'seed : ' || bad;
+end $$;
+
+-- quiz_next (C12, PF7, PF18) : dernier bloc du fichier, ses copies et ses lignes card_removals et card_source (clés NO ACTION) bloquant
+-- le delete from public.cards du seed. Lignes de ses cartes, dans l'ordre rendu : les possédées à 60 (une L comprise, PF18 : la plus haute
+-- de ses priorités), par vues décroissantes, puis les L à 50, puis l'UR à 40, aux six clés ; hors banque llm et retrait (chacun avec une
+-- ligne de file prête), 3 essais, next_try_at futur, et trois quiz_fail suivis d'un next_try_at passé (PF7). Les possédées sont les seules
+-- lignes à 60 et plus : quiz_next(2) rend les deux plus vues, et leurs vues croissent avec l'id (un tri par id sous la limite rendrait les
+-- deux autres).
+do $$ declare
+  u uuid := tests.make_user('file_quiz');
+  o1 uuid := pg_temp.bcard('File possédée 1', 'R', 1000, 1000);
+  o2 uuid := pg_temp.bcard('File possédée 2', 'R', 1000, 1000);
+  o3 uuid := pg_temp.bcard('File possédée L', 'L', 1000, 1000);
+  owned uuid[];
+  l1 uuid := pg_temp.bcard('File L 1', 'L', 1000, 1000, 600);
+  l2 uuid := pg_temp.bcard('File L 2', 'L', 1000, 1000, 650);
+  ur uuid := pg_temp.bcard('File UR', 'UR', 1000, 1000, 5000000);
+  llm uuid := pg_temp.bcard('File llm', 'L', 1000, 1000, 640);
+  rem uuid := pg_temp.bcard('File retirée', 'L', 1000, 1000, 630);
+  a3 uuid := pg_temp.bcard('File à trois essais', 'R', 1000, 1000, 620);
+  fut uuid := pg_temp.bcard('File future', 'R', 1000, 1000, 610);
+  f3 uuid := pg_temp.bcard('File trois échecs', 'R', 1000, 1000, 605);
+  r0 uuid := pg_temp.bcard('File retirée hors file', 'L', 1000, 1000, 604);
+  m0 uuid := pg_temp.bcard('File llm hors file', 'L', 1000, 1000, 603);
+  mine uuid[] := array[o1, o2, o3, l1, l2, ur, llm, rem, a3, fut, f3, r0, m0];
+  want jsonb; got jsonb;
+begin
+  update public.cards c set pageviews = 900 - 100 * (select count(*) from unnest(array[o1, o2, o3]) x where x > c.id) where c.id in (o1, o2, o3);
+  owned := array(select x from unnest(array[o1, o2, o3]) x order by x desc);
+  insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_category, snapshot_atk, snapshot_def)
+  select u, id, wikipedia_title, rarity, category, atk, def from public.cards where id in (o1, o2, o3);
+  insert into wm.card_source (card_id, page_id) values (o1, 987654321);
+  insert into wm.card_quizzes (card_id, prompt_version, source, model, questions)
+  values (llm, 1, 'llm', 'modèle d''essai', pg_temp.bank3(pg_temp.vq('fleuve'))), (m0, 1, 'llm', 'modèle d''essai', pg_temp.bank3(pg_temp.vq('fleuve')));
+  insert into wm.card_removals (card_id, reason) values (rem, 'essai'), (r0, 'essai');
+  insert into wm.quiz_queue (card_id, priority, attempts, next_try_at) values (llm, 100, 0, now() - interval '1 hour'),
+    (rem, 100, 0, now() - interval '1 hour'), (a3, 100, 3, now()),
+    (fut, 100, 0, now() + interval '1 hour'), (f3, 100, 0, now());
+  perform wm.quiz_fail(f3, 'json') from generate_series(1, 3);
+  update wm.quiz_queue set next_try_at = now() - interval '1 hour' where card_id = f3;
+  got := wm.quiz_next(1500);
+  select jsonb_agg(jsonb_build_object('card_id', c.id, 'page_id', s.page_id, 'title', c.wikipedia_title, 'category', c.category,
+      'summary', c.summary, 'rarity', c.rarity) order by x.i) into want
+  from unnest(owned || array[l2, l1, ur]) with ordinality x (id, i) join public.cards c on c.id = x.id
+  left join wm.card_source s on s.card_id = c.id;
+  assert (select jsonb_agg(e order by i) from jsonb_array_elements(got) with ordinality t (e, i) where (e ->> 'card_id')::uuid = any (mine))
+    = want, 'quiz_next : ' || got::text;
+  assert (select array_agg(priority order by array_position(mine, card_id)) from wm.quiz_queue where card_id in (o1, o2, o3, l1, l2, ur))
+    = '{60,60,60,50,50,40}', 'priorités de la remise en file';
+  assert not exists (select from wm.quiz_queue where card_id in (r0, m0)), 'carte retirée ou à banque llm remise en file';
+  assert (select array_agg((e ->> 'card_id')::uuid order by i) from jsonb_array_elements(wm.quiz_next(2)) with ordinality t (e, i))
+    = owned[1:2], 'quiz_next(2)';
+  assert wm.quiz_next(-1) = '[]'::jsonb, 'quiz_next(-1)';
 end $$;

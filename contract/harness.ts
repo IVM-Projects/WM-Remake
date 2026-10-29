@@ -19,7 +19,8 @@ export const MAILPIT_URL = 'http://127.0.0.1:54324'
 const MAILPIT_SMTP_PORT = 54325
 const STARTUP_MS = 120_000
 // Clés de test uniquement (build:test) ; la passerelle les échange contre un JWT du rôle, comme Supabase.
-const KEY_ROLES = new Map([['sb_publishable_test', 'anon'], ['sb_secret_test', 'service_role']])
+export const SECRET_KEY = 'sb_secret_test'
+const KEY_ROLES = new Map([['sb_publishable_test', 'anon'], [SECRET_KEY, 'service_role']])
 export const GATE = { password: 'test-gate', secret: 'test-secret' }
 export const CRON_SECRET = 'test-cron'
 // Faux service de push de la passerelle (M4b-32) : endpoints `${PUSH_SINK}/<id>`, ou `${PUSH_SINK}/gone/<id>` pour un 410.
@@ -256,7 +257,7 @@ export async function startNext(name: 'plain' | 'gated', backend: Backend): Prom
     NEXT_TELEMETRY_DISABLED: '1',
     NEXT_PUBLIC_SUPABASE_URL: backend.supabaseUrl,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
-    SUPABASE_SECRET_KEY: 'sb_secret_test',
+    SUPABASE_SECRET_KEY: SECRET_KEY,
     DEMO_GATE_PASSWORD: name === 'gated' ? GATE.password : undefined, // undefined : variable absente du processus
     GATE_COOKIE_SECRET: name === 'gated' ? GATE.secret : undefined,
     TURNSTILE_SECRET_KEY: TURNSTILE.secret,
