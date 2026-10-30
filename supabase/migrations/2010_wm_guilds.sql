@@ -25,7 +25,7 @@ create or replace function wm.guild_create(p_uid uuid, p_name text, p_descriptio
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_resp jsonb;
-  v_name text := btrim(p_name);
+  v_name text := regexp_replace(p_name, '^\s+|\s+$', '', 'g');
   g uuid;
 begin
   v_resp := wm.idem_claim(p_uid, p_idem);
@@ -142,6 +142,140 @@ begin
     perform wm.raise_err(404, null, 'Aucune invitation de cette guilde');
   end if;
   return wm.idem_store(p_uid, p_idem, '{"ok": true}');
+end $$;
+
+-- Départ : le souhait ouvert d'abord (G3), puis la guilde (aucun profil, M5b-1). Le chef ne part que s'il est seul : la guilde est alors
+-- dissoute (D-C20, cascade). Les messages restent (M5b-10).
+create or replace function wm.guild_leave(p_uid uuid, p_idem text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_resp jsonb;
+  g uuid;
+  v_role public.guild_role;
+begin
+  v_resp := wm.idem_claim(p_uid, p_idem);
+  if v_resp is not null then
+    return v_resp;
+  end if;
+  perform wm.actor(p_uid);
+  perform set_config('lock_timeout', '2s', true);
+  perform from public.guild_wishlists where user_id = p_uid and fulfilled_at is null for update;
+  select guild_id into g from public.guild_members where user_id = p_uid;
+  if g is not null then
+    perform from public.guilds where id = g for no key update;
+    select role into v_role from public.guild_members where user_id = p_uid and guild_id = g;
+  end if;
+  if v_role is null then
+    perform wm.raise_err(404, null, 'Tu n''es dans aucune guilde');
+  end if;
+  if v_role = 'leader' then
+    if exists (select from public.guild_members where guild_id = g and user_id <> p_uid) then
+      perform wm.raise_err(409, null, 'Transmets d''abord ton rôle de chef à un autre membre');
+    end if;
+    perform from public.guilds where id = g for update;
+    delete from public.guilds where id = g;
+  else
+    delete from public.guild_members where user_id = p_uid and guild_id = g;
+    delete from public.guild_wishlists where user_id = p_uid and fulfilled_at is null;
+  end if;
+  return wm.idem_store(p_uid, p_idem, '{"ok": true}');
+end $$;
+
+-- Exclusion par le chef : souhait ouvert de la cible (G3), son profil (G2), puis la guilde ; la cible est notifiée (M5b-11).
+create or replace function wm.guild_kick(p_uid uuid, p_user_id uuid, p_idem text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_resp jsonb;
+  g uuid;
+begin
+  v_resp := wm.idem_claim(p_uid, p_idem);
+  if v_resp is not null then
+    return v_resp;
+  end if;
+  perform wm.actor(p_uid);
+  if p_user_id = p_uid then
+    perform wm.raise_err(400, 'invalid_request', 'Tu ne peux pas t''exclure toi-même');
+  end if;
+  perform set_config('lock_timeout', '2s', true);
+  perform from public.guild_wishlists where user_id = p_user_id and fulfilled_at is null for update;
+  perform from public.profiles where id = p_user_id for key share;
+  select guild_id into g from public.guild_members where user_id = p_uid;
+  perform from public.guilds where id = g for no key update;
+  if not found or not exists (select from public.guild_members where user_id = p_uid and guild_id = g) then
+    perform wm.raise_err(404, null, 'Tu n''es dans aucune guilde');
+  end if;
+  if not exists (select from public.guild_members where user_id = p_uid and guild_id = g and role = 'leader') then
+    perform wm.raise_err(403, 'FORBIDDEN', 'Seul le chef de la guilde peut faire cela');
+  end if;
+  if not exists (select from public.guild_members where user_id = p_user_id and guild_id = g) then
+    perform wm.raise_err(404, null, 'Ce joueur ne fait pas partie de ta guilde');
+  end if;
+  delete from public.guild_members where user_id = p_user_id and guild_id = g;
+  delete from public.guild_wishlists where user_id = p_user_id and fulfilled_at is null;
+  perform wm.notify_guild(array[p_user_id], 'guild_kicked', g, p_uid);
+  return wm.idem_store(p_uid, p_idem, '{"ok": true}');
+end $$;
+
+-- Transfert du rôle de chef (M5b-10) : le chef d'abord (403, C17), puis soi-même (400), puis la cible. L'ancien chef passe member avant la
+-- cible (index unique guild_members_leader_key). Aucune notification (M5b-11).
+create or replace function wm.guild_transfer(p_uid uuid, p_user_id uuid, p_idem text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_resp jsonb;
+  g uuid;
+begin
+  v_resp := wm.idem_claim(p_uid, p_idem);
+  if v_resp is not null then
+    return v_resp;
+  end if;
+  perform wm.actor(p_uid);
+  perform set_config('lock_timeout', '2s', true);
+  perform wm.lock_users(array[p_uid, p_user_id]);
+  select guild_id into g from public.guild_members where user_id = p_uid;
+  perform from public.guilds where id = g for no key update;
+  if not found or not exists (select from public.guild_members where user_id = p_uid and guild_id = g) then
+    perform wm.raise_err(404, null, 'Tu n''es dans aucune guilde');
+  end if;
+  if not exists (select from public.guild_members where user_id = p_uid and guild_id = g and role = 'leader') then
+    perform wm.raise_err(403, 'FORBIDDEN', 'Seul le chef de la guilde peut faire cela');
+  end if;
+  if p_user_id = p_uid then
+    perform wm.raise_err(400, 'invalid_request', 'Tu es déjà le chef de la guilde');
+  end if;
+  if not exists (select from public.guild_members where user_id = p_user_id and guild_id = g) then
+    perform wm.raise_err(404, null, 'Ce joueur ne fait pas partie de ta guilde');
+  end if;
+  update public.guild_members set role = 'member' where user_id = p_uid and guild_id = g;
+  update public.guild_members set role = 'leader' where user_id = p_user_id and guild_id = g;
+  update public.guilds set leader_id = p_user_id where id = g;
+  return wm.idem_store(p_uid, p_idem, '{"ok": true}');
+end $$;
+
+-- Membres, chef d'abord (union des variantes de R:292 : id, username, profile, user), page bornée par list_caps.guild_members.
+create or replace function wm.guild_members(p_uid uuid, p_limit int default null, p_offset int default 0)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  g uuid;
+  v_cap int := (select (value ->> 'guild_members')::int from wm.config where key = 'list_caps');
+  v_lim int;
+  v_off int := greatest(0, coalesce(p_offset, 0));
+  v_members jsonb;
+  v_more boolean;
+begin
+  select guild_id into g from public.guild_members where user_id = p_uid;
+  if g is null then
+    perform wm.raise_err(404, null, 'Tu n''es dans aucune guilde');
+  end if;
+  v_lim := greatest(1, least(coalesce(p_limit, v_cap), v_cap));
+  select coalesce(jsonb_agg(jsonb_build_object('user_id', r.user_id, 'id', r.user_id, 'username', r.username,
+      'profile', jsonb_build_object('username', r.username), 'user', jsonb_build_object('username', r.username),
+      'role', r.role, 'joined_at', r.joined_at) order by r.n) filter (where r.n <= v_lim), '[]'),
+    coalesce(max(r.n), 0) > v_lim
+  into v_members, v_more
+  from (select s.*, row_number() over (order by (s.role = 'leader') desc, s.joined_at, s.user_id) n
+    from (select m.user_id, m.role, m.joined_at, p.username from public.guild_members m join public.profiles p on p.id = m.user_id
+      where m.guild_id = g order by (m.role = 'leader') desc, m.joined_at, m.user_id limit v_lim + 1 offset v_off) s) r;
+  return jsonb_build_object('members', v_members, 'hasMore', v_more);
 end $$;
 
 revoke all on schema wm from public, anon, authenticated;

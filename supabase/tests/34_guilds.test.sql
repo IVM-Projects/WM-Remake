@@ -405,3 +405,189 @@ do $$ declare v text; begin
   assert (select strpos(prosrc, 'wm.lock_user') = 0 and strpos(prosrc, 'for no key update') = 0 from pg_proc
     where oid = to_regproc('wm.guild_invite_decline')), 'guild_invite_decline sans profil ni guilde';
 end $$;
+
+-- Nom de guilde : tout blanc (tabulation, saut de ligne) rogné comme la description (\s), pas seulement l'espace.
+do $$ declare w uuid := pg_temp.player('GuiNomW'); a uuid := pg_temp.player('GuiNomA'); d jsonb; begin
+  d := pg_temp.err(format('select wm.guild_create(%L, %L)', w, E'\t'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le nom de la guilde est vide'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_create(%L, %L)', w, E'\n'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le nom de la guilde est vide'), coalesce(d::text, 'accepté');
+  assert wm.guild_create(a, E' \n x \t ') -> 'guild' ->> 'name' = 'x', 'nom rogné';
+  assert (select name from public.guilds where leader_id = a) = 'x', 'nom stocké';
+end $$;
+
+-- Départ (M5b-4, M5b-10, D-C20) : membre, chef avec membres (409), dernier membre (dissolution), sans guilde.
+do $$ declare a uuid := pg_temp.player('GuiLvA'); b uuid := pg_temp.player('GuiLvB'); c uuid := pg_temp.player('GuiLvC');
+  z uuid := pg_temp.player('GuiLvZ'); x uuid := pg_temp.player('GuiLvX'); g uuid; g2 uuid; k uuid := pg_temp.card('GuiLv carte');
+  k2 uuid := pg_temp.card('GuiLv carte 2'); d jsonb; begin
+  g := pg_temp.guild(a, array[b]);
+  insert into public.guild_wishlists (guild_id, user_id, card_id, fulfilled_at) values (g, b, k, now());
+  insert into public.guild_wishlists (guild_id, user_id, card_id) values (g, b, k2);
+  insert into public.guild_chat_messages (guild_id, user_id, content) values (g, b, 'Salut');
+  d := pg_temp.err(format('select wm.guild_leave(%L)', a));
+  assert d = pg_temp.e(409, null, 'Transmets d''abord ton rôle de chef à un autre membre'), coalesce(d::text, 'accepté');
+  assert wm.guild_leave(b) = '{"ok": true}', 'départ';
+  assert not exists (select from public.guild_members where user_id = b), 'adhésion supprimée';
+  assert not exists (select from public.guild_wishlists where user_id = b and fulfilled_at is null), 'souhait ouvert supprimé';
+  assert exists (select from public.guild_wishlists where user_id = b and fulfilled_at is not null), 'souhait clos resté';
+  assert exists (select from public.guild_chat_messages where user_id = b and guild_id = g), 'messages restés';
+  assert exists (select from public.guilds where id = g), 'guilde restée';
+  d := pg_temp.err(format('select wm.guild_leave(%L)', b));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  -- Dernier membre : tout part avec la guilde.
+  perform pg_temp.friends(a, c);
+  perform wm.guild_invite(a, c);
+  perform wm.guild_score_add(a, 'battles', 500, now());
+  insert into public.guild_wishlists (guild_id, user_id, card_id) values (g, a, k);
+  assert wm.guild_leave(a) = '{"ok": true}', 'dissolution';
+  assert not exists (select from public.guilds where id = g), 'guilde dissoute';
+  assert not exists (select from public.guild_members where guild_id = g)
+    and not exists (select from public.guild_weekly_scores where guild_id = g)
+    and not exists (select from wm.guild_invites where guild_id = g)
+    and not exists (select from public.guild_wishlists where guild_id = g)
+    and not exists (select from public.guild_chat_messages where guild_id = g), 'cascade';
+  -- Rejeu de la clé (un seul effet) et maintenance.
+  g2 := pg_temp.guild(z, array[x]);
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_leave(%L)', x));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  assert exists (select from public.guild_members where user_id = x), 'refus sans effet';
+  assert wm.guild_leave(x, 'k-gleave') = '{"ok": true}' and wm.guild_leave(x, 'k-gleave') = '{"ok": true}', 'rejeu de la clé';
+  perform pg_temp.inv('guild_leave');
+end $$;
+
+-- Exclusion (M5b-11) : chef seul, notifiée, souhait ouvert supprimé ; refus exacts.
+do $$ declare a uuid := pg_temp.player('GuiKiA'); b uuid := pg_temp.player('GuiKiB'); c uuid := pg_temp.player('GuiKiC');
+  o uuid := pg_temp.player('GuiKiO'); g uuid; k uuid := pg_temp.card('GuiKi carte'); d jsonb; begin
+  g := pg_temp.guild(a, array[b, c]);
+  insert into public.guild_wishlists (guild_id, user_id, card_id) values (g, b, k);
+  d := pg_temp.err(format('select wm.guild_kick(%L, %L)', b, a));
+  assert d = '{"status":403,"code":"FORBIDDEN","error":"Seul le chef de la guilde peut faire cela",
+    "message":"Seul le chef de la guilde peut faire cela"}', coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_kick(%L, %L)', a, a));
+  assert d = pg_temp.e(400, 'invalid_request', 'Tu ne peux pas t''exclure toi-même'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_kick(%L, %L)', a, o));
+  assert d = pg_temp.e(404, null, 'Ce joueur ne fait pas partie de ta guilde'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_kick(%L, %L)', o, a));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  assert not exists (select from public.notifications where type = 'guild_kicked' and user_id in (a, b, c, o)), 'refus sans notification';
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_kick(%L, %L)', a, b));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  assert wm.guild_kick(a, b) = '{"ok": true}', 'exclusion';
+  assert not exists (select from public.guild_members where user_id = b), 'adhésion supprimée';
+  assert not exists (select from public.guild_wishlists where user_id = b and fulfilled_at is null), 'souhait ouvert supprimé';
+  assert (select jsonb_agg(data) from public.notifications where type = 'guild_kicked' and user_id = b)
+    = jsonb_build_array(jsonb_build_object('guild_id', g, 'guild_name', 'Guilde GuiKiA', 'user_id', a, 'username', 'GuiKiA')), 'notification';
+  -- Même clé deux fois : une seule notification de plus.
+  assert wm.guild_kick(a, c, 'k-gkick') = '{"ok": true}' and wm.guild_kick(a, c, 'k-gkick') = '{"ok": true}', 'rejeu de la clé';
+  assert (select count(*) from public.notifications where type = 'guild_kicked' and user_id = c) = 1, 'un seul effet';
+  perform pg_temp.inv('guild_kick');
+end $$;
+
+-- Transfert du rôle (M5b-10, C17) : le chef d'abord (403), puis soi-même (400), puis la cible (404).
+do $$ declare a uuid := pg_temp.player('GuiTrA'); b uuid := pg_temp.player('GuiTrB'); o uuid := pg_temp.player('GuiTrO');
+  c uuid := pg_temp.player('GuiTrC'); e uuid := pg_temp.player('GuiTrE'); g uuid; d jsonb; begin
+  g := pg_temp.guild(a, array[b]);
+  d := pg_temp.err(format('select wm.guild_transfer(%L, %L)', b, b));
+  assert d = '{"status":403,"code":"FORBIDDEN","error":"Seul le chef de la guilde peut faire cela",
+    "message":"Seul le chef de la guilde peut faire cela"}', 'chef avant soi-même : ' || coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_transfer(%L, %L)', o, a));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_transfer(%L, %L)', a, o));
+  assert d = pg_temp.e(404, null, 'Ce joueur ne fait pas partie de ta guilde'), coalesce(d::text, 'accepté');
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_transfer(%L, %L)', a, b));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  assert wm.guild_transfer(a, b) = '{"ok": true}', 'transfert';
+  assert (select role from public.guild_members where user_id = b) = 'leader' and (select role from public.guild_members where user_id = a) = 'member'
+    and (select leader_id from public.guilds where id = g) = b
+    and (select count(*) from public.guild_members where guild_id = g and role = 'leader') = 1, 'rôles';
+  d := pg_temp.err(format('select wm.guild_transfer(%L, %L)', a, b));
+  assert d = '{"status":403,"code":"FORBIDDEN","error":"Seul le chef de la guilde peut faire cela",
+    "message":"Seul le chef de la guilde peut faire cela"}', coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_transfer(%L, %L)', b, b));
+  assert d = pg_temp.e(400, 'invalid_request', 'Tu es déjà le chef de la guilde'), coalesce(d::text, 'accepté');
+  assert not exists (select from public.notifications where user_id in (a, b) and type like 'guild\_%' and type <> 'guild_invite'),
+    'aucune notification';
+  assert wm.guild_leave(a) = '{"ok": true}', 'l''ancien chef peut partir';
+  -- Même clé deux fois : un seul effet (le second appel, sans la clé, serait un 403).
+  perform pg_temp.friends(b, c);
+  perform wm.guild_invite(b, c);
+  perform wm.guild_join(c, g);
+  assert wm.guild_transfer(b, c, 'k-gtransfer') = '{"ok": true}' and wm.guild_transfer(b, c, 'k-gtransfer') = '{"ok": true}', 'rejeu de la clé';
+  assert (select leader_id from public.guilds where id = g) = c, 'un seul effet';
+  perform pg_temp.inv('guild_transfer');
+end $$;
+
+-- Membres : chef d'abord, puis joined_at, puis user_id ; pagination ; borne list_caps.guild_members.
+do $$ declare a uuid := pg_temp.player('GuiMeA'); b uuid := pg_temp.player('GuiMeB'); c uuid := pg_temp.player('GuiMeC');
+  o uuid := pg_temp.player('GuiMeO'); g uuid; r jsonb; u uuid; i int; d jsonb; begin
+  g := pg_temp.guild(a, array[b, c]);
+  update public.guild_members set joined_at = '2026-01-05' where user_id = a;
+  update public.guild_members set joined_at = '2026-01-03' where user_id = b;
+  update public.guild_members set joined_at = '2026-01-02' where user_id = c;
+  r := wm.guild_members(a);
+  assert r = jsonb_build_object('members', jsonb_build_array(
+      jsonb_build_object('user_id', a, 'id', a, 'username', 'GuiMeA', 'profile', '{"username": "GuiMeA"}'::jsonb,
+        'user', '{"username": "GuiMeA"}'::jsonb, 'role', 'leader', 'joined_at', (select joined_at from public.guild_members where user_id = a)),
+      jsonb_build_object('user_id', c, 'id', c, 'username', 'GuiMeC', 'profile', '{"username": "GuiMeC"}'::jsonb,
+        'user', '{"username": "GuiMeC"}'::jsonb, 'role', 'member', 'joined_at', (select joined_at from public.guild_members where user_id = c)),
+      jsonb_build_object('user_id', b, 'id', b, 'username', 'GuiMeB', 'profile', '{"username": "GuiMeB"}'::jsonb,
+        'user', '{"username": "GuiMeB"}'::jsonb, 'role', 'member', 'joined_at', (select joined_at from public.guild_members where user_id = b))),
+    'hasMore', false), r::text;
+  assert wm.guild_members(b) = r, 'même liste pour un membre';
+  -- Égalité de joined_at : départage par user_id.
+  update public.guild_members set joined_at = '2026-01-03' where user_id = c;
+  assert (select jsonb_agg(m ->> 'user_id') from jsonb_array_elements(wm.guild_members(a) -> 'members') m)
+    = jsonb_build_array(a, (select least(b, c)), (select greatest(b, c))), 'départage par user_id';
+  r := wm.guild_members(a, 2);
+  assert jsonb_array_length(r -> 'members') = 2 and r -> 'hasMore' = 'true', r::text;
+  r := wm.guild_members(a, null, 2);
+  assert jsonb_array_length(r -> 'members') = 1 and r -> 'hasMore' = 'false', r::text;
+  r := wm.guild_members(a, 2, 1);
+  assert jsonb_array_length(r -> 'members') = 2 and r -> 'hasMore' = 'false', r::text;
+  assert wm.guild_members(a, 0) -> 'members' = wm.guild_members(a, 1) -> 'members' and jsonb_array_length(wm.guild_members(a, -5, -3) -> 'members') = 1,
+    'bornes basses';
+  assert jsonb_array_length(wm.guild_members(a, 2, 99) -> 'members') = 0, 'offset au-delà';
+  d := pg_temp.err(format('select wm.guild_members(%L)', o));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  -- 55 membres posés par insert : la borne est 50.
+  update wm.config set value = value || '{"max_members": 60}' where key = 'guild';
+  for i in 1..52 loop
+    u := pg_temp.player('GuiMeP' || i);
+    insert into public.guild_members (guild_id, user_id, role) values (g, u, 'member');
+  end loop;
+  update wm.config set value = value || '{"max_members": 200}' where key = 'guild';
+  assert (select count(*) from public.guild_members where guild_id = g) = 55, '55 membres';
+  r := wm.guild_members(a, 500);
+  assert jsonb_array_length(r -> 'members') = 50 and r -> 'hasMore' = 'true', 'borné à 50';
+  r := wm.guild_members(a);
+  assert jsonb_array_length(r -> 'members') = 50 and r -> 'hasMore' = 'true', 'borne par défaut';
+  assert jsonb_array_length(wm.guild_members(a, null, 50) -> 'members') = 5 and wm.guild_members(a, null, 50) -> 'hasMore' = 'false', 'dernière page';
+end $$;
+
+-- Volatilité, lock_timeout, ordre des verrous (G3 : souhait ouvert, puis G2 : profil, puis la guilde), aucun profil pour le départ.
+do $$ declare v text; s text; p1 int; p2 int; p3 int; p4 int; begin
+  assert (select provolatile = 's' from pg_proc where oid = 'wm.guild_members(uuid,int,int)'::regprocedure), 'guild_members stable';
+  v := tests.lock_timeout_violations(array['guild_leave', 'guild_kick', 'guild_transfer'],
+    array['for update', 'for no key update', 'for key share', 'wm.lock_users(', 'wm.lock_user(', 'delete from']);
+  assert v is null, 'lock_timeout : ' || v;
+  select prosrc into s from pg_proc where oid = to_regproc('wm.guild_kick');
+  p1 := strpos(s, 'from public.guild_wishlists');
+  p2 := strpos(s, 'for update');
+  p3 := strpos(s, 'for key share');
+  p4 := strpos(s, 'for no key update');
+  assert p1 > 0 and p1 < p2 and p2 < p3 and p3 < p4, format('guild_kick : souhait, profil, guilde (%s %s %s %s)', p1, p2, p3, p4);
+  select prosrc into s from pg_proc where oid = to_regproc('wm.guild_leave');
+  p1 := strpos(s, 'from public.guild_wishlists');
+  p2 := strpos(s, 'for update');
+  p4 := strpos(s, 'for no key update');
+  assert p1 > 0 and p1 < p2 and p2 < p4, format('guild_leave : souhait, guilde (%s %s %s)', p1, p2, p4);
+  assert strpos(s, 'wm.lock_user') = 0 and strpos(s, 'from public.profiles') = 0, 'guild_leave sans profil';
+  select prosrc into s from pg_proc where oid = to_regproc('wm.guild_transfer');
+  assert strpos(s, 'wm.lock_users(') between 1 and strpos(s, 'for no key update'), 'guild_transfer : profils puis guilde';
+end $$;
