@@ -46,6 +46,21 @@ test.each<[Rule, string, unknown]>([
   expect(validate([first, bad], ctx)).toEqual({ kept: [first], rejected: { [rule]: 1 } })
 })
 
+// Règle title en mots entiers : « Mozart » n'est pas refusé pour « Art », ni « avion » et « lion » ôtés de l'énoncé pour « Io » (il en
+// resterait un seul mot plein) ; une réponse qui contient le titre en mot entier l'est toujours.
+test('title en mots entiers', () => {
+  const art = { title: 'Art', text: 'Mozart compose la Flûte enchantée en 1791 à Vienne, peu avant sa mort. L\'art lyrique y triomphe alors.' }
+  const mozart = { prompt: 'Quel compositeur écrit la Flûte enchantée en 1791 ?', options: ['Mozart', 'Haydn', 'Salieri', 'Gluck'], correct: 0,
+    evidence: 'Mozart compose la Flûte enchantée en 1791 à Vienne, peu avant sa mort.' }
+  const lyric = { prompt: 'Quel genre triomphe alors à Vienne ?', options: ['art lyrique', 'ballet', 'chanson', 'fugue'], correct: 0,
+    evidence: 'L\'art lyrique y triomphe alors.' }
+  expect(validate([mozart, lyric], art)).toEqual({ kept: [mozart], rejected: { title: 1 } })
+  const io = { title: 'Io', text: 'Un avion transporte le lion du cirque vers la ménagerie de Lyon.' }
+  const q = { prompt: 'Vers quoi l\'avion transporte-t-il le lion ?', options: ['ménagerie', 'volière', 'écurie', 'serre'], correct: 0,
+    evidence: io.text }
+  expect(validate([q], io)).toEqual({ kept: [q], rejected: {} })
+})
+
 test('kept coupé à 6', () => {
   const text = cards.map((c) => c.summary).join(' ')
   const all = fakeQuestions(text, 'Titre absent')

@@ -380,8 +380,10 @@ do $$ declare
     "message": "Banque de questions invalide"}';
   before jsonb; bad text;
 begin
-  perform wm.quiz_ensure(array[c]);
-  update wm.card_quizzes set created_at = now() - interval '1 day' where card_id = c;
+  -- Banque template et ligne de file posées telles quelles : aucun tirage, donc pas de setseed.
+  insert into wm.card_quizzes (card_id, prompt_version, source, model, questions, created_at)
+  values (c, 1, 'template', null, pg_temp.bank3(pg_temp.vq('fleuve')), now() - interval '1 day');
+  insert into wm.quiz_queue (card_id, priority) values (c, 100);
   before := (select to_jsonb(q) from wm.card_quizzes q where card_id = c);
   select string_agg(format('%s → %s', v.label, coalesce(pg_temp.err(format(call, v.card, v.model, v.bank))::text, 'null')), ' ; ') into bad
   from (values

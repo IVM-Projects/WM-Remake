@@ -35,8 +35,10 @@ function jaccard(a: string, b: string): number {
 // Question par question, dans l'ordre des règles ; kept coupé à 6 (M5a-8).
 export function validate(raw: unknown, ctx: { title: string; text: string }): { kept: Question[]; rejected: Partial<Record<Rule, number>> } {
   const text = norm(ctx.text)
-  // Titre privé de sa parenthèse finale, comme answer_is_title.
+  // Titre privé de sa parenthèse finale, comme answer_is_title, cherché en mots entiers (« Mozart » n'est pas « Art »). Ses caractères
+  // sont des lettres, des chiffres et des espaces : aucun n'a de sens dans une expression rationnelle.
   const title = norm(ctx.title.replace(/\s*\([^()]*\)\s*$/, ''))
+  const titleWords = title ? new RegExp(`(?<=^| )${title}(?= |$)`, 'g') : null
   const kept: Question[] = []
   const rejected: Partial<Record<Rule, number>> = {}
   const check = (item: unknown): Rule | null => {
@@ -55,7 +57,8 @@ export function validate(raw: unknown, ctx: { title: string; text: string }): { 
     const prompt = norm(q.prompt)
     // Sous-chaîne, comme le strpos de quiz_check_one.
     if (prompt.includes(answer)) return 'answer_in_prompt'
-    if ((title && answer.includes(title)) || fullWords(title ? prompt.split(title).join(' ') : prompt) < 3) return 'title'
+    // Plus strict que quiz_check_one, qui ne refuse qu'une réponse égale au titre.
+    if ((titleWords && answer.match(titleWords)) || fullWords(titleWords ? prompt.replace(titleWords, ' ') : prompt) < 3) return 'title'
     if ([q.prompt, ...q.options].some((x) => LINK.test(x)) || o.some((x) => CATCH_ALL.test(x)) || OFF_TOPIC.test(prompt)) return 'forbidden'
     if (kept.some((k) => norm(k.options[k.correct]) === answer || jaccard(norm(k.prompt), prompt) > 0.7)) return 'duplicate'
     kept.push(q)

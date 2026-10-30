@@ -25,13 +25,18 @@ async function withFake<T>(mode: Mode, f: (fake: Awaited<ReturnType<typeof start
   }
 }
 
-const completion = (content: string) => Response.json({ id: 'x', object: 'chat.completion', model: 'fake-quiz',
-  choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] })
-const questions = (list: Question[]) => completion(JSON.stringify({ questions: list }))
+// Réponse OpenAI ; model null : corps sans model.
+const completion = (content: string, model: string | null = 'fake-quiz') => Response.json({ id: 'x', object: 'chat.completion',
+  ...(model !== null && { model }), choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] })
+const questions = (list: Question[], model?: string | null) => completion(JSON.stringify({ questions: list }), model)
+// Texte entre <article> et </article> d'une requête amont.
+const articleOf = (init: RequestInit) => /<article>\n([\s\S]*)\n<\/article>/.exec((JSON.parse(String(init.body)) as
+  { messages: Array<{ content: string }> }).messages.at(-1)?.content ?? '')?.[1] ?? ''
 
 // fetchImpl d'essai : l'amont rend `replies` dans l'ordre (500 au-delà) ; la base factice sert quiz_next = [card] et note chaque appel
-// RPC (`rpc` peut en remplacer la réponse) ; Wikipédia rend `extract` pour la page de card.
-function stub(o: { replies?: Array<() => Response>; card?: QueueCard; extract?: string; rpc?: (fn: string) => Response | undefined }) {
+// RPC (`rpc` peut en remplacer la réponse) ; Wikipédia rend `extract` pour la page de card, ou la réponse de `wikiReply`.
+function stub(o: { replies?: Array<() => Response>; card?: QueueCard; extract?: string; rpc?: (fn: string) => Response | undefined;
+  wikiReply?: () => Response | Promise<Response> }) {
   const rpc: Array<{ fn: string; args: unknown }> = []
   const upstream: RequestInit[] = []
   const wiki: string[] = []
@@ -45,7 +50,7 @@ function stub(o: { replies?: Array<() => Response>; card?: QueueCard; extract?: 
     }
     if (url.startsWith('https://fr.wikipedia.org/')) {
       wiki.push(url)
-      return Response.json({ batchcomplete: true, query: { pages: [{ pageid: o.card?.page_id, extract: o.extract }] } })
+      return o.wikiReply?.() ?? Response.json({ batchcomplete: true, query: { pages: [{ pageid: o.card?.page_id, extract: o.extract }] } })
     }
     upstream.push(init)
     return (replies.shift() ?? (() => new Response('{}', { status: 500 })))()
@@ -176,11 +181,54 @@ test('extrait de 5 000 caractères → texte envoyé de 4 000 au plus, fini par 
   await run({ ...base, ...quiet, text: 'extracts', baseUrl: 'http://amont.test/v1', input: [page], fetchImpl })
   expect(wiki).toEqual(['https://fr.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&maxlag=5&prop=extracts'
     + '&explaintext=1&pageids=4242'])
-  const user = (JSON.parse(String(upstream[0].body)) as { messages: Array<{ content: string }> }).messages.at(-1)?.content ?? ''
-  const article = /<article>\n([\s\S]*)\n<\/article>/.exec(user)?.[1] ?? ''
+  const article = articleOf(upstream[0])
   expect(article.length).toBeLessThanOrEqual(4000)
   expect(article.length).toBeGreaterThan(3900)
   expect(article.endsWith('.')).toBe(true)
+})
+
+test('page sans extrait → le résumé', async () => {
+  const page = { ...card, page_id: 4242 }
+  const { fetchImpl, upstream, wiki } = stub({ card: page, replies: [() => questions(qs)] })
+  await run({ ...base, ...quiet, text: 'extracts', baseUrl: 'http://amont.test/v1', input: [page], fetchImpl })
+  expect([wiki.length, articleOf(upstream[0])]).toEqual([1, card.summary])
+})
+
+test('exception du client Wikimedia → Fatal extracts, ni quiz_fail ni appel amont', async () => {
+  const page = { ...card, page_id: 4242 }
+  const { fetchImpl, upstream, rpc } = stub({ card: page, wikiReply: () => new Response('', { status: 404 }) })
+  await expect(run({ ...base, ...quiet, dryRun: false, store, text: 'extracts', baseUrl: 'http://amont.test/v1', fetchImpl }))
+    .rejects.toThrow('extracts')
+  expect([rpc.map((r) => r.fn), upstream.length]).toEqual([['quiz_next'], 0])
+})
+
+test('échéance pendant la lecture de Wikipédia → stopped deadline, sans attendre la réponse ni appeler l\'amont', async () => {
+  const page = { ...card, page_id: 4242 }
+  const { fetchImpl, upstream, wiki } = stub({ card: page, wikiReply: () => new Promise<Response>(() => {}) })
+  const s = await run({ ...base, ...quiet, deadlineMin: 0.002, text: 'extracts', baseUrl: 'http://amont.test/v1', input: [page, page], fetchImpl })
+  expect(s).toMatchObject({ cards: 2, stored: 0, failed: 0, skipped: 0, stopped: 'deadline' })
+  expect([wiki.length, upstream.length]).toEqual([1, 0])
+})
+
+test('échéance lue avant chaque carte : passée pendant la première → la seconde n\'est pas lue', async () => {
+  const { fetchImpl, upstream } = stub({ replies: [() => {
+    vi.setSystemTime(Date.now() + 6 * 60_000)
+    return questions(qs)
+  }] })
+  vi.useFakeTimers({ toFake: ['Date'] })
+  try {
+    const s = await run({ ...base, ...quiet, deadlineMin: 5, baseUrl: 'http://amont.test/v1', input: cards.slice(0, 2), fetchImpl })
+    expect(s).toMatchObject({ cards: 2, stored: 1, stopped: 'deadline' })
+  } finally {
+    vi.useRealTimers()
+  }
+  expect(upstream).toHaveLength(1)
+})
+
+test('nouvel essai dont le 2xx n\'a pas de model → quiz_store reçoit celui du premier', async () => {
+  const { fetchImpl, rpc } = stub({ card, replies: [() => questions(qs.slice(0, 4)), () => questions(qs.slice(4, 6), null)] })
+  expect(await run({ ...base, ...quiet, dryRun: false, store, baseUrl: 'http://amont.test/v1', fetchImpl })).toMatchObject({ stored: 1, failed: 0 })
+  expect(rpc.find((r) => r.fn === 'quiz_store')?.args).toMatchObject({ p_model: 'fake-quiz' })
 })
 
 test('minGapS 30 → sleep(30000) entre deux appels', async () => {
@@ -258,16 +306,21 @@ function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: st
 }
 
 test('CLI sans secret de base : quota → dernière ligne summary, ::warning:: sur stderr, sortie 0 ; --input absent → {"fatal":"input"} seul, '
-  + 'sortie 1 ; --input sans --dry-run → {"fatal":"usage"}', () => withFake('rate_limit', async (fake) => {
+  + 'sortie 1 ; --input sans --dry-run → {"fatal":"usage"} ; trois échecs amont → network, sortie 1', () => withFake('rate_limit', async (fake) => {
   const r = await cli(['--base-url', `${fake.url}/v1`, '--input', 'scripts/quiz/fixtures/cards.json', '--text', 'summary', '--max', '5',
     '--min-gap-s', '0', '--dry-run'])
   expect(r.code).toBe(0)
   const lines = r.stdout.trim().split('\n')
   expectClean(lines)
   expect(JSON.parse(lines.at(-1) ?? '')).toEqual({ summary: { cards: 5, stored: 0, failed: 0, skipped: 0, rejected: {}, stopped: 'quota' } })
-  expect(r.stderr).toMatch(/^::warning::/m)
+  expect(r.stderr.split('\n').filter(Boolean)).toEqual([expect.stringMatching(/^::warning::/)])
   const f = await cli(['--base-url', `${fake.url}/v1`, '--input', 'scripts/quiz/fixtures/absent.json', '--dry-run'])
   expect([f.code, f.stdout]).toEqual([1, '{"fatal":"input"}\n'])
   const u = await cli(['--base-url', `${fake.url}/v1`, '--input', 'scripts/quiz/fixtures/cards.json'])
   expect([u.code, u.stdout, fake.calls()]).toEqual([1, '{"fatal":"usage"}\n', 1])
+  await withFake('error', async (down) => {
+    const n = await cli(['--base-url', `${down.url}/v1`, '--input', 'scripts/quiz/fixtures/cards.json', '--text', 'summary', '--max', '5',
+      '--min-gap-s', '0', '--dry-run'])
+    expect([n.code, JSON.parse(n.stdout.trim().split('\n').at(-1) ?? '').summary?.stopped, down.calls()]).toEqual([1, 'network', 3])
+  })
 }), 15_000)

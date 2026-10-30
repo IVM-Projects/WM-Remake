@@ -1,6 +1,8 @@
 // Générateur de banques (C12, C14, D:543-547) : la file par wm.quiz_next, une requête à la fois vers l'amont compatible OpenAI
 // (OmniRoute, ou le faux serveur), validation par zod, écriture par wm.quiz_store (revalidée en SQL) ou échec par wm.quiz_fail.
 // Journal : une ligne JSON par carte et le résumé, jamais un énoncé, une option, une evidence ni un corps de réponse (dépôt public).
+// --dry-run n'appelle ni quiz_store ni quiz_fail ; sans --input, il lit pourtant la file par quiz_next, dont la remise en file est alors
+// sa seule écriture (C12). --input exige --dry-run (job smoke, sans base).
 // Lu aussi par vitest et par le contrat : la CLI ne tourne que lancée directement. Imports relatifs en .ts seulement.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -36,7 +38,8 @@ export async function run(o: Options): Promise<Summary> {
   const fetchImpl = o.fetchImpl ?? fetch
   const summary: Summary = { cards: 0, stored: 0, failed: 0, skipped: 0, rejected: {}, stopped: null }
   const end = Date.now() + o.deadlineMin * 60_000
-  const wiki = createClient({ fetchImpl, sleep })
+  // Peu de nouvelles tentatives, et chaque lecture courue contre l'échéance (textOf) : le client du catalogue attendrait jusqu'à 30 min.
+  const wiki = createClient({ fetchImpl, sleep, maxRetries: 2 })
   const db = o.store && createDb(o.store.url, o.store.key, { auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: fetchImpl } }).schema('wm')
   // Toute erreur de la base, hors refus de quiz_store, arrête le run ; rien de PostgREST n'est gardé.
@@ -110,15 +113,21 @@ export async function run(o: Options): Promise<Summary> {
     }
   }
 
-  async function textOf(card: QueueCard): Promise<string> {
+  // Texte de la carte ; null si l'échéance tombe pendant la lecture de Wikipédia.
+  async function textOf(card: QueueCard): Promise<string | null> {
     if (o.text === 'summary' || card.page_id === null) return cut(card.summary ?? '')
-    let pages: { page_id: number; extract: string }[]
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let pages: { page_id: number; extract: string }[] | null
     try {
-      pages = parseExtracts(await wiki.get(EXTRACT + card.page_id))
+      const late = new Promise<null>((resolve) => (timer = setTimeout(resolve, Math.min(Math.max(end - Date.now(), 0), 2 ** 31 - 1), null)))
+      const body = await Promise.race([wiki.get(EXTRACT + card.page_id), late])
+      pages = body === null ? null : parseExtracts(body)
     } catch {
       throw new Fatal('extracts')
+    } finally {
+      clearTimeout(timer)
     }
-    return cut(pages[0]?.extract ?? card.summary ?? '')
+    return pages && cut(pages[0]?.extract ?? card.summary ?? '')
   }
 
   const add = (into: Partial<Record<Rule, number>>, from: Partial<Record<Rule, number>>) => {
@@ -142,6 +151,10 @@ export async function run(o: Options): Promise<Summary> {
     const line = (ok: boolean, kept: number, rejected: Partial<Record<Rule, number>>, model: string | null) =>
       log(JSON.stringify({ card_id: card.card_id, ok, kept, rejected, model, ms: Date.now() - t0 }))
     const text = await textOf(card)
+    if (text === null) {
+      summary.stopped = 'deadline'
+      break
+    }
     const ctx = { title: card.title, text }
     if (text.length < 200) {
       summary.skipped++
@@ -168,7 +181,8 @@ export async function run(o: Options): Promise<Summary> {
         break
       }
       failures = 0
-      model = reply.model
+      // Un second 2xx sans model garde celui du premier : quiz_store refuserait un model vide.
+      model = reply.model ?? model
       const v = reply.questions ? validate([...kept, ...reply.questions], ctx) : { kept, rejected: { json: 1 } }
       kept = v.kept
       add(rejected, v.rejected)
@@ -225,7 +239,7 @@ export function cliOptions(argv: string[]): Omit<Options, 'input' | 'store' | 'a
 
 async function main(): Promise<number> {
   const { input, ...o } = cliOptions(process.argv.slice(2))
-  // --input sans --dry-run lirait quand même la vraie file, écritures comprises.
+  // --input sans --dry-run n'a pas de base : sa première écriture finirait en {"fatal":"store"}.
   if (!o.baseUrl || (input !== undefined && !o.dryRun)) throw new Fatal('usage')
   let cards: QueueCard[] | undefined
   if (input !== undefined) {
@@ -249,8 +263,10 @@ async function main(): Promise<number> {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exitCode = await main().catch((e: unknown) => {
+  const code = await main().catch((e: unknown) => {
     console.log(JSON.stringify({ fatal: e instanceof Fatal ? e.message : 'internal' }))
     return 1
   })
+  // Arrêt net, comme catalog/src/cli.ts : une lecture de Wikipédia perdue contre l'échéance ne doit pas retenir le job.
+  process.exit(code)
 }
