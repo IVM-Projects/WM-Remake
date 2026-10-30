@@ -150,6 +150,7 @@ declare
     desormais,aujourd,hui,presque,surtout,seulement,vraiment,ensuite,enfin,devant,derriere,autour,partir,nombreux,nombreuses,votre,notre}';
   r record; v_w text; v_n text; v_d text[]; v_b int; v_s int; v_k int; v_q jsonb; v_m int; v_try int; v_hi boolean; v_lo boolean;
   v_most boolean;
+  v_pre jsonb;                    -- banque avant T5, d'où T5 est rejoué
 begin
   select * into c from public.cards where id = p_card_id;
   if not found then
@@ -158,10 +159,13 @@ begin
   v_long := char_length(c.wikipedia_title) > 80;
   v_text := wm.quiz_norm(concat_ws(' ', c.wikipedia_title, c.category, c.summary));
 
-  -- Pairs (C9) : jusqu'à 30 cartes de sa rareté par des seq tirés dans 1..n, ou de tout le pool quand elle en a trop peu.
+  -- Pairs (C9) : jusqu'à 30 cartes de sa rareté par des seq tirés dans 1..n, toute sa rareté si elle en a 31 au plus (30 tirages avec
+  -- remise y oublient souvent une carte : 2 % des appels sur 6 cartes), ou de tout le pool quand elle en a trop peu.
   v_m := coalesce((select n from wm.catalog_stats where rarity = c.rarity), 0);
   if v_m < (case when v_long then 5 else 4 end) then
     v_peers := array(select card_id from wm.draw_pool where card_id <> p_card_id order by random() limit 30);
+  elsif v_m <= 31 then
+    v_peers := array(select card_id from wm.draw_pool where rarity = c.rarity and card_id <> p_card_id order by random());
   else
     v_peers := array(select p.card_id from (select o, 1 + floor(random() * v_m)::int s from generate_series(1, 30) o) x
       join wm.draw_pool p on p.rarity = c.rarity and p.seq = x.s where p.card_id <> p_card_id group by p.card_id order by min(x.o));
@@ -277,45 +281,54 @@ begin
   end if;
 
   -- T5 (vues, C9) : la carte et 3 pairs, ou 4 pairs pour un titre long ; « le plus » si la bonne réponse dépasse la suivante de 10 % au
-  -- moins (entiers), « le moins » de même, jamais une égalité ; jusqu'à 200 combinaisons par question.
+  -- moins (entiers), « le moins » de même, jamais une égalité ; jusqu'à 200 combinaisons par question. Le tirage, glouton, peut prendre
+  -- la seule combinaison d'une bonne réponse (quiz_fits refuse les mêmes 4 titres deux fois) : T5 est rejoué depuis la banque d'avant
+  -- lui, 10 fois au plus, jusqu'à battle.questions (le premier tour est le tirage d'avant ce rejeu).
   select array_agg(p.t order by p.i), array_agg(p.v order by p.i) into v_tt, v_tv
   from unnest(v_pt, v_pv) with ordinality p (t, v, i) where char_length(p.t) <= 80;
-  v_m := 0;
-  while v_m < 3 and jsonb_array_length(v_out) < (b ->> 'pool')::int loop
-    v_try := 0;
-    loop
-      v_try := v_try + 1;
-      exit when v_try > 200;
-      select array_agg(t order by v desc), array_agg(v order by v desc) into v_t4, v_v4 from (
-        select c.wikipedia_title t, c.pageviews::bigint v where not v_long
-        union all
-        select v_tt[i], v_tv[i] from (select i from generate_series(1, coalesce(cardinality(v_tt), 0)) i order by random()
-          limit case when v_long then 4 else 3 end) x) y;
-      exit when cardinality(v_t4) is distinct from 4;
-      v_hi := v_v4[1] > v_v4[2] and 10 * v_v4[1] >= 11 * v_v4[2];
-      v_lo := v_v4[4] < v_v4[3] and 11 * v_v4[4] <= 10 * v_v4[3];
-      continue when not (v_hi or v_lo);
-      v_most := case when v_hi and v_lo then random() < 0.5 else v_hi end;
-      v_w := case when v_most then v_t4[1] else v_t4[4] end;
-      v_q := jsonb_build_object('kind', 'views',
-        'prompt', format('Lequel de ces articles a été le %s consulté sur Wikipédia le mois dernier ?', case when v_most then 'plus' else 'moins' end),
-        'evidence', (select string_agg(format('« %s » : %s vues', t, v), ' ; ' order by i) from unnest(v_t4, v_v4) with ordinality x (t, v, i)));
-      v_t4 := array(select t from unnest(v_t4) t order by random());
-      v_q := v_q || jsonb_build_object('options', to_jsonb(v_t4), 'correct', array_position(v_t4, v_w) - 1);
-      if wm.quiz_fits(v_out, v_q, c.wikipedia_title) then
-        v_out := v_out || v_q;
-        v_m := v_m + 1;
-        exit;
-      end if;
+  v_pre := v_out;
+  for v_round in 1..10 loop
+    v_out := v_pre;
+    v_m := 0;
+    while v_m < 3 and jsonb_array_length(v_out) < (b ->> 'pool')::int loop
+      v_try := 0;
+      loop
+        v_try := v_try + 1;
+        exit when v_try > 200;
+        select array_agg(t order by v desc), array_agg(v order by v desc) into v_t4, v_v4 from (
+          select c.wikipedia_title t, c.pageviews::bigint v where not v_long
+          union all
+          select v_tt[i], v_tv[i] from (select i from generate_series(1, coalesce(cardinality(v_tt), 0)) i order by random()
+            limit case when v_long then 4 else 3 end) x) y;
+        exit when cardinality(v_t4) is distinct from 4;
+        v_hi := v_v4[1] > v_v4[2] and 10 * v_v4[1] >= 11 * v_v4[2];
+        v_lo := v_v4[4] < v_v4[3] and 11 * v_v4[4] <= 10 * v_v4[3];
+        continue when not (v_hi or v_lo);
+        v_most := case when v_hi and v_lo then random() < 0.5 else v_hi end;
+        v_w := case when v_most then v_t4[1] else v_t4[4] end;
+        v_q := jsonb_build_object('kind', 'views',
+          'prompt', format('Lequel de ces articles a été le %s consulté sur Wikipédia le mois dernier ?', case when v_most then 'plus' else 'moins' end),
+          'evidence', (select string_agg(format('« %s » : %s vues', t, v), ' ; ' order by i) from unnest(v_t4, v_v4) with ordinality x (t, v, i)));
+        v_t4 := array(select t from unnest(v_t4) t order by random());
+        v_q := v_q || jsonb_build_object('options', to_jsonb(v_t4), 'correct', array_position(v_t4, v_w) - 1);
+        if wm.quiz_fits(v_out, v_q, c.wikipedia_title) then
+          v_out := v_out || v_q;
+          v_m := v_m + 1;
+          exit;
+        end if;
+      end loop;
+      exit when v_try > 200 or cardinality(v_t4) is distinct from 4;
     end loop;
-    exit when v_try > 200 or cardinality(v_t4) is distinct from 4;
+    exit when jsonb_array_length(v_out) >= (b ->> 'questions')::int;
   end loop;
 
   v_out := (select coalesce(jsonb_agg(e order by i), '[]') from jsonb_array_elements(v_out) with ordinality t (e, i)
     where i <= (b ->> 'pool')::int);
   if jsonb_array_length(v_out) < (b ->> 'questions')::int then
-    -- shortcut: un pool de moins de 5 cartes aux vues distinctes (6 pour une carte au titre de plus de 80 caractères) ne donne pas
-    -- 3 questions ; impossible sur la démo et le banc.
+    -- shortcut: une carte sans texte utile n'a que T5, dont chaque question demande une autre combinaison de 4 titres aux vues
+    -- distinctes : un pool de moins de 5 cartes, ou une rareté de 4 (5 pour un titre de plus de 80 caractères, qui prend 4 pairs), n'en
+    -- a qu'une. À 5 et 6 cartes, pairs sans remise et rejeu de T5 n'ont manqué aucun des 14 000 appels mesurés (13 % de manques avant
+    -- eux à 5 cartes) ; jamais sur la démo, dont la plus petite rareté compte environ 77 cartes.
     raise exception 'template_quiz : % questions pour la carte %', jsonb_array_length(v_out), p_card_id using errcode = 'XX000';
   end if;
   return v_out;
