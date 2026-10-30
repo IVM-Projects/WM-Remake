@@ -64,12 +64,13 @@ test('parcours M5a au clavier : défi → cloche → acceptation → decks → s
     }
     const [ap, bp] = await Promise.all(contexts.map((c) => c.newPage()))
 
-    // 2. Chaque réponse d'une adresse de bataille, avec le joueur qui l'a reçue. Un corps perdu ou illisible rend null, sans rejet hors du
-    // test : avant l'étape 8, aucun n'est permis (compté là) ; après, la fermeture des contextes peut en perdre.
-    const bodies: Promise<Kept | null>[] = []
+    // 2. Chaque réponse d'une adresse de bataille, avec le joueur qui l'a reçue. Un corps perdu ou illisible rend { lost } (méthode et URL,
+    // pour le diagnostic), sans rejet hors du test : avant l'étape 8, aucun n'est permis (compté là) ; après, la fermeture des contextes
+    // peut en perdre.
+    const bodies: Promise<Kept | { lost: string }>[] = []
     for (const [page, u] of [[ap, a], [bp, b]] as const) {
       page.on('response', (r) => {
-        if (isBattle(r.url())) bodies.push(r.body().then((b) => ({ who: u.uid, method: r.request().method(), action: r.request().postDataJSON()?.action ?? null, questionId: r.request().postDataJSON()?.questionId ?? null, body: b.toString() })).catch(() => null))
+        if (isBattle(r.url())) bodies.push(r.body().then((b) => ({ who: u.uid, method: r.request().method(), action: r.request().postDataJSON()?.action ?? null, questionId: r.request().postDataJSON()?.questionId ?? null, body: b.toString() })).catch(() => ({ lost: `${r.request().method()} ${r.url()}` })))
       })
     }
 
@@ -148,8 +149,8 @@ where d.battle_id = :'id'`, { id })).toBe(Array(6).fill('template').join(','))
     // réponse à sa propre question ; aucune clé interdite à aucune profondeur.
     // Les deux contextes sont ouverts et l'app n'interrompt aucune lecture : aucun corps perdu.
     const all = await Promise.all(bodies)
-    expect(all.filter((x) => x === null), 'corps perdus avant la fermeture').toHaveLength(0)
-    const kept = all.filter((x) => x !== null)
+    expect(all.filter((x) => 'lost' in x), 'corps perdus avant la fermeture').toEqual([])
+    const kept = all.filter((x): x is Kept => !('lost' in x))
     expect(kept.filter((x) => x.action === 'submit_single_answer'), 'réponses aux 18 questions gardées').toHaveLength(18)
     const secrets = sql(`select question_id || ' ' || correct_option_id || ' ' || defender_id from wm.battle_secrets where battle_id = :'id'`, { id }).split('\n').map((l) => l.split(' '))
     expect(secrets).toHaveLength(18)

@@ -180,7 +180,8 @@ do $$ declare
   dry uuid := pg_temp.bcard('Lac de Sérane', 'R', 1000, 1000, 1600, 'lac de montagne',
     'Le lac occupe le fond d''une ancienne vallée glaciaire, au pied de sommets enneigés une grande partie de l''année. Ses eaux froides '
     || 'abritent truites et ombles. Un sentier suit une crête abrupte, puis une route étroite, et offre une vue parfaite sur toute la vallée.');
-  s text := format('Le théâtre, rénové en %s pour accueillir de grands spectacles, rouvre ses portes au public.', extract(year from now()));
+  -- 1001 : trop près de l'an 1000 pour trois distracteurs de T3 (quiz_steps vide), et lu par sa regex quelle que soit l'année courante.
+  s text := 'Le théâtre, rénové en 1001 pour accueillir de grands spectacles, rouvre ses portes au public.';
   th uuid := pg_temp.bcard('Théâtre de Valmont', 'R', 1000, 1000, 2100, 'salle de spectacle', s);
   b jsonb;
 begin
@@ -198,7 +199,7 @@ begin
     'résumé sans année : ' || b::text;
   b := wm.template_quiz(th);
   assert exists (select from jsonb_array_elements(b) q where q ->> 'kind' = 'word' and q ->> 'evidence' = s),
-    'phrase à l''année courante perdue pour T4 : ' || b::text;
+    'phrase à l''année inutilisable par T3 perdue pour T4 : ' || b::text;
 end $$;
 
 -- T5 sur 6 Légendaires aux vues du seed (13 % d'écart au plus serré) : 3 views chacune, bonnes réponses distinctes, écart de 10 % au
@@ -343,14 +344,16 @@ begin
   assert bad is null, 'tirages fautifs : ' || bad;
 end $$;
 
--- Position de la bonne option sur 1 000 tirages : χ² < 16,266 (3 ddl, p = 0,001 : gen_random_uuid() échappe à setseed, C7).
+-- Position de la bonne option sur 1 000 tirages : χ² < 30,66 (3 ddl, p ≈ 1e-6 : gen_random_uuid() échappe à setseed, C7, et le test
+-- n'est pas rejouable ; à p = 0,001, un tirage juste échouait un run sur 1 000). Un biais réel dépasse de loin : la bonne option toujours
+-- à la même place donne χ² = 3 000, en tête une fois sur deux environ 330.
 do $$ declare chi float8; begin
   with d as materialized (select wm.quiz_draw(jsonb_build_array(pg_temp.vq('fleuve')), '{}', 1) -> 0 x from generate_series(1, 1000)),
   p as (select (select i - 1 from jsonb_array_elements(x -> 'options') with ordinality o (v, i) where v ->> 'id' = x ->> 'correct_option_id') k
     from d),
   g as (select count(p.k) o from generate_series(0, 3) s left join p on p.k = s group by s)
   select sum((o - 250) ^ 2 / 250.0) into chi from g;
-  assert chi < 16.266, format('position de la bonne option : χ² = %s', chi);
+  assert chi < 30.66, format('position de la bonne option : χ² = %s', chi);
 end $$;
 
 -- Volatilité.

@@ -569,7 +569,8 @@ async function both(browser: Browser, baseURL: string | undefined, users: User[]
     }
     await run(await Promise.all(contexts.map((c) => c.newPage())))
   } finally {
-    for (const c of contexts) await c.close()
+    // allSettled : une fermeture en échec ne masque pas l'erreur du test et n'empêche pas la suppression des joueurs.
+    await Promise.allSettled(contexts.map((c) => c.close()))
     sql(`delete from auth.users where id = any(string_to_array(:'uids', ',')::uuid[])`, { uids: users.map((u) => u.uid).join(',') })
   }
 }
@@ -1069,10 +1070,6 @@ test('360 px, en quiz, énoncé de 200 caractères : aucun défilement horizonta
 
 // ─── Arène, fix round 1 ───
 
-// Plus aucun minuteur hors de runFor : le poll ne passe qu'à la demande. Sans garde de temps (openFrozen) : là où il sert, un poll passé
-// avant l'arrêt relit le même état.
-const freeze = async (page: Page) => page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000))
-
 test('« Abandonner » confirmé pendant le retour d\'une réponse → « Défaite » focalisé, le retour effacé', async ({ page, login }) => {
   const me = await viewer(login)
   const friend = player()
@@ -1197,9 +1194,7 @@ test('question déjà répondue ailleurs (juste, par sql) puis une autre option 
   befriend(me, friend)
   const { id } = active(friend, me)
   const [q1] = attack(friend, id)
-  await page.clock.install()
-  await enter(page, id)
-  await freeze(page)
+  await openFrozen(page, id)
   await expect(question(page, 1)).toBeVisible()
   answer(me, id, q1)
   await page.locator(`main input[type=radio][value="${option(id, q1, false)}"]`).check()
@@ -1213,9 +1208,7 @@ test('refus d\'une attaque (déjà faite ailleurs, par sql) : l\'alerte sous l\'
   const friend = player()
   befriend(me, friend)
   const { id, ca } = active(me, friend)
-  await page.clock.install()
-  await enter(page, id)
-  await freeze(page)
+  await openFrozen(page, id)
   const qs = attack(me, id)
   await press(cardIn(page, me, ca[1]).getByRole('button', { name: 'Attaquer' }))
   await expect(arenaAlert(page)).toHaveText('Ce n\'est pas à toi d\'attaquer')
@@ -1231,9 +1224,7 @@ test('arène devenue introuvable au poll (404), focus sur « Retirer le défi »
   const friend = player()
   befriend(me, friend)
   const id = challenge(me, friend)
-  await page.clock.install()
-  await enter(page, id)
-  await freeze(page)
+  await openFrozen(page, id)
   await page.getByRole('button', { name: 'Retirer le défi' }).focus()
   const gone = 'Bataille introuvable'
   await routeOnce(page, '**/api/battles/*', (r) => r.fulfill({ status: 404, json: { status: 404, error: gone, message: gone } }),
@@ -1248,9 +1239,7 @@ test('refus d\'une attaque, un passage du poll pendant la relecture du refus : l
   const friend = player()
   befriend(me, friend)
   const { id, ca } = active(me, friend)
-  await page.clock.install()
-  await enter(page, id)
-  await freeze(page)
+  await openFrozen(page, id)
   attack(me, id)
   // La relecture qui suit le refus est retenue le temps de faire passer l'horloge du poll ; seule la première lecture après le PATCH l'est.
   let armed = false
@@ -1277,8 +1266,12 @@ test('refus d\'une attaque, un passage du poll pendant la relecture du refus : l
   }
   await expect(line(page, `${friend.username} répond aux questions : 0 / 3`)).toBeVisible()
   await expect(arenaAlert(page)).toHaveText('Ce n\'est pas à toi d\'attaquer')
-  // Horloge arrêtée : l'attente se fait côté test (settle passerait par un setTimeout de la page).
+  // Un passage du poll, relâché, sur le même écran : l'alerte reste (horloge arrêtée, l'attente se fait côté test).
+  const polled = page.waitForResponse((r) => arenaReads(id)(r.request()))
+  await page.clock.runFor(3_000)
+  await polled
   await wait(300)
+  await expect(line(page, `${friend.username} répond aux questions : 0 / 3`)).toBeVisible()
   await expect(arenaAlert(page)).toHaveText('Ce n\'est pas à toi d\'attaquer')
 })
 
