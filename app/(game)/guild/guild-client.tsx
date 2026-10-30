@@ -1,9 +1,12 @@
 'use client'
 
 import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { Thread } from '@/components/dms/Thread'
+import { GuildBoard } from '@/components/guild/GuildBoard'
+import { GuildHelp } from '@/components/guild/GuildHelp'
 import { ChefPill, GuildMembers } from '@/components/guild/GuildMembers'
 import { NoGuild } from '@/components/guild/NoGuild'
-import { isNoGuild, membersLabel, type GuildState } from '@/components/guild/types'
+import { isGuildState, isNoGuild, membersLabel, type GuildState } from '@/components/guild/types'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
 import { danger, ghost } from '@/components/ui/button'
@@ -16,12 +19,9 @@ import { api, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { unreadStore } from '@/lib/notifications'
 
 const entry = navEntry('/guild')
-// La Task 16 y ajoute Chat (par défaut), Entraide et Classement.
-const TABS = ['members'] as const
+const TABS = ['chat', 'help', 'members', 'board'] as const
 type Tab = (typeof TABS)[number]
-const LABELS: Record<Tab, string> = { members: 'Membres' }
-
-const readable = (r: unknown): r is GuildState => typeof r === 'object' && r !== null && 'guild' in r && Array.isArray((r as GuildState).invites)
+const LABELS: Record<Tab, string> = { chat: 'Chat', help: 'Entraide', members: 'Membres', board: 'Classement' }
 
 // /guild : sans guilde (invitations, création) ou membre (en-tête, onglets). Relue à chaque affichage et à chaque version de la cloche
 // (une invitation ou une exclusion y arrive) ; l'état vient de /api/guilds, l'identité du joueur de son adhésion.
@@ -29,7 +29,7 @@ export function GuildClient() {
   const id = useId()
   const [state, setState] = useState<GuildState | null>(null)
   const [failed, setFailed] = useState(false)
-  const [tab, setTab] = useState<Tab>('members')
+  const [tab, setTab] = useState<Tab>('chat')
   const [leaving, setLeaving] = useState(false)
   const [busy, setBusy] = useState(false)
   const [leaveError, setLeaveError] = useState<string | null>(null)
@@ -39,8 +39,6 @@ export function GuildClient() {
   // Générations : une lecture partie avant la dernière appliquée est jetée.
   const gen = useRef(0)
   const applied = useRef(0)
-  // Départ volontaire en cours : la relecture qui suit n'annonce pas « Tu ne fais plus partie… ».
-  const quiet = useRef(false)
   // Cible du focus après le rendu qui suit : le h1 (départ, « Réessayer ») ou le nom de la guilde (rejoint, créée, chef nommé).
   const focusTo = useRef<'h1' | 'h2' | null>(null)
   const h1 = useRef<HTMLHeadingElement>(null)
@@ -49,7 +47,7 @@ export function GuildClient() {
 
   const apply = (r: GuildState) => {
     const prev = stateRef.current
-    if (prev?.guild && !r.guild && !quiet.current) toast('Tu ne fais plus partie de cette guilde.')
+    if (prev?.guild && !r.guild) toast('Tu ne fais plus partie de cette guilde.')
     stateRef.current = r
     setState(r)
     setFailed(false)
@@ -60,7 +58,7 @@ export function GuildClient() {
     return api<unknown>('/api/guilds').catch(() => null).then((r) => {
       if (g < applied.current) return
       applied.current = g
-      if (readable(r)) apply(r)
+      if (isGuildState(r)) apply(r)
       else setFailed(true)
     })
   }
@@ -76,8 +74,8 @@ export function GuildClient() {
     el.focus()
   }, [state])
 
+  // État rendu par une écriture (guilde rejointe, créée, quittée) : il prime sur toute lecture partie avant.
   const joined = (s: GuildState) => {
-    focusTo.current = 'h2'
     applied.current = ++gen.current
     apply(s)
   }
@@ -87,6 +85,7 @@ export function GuildClient() {
     void read()
   }
 
+  const focusTab = () => root.current?.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus()
   const member = state?.guild && state.membership ? { guild: state.guild, membership: state.membership } : null
   const blocked = member?.membership.role === 'leader' && state!.member_count > 1
 
@@ -98,11 +97,12 @@ export function GuildClient() {
     try {
       await apiOnce(keys.current, 'leave', '/api/guilds/leave', { method: 'POST' })
       toast('Tu as quitté la guilde.')
+      // État sans guilde posé tout de suite, les lectures parties avant jetées : une relecture qui échoue ou se perd ne ramène ni la vue
+      // membre, ni « Tu ne fais plus partie… » (l'état d'avant n'a plus de guilde). La relecture suivante complète les invitations.
       focusTo.current = 'h1'
-      quiet.current = true
+      joined({ guild: null, membership: null, member_count: 0, invites: state?.invites ?? [] })
       setLeaving(false)
       await read()
-      quiet.current = false
     } catch (e) {
       if (isNoGuild(e)) return void read()
       setLeaveError(unsure(e) ? UNSURE : userMessage(e, 'L\'action n\'a pas abouti.'))
@@ -123,7 +123,7 @@ export function GuildClient() {
       {!state ? (
         failed ? <LoadError onRetry={retry} /> : <Loading label="Chargement de la guilde" />
       ) : !member ? (
-        <NoGuild invites={state.invites} onState={joined} onRead={read} />
+        <NoGuild invites={state.invites} onState={(s) => { focusTo.current = 'h2'; joined(s) }} onRead={read} />
       ) : (
         <>
           <div className="card-frame flex flex-wrap items-start justify-between gap-4 p-6">
@@ -159,13 +159,21 @@ export function GuildClient() {
               ))}
             </div>
             <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${tab}`}>
-              <GuildMembers
-                me={member.membership.user_id}
-                onLost={() => void read()}
-                onChanged={() => void read()}
-                onHeading={() => h2.current?.focus()}
-                onTab={() => root.current?.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus()}
-              />
+              {tab === 'chat' && (
+                <Thread channel={{ kind: 'guild' }} me={member.membership.user_id} onSent={() => {}} onSettled={() => {}} onGone={() => void read()} />
+              )}
+              {tab === 'help' && <GuildHelp onLost={() => void read()} onTab={focusTab} />}
+              {tab === 'members' && (
+                <GuildMembers
+                  me={member.membership.user_id}
+                  isLeader={member.membership.role === 'leader'}
+                  onLost={() => void read()}
+                  onChanged={() => void read()}
+                  onHeading={() => h2.current?.focus()}
+                  onTab={focusTab}
+                />
+              )}
+              {tab === 'board' && <GuildBoard onTab={focusTab} />}
             </div>
           </div>
 

@@ -48,7 +48,7 @@ const READY: Record<string, string> = {
   '/battle': 'main [data-ready]',
   // Bataille lue (ou introuvable, ou en échec), session connue.
   '/battle/[id]': 'main [data-ready]',
-  // Guilde et session lues (ou en échec).
+  // État de la guilde lu (ou l'échec) ; l'identité du joueur vient de son adhésion, pas d'une lecture de session.
   '/guild': 'main [data-ready]',
 }
 
@@ -506,5 +506,43 @@ test('axe /guild : sans guilde (une invitation), membre (onglet Membres, chef), 
   } finally {
     if (guild) sql(`delete from public.guilds where id = :'g'`, { g: guild })
     sql(`delete from auth.users where id in (:'me', :'l', :'m')`, { me: me.uid, l: leader.uid, m: mate.uid })
+  }
+})
+
+test('axe /guild : Chat (deux messages), Entraide (un souhait, modale « Donner », puis le choix d\'une carte à demander), Classement', async ({ page, login }) => {
+  const me = await login()
+  const mate = makePlayer()
+  let guild: string | undefined
+  try {
+    guild = makeGuild(mate, [me])
+    sql(`insert into public.guild_chat_messages (guild_id, user_id, content) values (:'g', :'a', 'Salut'), (:'g', :'b', 'Bonjour')`, { g: guild, a: mate.uid, b: me.uid })
+    const [copy] = giveCopies(me, 'R', 1)
+    sql(`select wm.guild_wish_set(:'u', (select card_id from public.user_cards where id = :'c'))`, { u: mate.uid, c: copy })
+    // Classement posé : le réel est partagé en cache entre les tests.
+    await page.route('**/api/guilds/leaderboard', (r) => r.fulfill({ json: {
+      entries: [{ rank: 1, guild_id: guild, guild_name: 'Notre guilde', member_count: 2, score_battles: 500, score_wb: 7, total_score: 507 }],
+      week_start: '2026-10-26T00:00:00.000Z', week_end: '2026-11-02T00:00:00.000Z', season: 'S53', reset_in_ms: 3_600_000, user_guild_id: guild } }))
+    await page.goto('/guild')
+    await page.locator(READY['/guild']).waitFor()
+    // Deux messages et le séparateur du jour.
+    await expect(page.getByRole('log', { name: 'Chat de la guilde' }).getByRole('listitem')).toHaveCount(3)
+    await expectNoSeriousViolations(page)
+    await page.getByRole('tab', { name: 'Entraide' }).click()
+    await expect(page.getByRole('button', { name: 'Donner' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Donner' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Annuler' }).click()
+    await page.getByRole('button', { name: 'Demander une carte' }).click()
+    await expect(page.getByRole('dialog', { name: 'Choisir une carte à demander' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Annuler' }).click()
+    await page.getByRole('tab', { name: 'Classement' }).click()
+    await expect(page.getByRole('table')).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    if (guild) sql(`delete from public.guilds where id = :'g'`, { g: guild })
+    sql(`delete from auth.users where id in (:'me', :'m')`, { me: me.uid, m: mate.uid })
   }
 })

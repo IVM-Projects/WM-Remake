@@ -23,9 +23,10 @@ const readable = (r: MemberPage | null): MemberPage | null => (Array.isArray(r?.
 const fail = (e: unknown) => (unsure(e) ? UNSURE : userMessage(e, 'L\'action n\'a pas abouti.'))
 
 // Onglet « Membres » : le chef d'abord, 50 par page. Exclusion et transfert (chef seulement) confirmés en modale ; « Inviter un ami » pour tous.
-// onLost : un 404 « aucune guilde » (exclu entre-temps) ; onChanged : relire la guilde ; onHeading / onTab : cibles du focus.
-export function GuildMembers({ me, onLost, onChanged, onHeading, onTab }: {
-  me: string; onLost: () => void; onChanged: () => void; onHeading: () => void; onTab: () => void
+// isLeader : le rôle de l'adhésion lue par la page. onLost : un 404 « aucune guilde » (exclu entre-temps) ; onChanged : relire la guilde ;
+// onHeading / onTab : cibles du focus.
+export function GuildMembers({ me, isLeader, onLost, onChanged, onHeading, onTab }: {
+  me: string; isLeader: boolean; onLost: () => void; onChanged: () => void; onHeading: () => void; onTab: () => void
 }) {
   const id = useId()
   const [members, setMembers] = useState<Member[] | null>(null)
@@ -39,6 +40,8 @@ export function GuildMembers({ me, onLost, onChanged, onHeading, onTab }: {
   const inflight = useRef(false)
   const keys = useRef(new Map<string, string>())
   const gen = useRef(0)
+  // Lignes déjà lues côté serveur : le décalage de la page suivante, que l'exclusion d'un membre ne raccourcit pas.
+  const offset = useRef(0)
   const list = useRef<HTMLUListElement>(null)
   // Cible du focus quand l'élément focalisé disparaît : rang de l'« Exclure » retiré, ou le titre de la guilde.
   const pending = useRef<number | 'heading' | 'tab' | null>(null)
@@ -54,6 +57,7 @@ export function GuildMembers({ me, onLost, onChanged, onHeading, onTab }: {
     void load(0).then((r) => {
       if (r === undefined) return
       if (r) {
+        offset.current = r.members.length
         setMembers(r.members)
         setHasMore(r.hasMore)
       }
@@ -62,9 +66,10 @@ export function GuildMembers({ me, onLost, onChanged, onHeading, onTab }: {
   }
   function more() {
     setMoreFailed(false)
-    void load(members?.length ?? 0).then((r) => {
+    void load(offset.current).then((r) => {
       if (r === undefined) return
       if (!r) return setMoreFailed(true)
+      offset.current += r.members.length
       setMembers((m) => [...(m ?? []), ...r.members.filter((x) => !m?.some((y) => y.user_id === x.user_id))])
       setHasMore(r.hasMore)
     })
@@ -80,6 +85,8 @@ export function GuildMembers({ me, onLost, onChanged, onHeading, onTab }: {
   const refocus = useEffectEvent(() => {
     const p = pending.current
     if (p === null || (members === null && !failed)) return
+    // Transfert : « Exclure » ne disparaît (le focus tombe sur body) qu'avec la relecture de la guilde, qui retire le rôle de chef.
+    if (p === 'heading' && isLeader) return
     pending.current = null
     if (document.activeElement !== document.body) return
     if (p === 'tab') return onTab()
@@ -87,10 +94,9 @@ export function GuildMembers({ me, onLost, onChanged, onHeading, onTab }: {
     if (typeof p === 'number' && kicks?.length) return kicks[Math.min(p, kicks.length - 1)].focus()
     onHeading()
   })
-  useEffect(() => refocus(), [members, failed])
+  // isLeader : un « Nommer chef » réussi retire « Exclure » (le focus tombé sur body) quand la relecture de la guilde arrive.
+  useEffect(() => refocus(), [members, failed, isLeader])
 
-  // Le chef est celui de la liste lue ; le transfert le change ici même, avant la relecture de la guilde.
-  const isLeader = members?.find((m) => m.role === 'leader')?.user_id === me
   const others = members?.filter((m) => m.user_id !== me) ?? []
 
   async function confirm() {

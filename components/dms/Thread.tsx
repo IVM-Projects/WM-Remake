@@ -11,22 +11,36 @@ import { unreadStore } from '@/lib/notifications'
 import { usePoll } from '@/lib/poll'
 import { PeerParams } from '@/lib/schemas'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
-import type { Message, Thread as Data } from './types'
+import type { GuildChat, Message, Thread as Data } from './types'
 
 const MAX = 2000
+const GUILD_MAX = 1000
 // Réponse perdue, 5xx ou corps illisible : le message a pu être créé ; renvoyé tel quel, il garde sa clé et le serveur rejoue sa réponse.
 const UNSURE = 'Le message n\'a pas été confirmé : il a peut-être été envoyé. La conversation se met à jour.'
+const GUILD_UNSURE = 'Le message n\'a pas été confirmé : il a peut-être été envoyé. Le chat se met à jour.'
+// En-tête d'un fil de guilde : lu comme un fil d'amis (champ de saisie, pas de pair).
+const GUILD_HEAD: Omit<Data, 'messages'> = { peer: { id: '', username: '', avatar_url: null }, isFriend: true }
+// Un message de guilde est rendu comme un message privé : l'auteur est l'expéditeur.
+const fromGuild = (m: GuildChat): Message => ({ id: m.id, sender_id: m.user_id, recipient_id: '', content: m.content, read: true, created_at: m.created_at, username: m.username })
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
-// Fil avec un pair (/dms?with=<id>), remonté pour chaque pair (key). Lu à chaque affichage (Activity compris), puis toutes les 5 s tant
-// que la page est visible ; le main défile, jamais un conteneur du fil (R§6.3), la saisie collée en bas. Aucun id fixe (useId).
-export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: string; onSent: () => void; onSettled: () => void }) {
+// Fil avec un pair (/dms?with=<id>), remonté pour chaque pair (key), ou chat de la guilde (G13 : même fil, autre canal). Lu à chaque
+// affichage (Activity compris), puis toutes les 5 s tant que la page est visible ; le main défile, jamais un conteneur du fil (R§6.3), la
+// saisie collée en bas. Aucun id fixe (useId). Chat de guilde : /api/guilds/chat, 1 000 caractères, pseudo au-dessus de la bulle d'un autre,
+// ni pair, ni marquage lu, ni « Joueur introuvable » ; un 404 (plus de guilde) appelle onGone.
+export function Thread({ channel, me, onSent, onSettled, onGone }: {
+  channel: { kind: 'dm'; peerId: string } | { kind: 'guild' }; me: string; onSent: () => void; onSettled: () => void; onGone?: () => void
+}) {
+  const guild = channel.kind === 'guild'
+  const peerId = channel.kind === 'dm' ? channel.peerId : ''
+  const path = guild ? '/api/guilds/chat' : `/api/chat/${encodeURIComponent(peerId)}`
+  const max = guild ? GUILD_MAX : MAX
   const id = useId()
   const [head, setHead] = useState<Omit<Data, 'messages'> | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [failed, setFailed] = useState(false)
   // Adresse qui n'est pas un UUID (règle de la route) : introuvable d'emblée, sans requête (`/api/chat/.` mènerait à la liste).
-  const [missing, setMissing] = useState(() => !PeerParams.safeParse({ peerId }).success)
+  const [missing, setMissing] = useState(() => !guild && !PeerParams.safeParse({ peerId }).success)
   const [value, setValue] = useState('')
   // Un envoi à la fois : aria-disabled et garde, jamais disabled ; le champ en readOnly.
   const [sending, setSending] = useState(false)
@@ -43,7 +57,8 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
   // Messages affichés, à jour avant leur rendu : la nouveauté d'une lecture ou d'un envoi s'y mesure.
   const shown = useRef<Message[]>([])
   // Défilement au rendu suivant : à l'ouverture, puis pour un message nouveau quand le joueur était en bas.
-  const stick = useRef<ScrollBehavior | null>('instant')
+  // Chat de guilde : la page garde son en-tête et ses onglets à l'ouverture, seuls les messages nouveaux défilent.
+  const stick = useRef<ScrollBehavior | null>(guild ? null : 'instant')
   const root = useRef<HTMLDivElement>(null)
   const items = useRef<HTMLOListElement>(null)
   const bottom = useRef<HTMLDivElement>(null)
@@ -77,19 +92,28 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
   const read = () => {
     const g = ++gen.current
     const started = performance.now()
-    return api<Data | null>(`/api/chat/${encodeURIComponent(peerId)}`).then((r) => {
+    return api<Data | { messages: GuildChat[] } | null>(path).then((r) => {
       if (g !== gen.current || started < hold.current) return
       // 2xx au corps illisible (api() rend null) ou sans `messages` : une lecture en échec ; le fil affiché reste, brouillon compris.
-      if (!Array.isArray(r?.messages) || !r.peer) return setFailed(true)
-      setHead({ peer: r.peer, isFriend: r.isFriend })
-      if (show(r.messages)) setError((e) => (e?.unsure ? null : e))
+      if (!Array.isArray(r?.messages)) return setFailed(true)
+      if (guild) {
+        setHead(GUILD_HEAD)
+        if (show((r.messages as GuildChat[]).map(fromGuild))) setError((e) => (e?.unsure ? null : e))
+        return setFailed(false)
+      }
+      const t = r as Data
+      if (!t.peer) return setFailed(true)
+      setHead({ peer: t.peer, isFriend: t.isFriend })
+      if (show(t.messages)) setError((e) => (e?.unsure ? null : e))
       setFailed(false)
       // Onglet caché : rien de lu ; au retour en visible, le poll relit tout de suite (lib/poll.ts) et marque alors.
-      if (live.current && document.visibilityState === 'visible' && r.messages.some((m) => m.sender_id === peerId && !m.read)) markRead()
+      if (live.current && document.visibilityState === 'visible' && t.messages.some((m) => m.sender_id === peerId && !m.read)) markRead()
     }, (e) => {
       if (g !== gen.current || started < hold.current) return
-      // Inconnu (404) ou adresse invalide (400) : « Joueur introuvable », plus interrogé. Autre échec : le fil affiché reste.
-      if (e instanceof ApiError && (e.status === 404 || e.status === 400)) setMissing(true)
+      // Guilde : 404, plus de guilde. Fil privé : inconnu (404) ou adresse invalide (400), « Joueur introuvable », plus interrogé.
+      // Autre échec : le fil affiché reste.
+      if (e instanceof ApiError && e.status === 404 && guild) onGone?.()
+      else if (e instanceof ApiError && (e.status === 404 || e.status === 400) && !guild) setMissing(true)
       else setFailed(true)
     })
   }
@@ -143,11 +167,11 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
     inflight.current = true
     setSending(true)
     setError(null)
-    const intent = `send:${peerId}:${content}`
+    const intent = `send:${guild ? 'guild' : peerId}:${content}`
     // Seule la clé de cette intention vaut encore : une autre, gardée, rejouerait sa réponse stockée (leçon de la Task 12).
     for (const k of keys.current.keys()) if (k !== intent) keys.current.delete(k)
     try {
-      const r = await apiOnce<{ message?: Message } | null>(keys.current, intent, `/api/chat/${encodeURIComponent(peerId)}`, {
+      const r = await apiOnce<{ message?: Message | GuildChat } | null>(keys.current, intent, path, {
         method: 'POST',
         body: JSON.stringify({ content }),
       })
@@ -157,15 +181,17 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
       hold.current = performance.now()
       // Succès ou rejeu : fusionné par id, sans seconde bulle si un poll l'a déjà montré. Un 2xx lisible sans `message` est envoyé aussi
       // (apiOnce a oublié sa clé : le renvoyer le doublerait) ; la lecture suivante le montre. Le focus reste dans le champ.
-      const m = r.message
+      const m = r.message && guild ? fromGuild(r.message as GuildChat) : (r.message as Message | undefined)
       if (m?.id && !shown.current.some((x) => x.id === m.id)) show([...shown.current, m])
       setValue('')
       onSent()
     } catch (err) {
+      // Guilde quittée ou exclusion entre-temps : l'écran se relit (le texte est perdu avec le fil).
+      if (guild && err instanceof ApiError && err.status === 404) return void onGone?.()
       const maybe = unsure(err)
       if (!maybe) hold.current = performance.now()
       // Refus : le texte reste dans le champ.
-      setError({ text: userMessage(err, maybe ? UNSURE : 'L\'action n\'a pas abouti.'), unsure: maybe })
+      setError({ text: userMessage(err, maybe ? (guild ? GUILD_UNSURE : UNSURE) : 'L\'action n\'a pas abouti.'), unsure: maybe })
     } finally {
       inflight.current = false
       setSending(false)
@@ -187,18 +213,21 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
   const off = sending || !value.trim()
   return (
     <div ref={root} className="space-y-3">
-      <h2 ref={title} tabIndex={-1} className="text-lg font-bold outline-none">
-        <Link href={profile} className="inline-flex min-h-11 items-center wrap-anywhere text-[var(--color-accent-light)] underline-offset-2 hover:underline">
-          {peer.username}
-        </Link>
-      </h2>
+      {!guild && (
+        <h2 ref={title} tabIndex={-1} className="text-lg font-bold outline-none">
+          <Link href={profile} className="inline-flex min-h-11 items-center wrap-anywhere text-[var(--color-accent-light)] underline-offset-2 hover:underline">
+            {peer.username}
+          </Link>
+        </h2>
+      )}
       {/* Sans rôle sur l'ol ni ses li : un ol au rôle log perdrait sa sémantique de liste (axe listitem). */}
-      <div role="log" aria-label={`Messages avec ${peer.username}`}>
+      <div role="log" aria-label={guild ? 'Chat de la guilde' : `Messages avec ${peer.username}`}>
         {messages.length ? (
           <ol ref={items} className="space-y-2">
             {messages.map((m, i) => {
               const mine = m.sender_id === me
               const day = formatLongDate(m.created_at)
+              const name = guild ? m.username ?? '' : peer.username
               return (
                 <Fragment key={m.id}>
                   {(i === 0 || formatLongDate(messages[i - 1].created_at) !== day) && (
@@ -206,8 +235,11 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
                   )}
                   <li className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
                     <div className={`min-w-0 max-w-[85%] rounded-2xl px-3 py-2 ${mine ? 'bg-[var(--color-accent)]/15' : 'bg-[var(--color-surface-light)]'}`}>
+                      {guild && !mine && (
+                        <Link href={`/profile/${encodeURIComponent(name)}`} className={`${link} wrap-anywhere`}>{name}</Link>
+                      )}
                       <p className="whitespace-pre-wrap wrap-anywhere text-sm">
-                        <span className="sr-only">{mine ? 'Toi : ' : `${peer.username} : `}</span>
+                        <span className="sr-only">{mine ? 'Toi : ' : `${name} : `}</span>
                         {m.content}
                       </p>
                       <time dateTime={m.created_at} className="mt-1 block text-right text-xs text-[var(--color-foreground)]/70">{formatTime(m.created_at)}</time>
@@ -229,7 +261,7 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
               aria-label="Ton message"
               aria-describedby={`${id}-help ${id}-count`}
               value={value}
-              maxLength={MAX}
+              maxLength={max}
               rows={2}
               readOnly={sending}
               onChange={(e) => {
@@ -249,7 +281,7 @@ export function Thread({ peerId, me, onSent, onSettled }: { peerId: string; me: 
               <p id={`${id}-help`} className="text-xs text-[var(--color-foreground)]/70">Entrée pour envoyer, Maj+Entrée pour aller à la ligne.</p>
               <div className="flex items-center gap-3">
                 {/* value.length : unités UTF-16, plus strict que les caractères comptés par le serveur, jamais plus large. */}
-                <span id={`${id}-count`} className="text-xs tabular-nums text-[var(--color-foreground)]/70">{`${formatInt(value.length)} / ${formatInt(MAX)}`}</span>
+                <span id={`${id}-count`} className="text-xs tabular-nums text-[var(--color-foreground)]/70">{`${formatInt(value.length)} / ${formatInt(max)}`}</span>
                 <button type="submit" aria-disabled={off || undefined} className={`${primary} justify-center`}>Envoyer</button>
               </div>
             </div>

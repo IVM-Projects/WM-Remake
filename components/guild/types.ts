@@ -1,3 +1,4 @@
+import type { CardFace } from '@/components/card/Card'
 import { ApiError } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 
@@ -10,7 +11,7 @@ export type Member = { user_id: string; id: string; username: string; role: 'lea
 export type MemberPage = { members: Member[]; hasMore: boolean }
 type Who = { id: string; username: string }
 export type Wish = {
-  id: string; user_id: string; card: { id: string; wikipedia_title: string }; created_at: string; can_donate: boolean
+  id: string; user_id: string; card: CardFace & { id: string }; created_at: string; can_donate: boolean
   recipient_received_today: boolean; user: Who; recipient: Who; my_copies: { id: string; count: number; is_shiny: boolean }[]
 }
 export type GuildHome = {
@@ -28,3 +29,6 @@ export const membersLabel = (n: number): string => (n === 1 ? '1 membre' : `${fo
 export const NO_GUILD = 'Tu n\'es dans aucune guilde'
 // Refus d'une lecture ou d'une écriture d'onglet par un joueur qui n'est plus membre (exclu, guilde dissoute).
 export const isNoGuild = (e: unknown): boolean => e instanceof ApiError && e.status === 404 && e.message === NO_GUILD
+
+// Corps lisible de GET /api/guilds et des écritures qui rendent l'état (join, create) ; un 2xx illisible (null) ne l'est pas.
+export const isGuildState = (r: unknown): r is GuildState => typeof r === 'object' && r !== null && 'guild' in r && Array.isArray((r as GuildState).invites)

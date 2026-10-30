@@ -5,11 +5,10 @@ import { ghost, primary } from '@/components/ui/button'
 import { Section } from '@/components/ui/Section'
 import { apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatShortDate } from '@/lib/format'
-import type { GuildInvite, GuildState } from './types'
+import { isGuildState, type GuildInvite, type GuildState } from './types'
 
 const field = 'w-full min-h-11 rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2 text-sm read-only:opacity-80'
 const counter = 'text-xs text-[var(--color-foreground)]/70'
-const isState = (r: unknown): r is GuildState => typeof r === 'object' && r !== null && 'guild' in r && Array.isArray((r as GuildState).invites)
 
 // Vue sans guilde : invitations reçues (Rejoindre, Refuser) et formulaire de création. Une écriture à la fois (aria-disabled, jamais disabled) ;
 // une issue incertaine garde sa clé (apiOnce) et relit la guilde (onRead). Un succès rend l'état tel quel (onState).
@@ -44,7 +43,7 @@ export function NoGuild({ invites, onState, onRead }: { invites: GuildInvite[]; 
     setFormError(null)
     try {
       const r = await apiOnce<unknown>(keys.current, intent, path, init)
-      if (isState(r)) onState(r)
+      if (isGuildState(r)) onState(r)
       else await onRead()
       after?.()
     } catch (e) {
