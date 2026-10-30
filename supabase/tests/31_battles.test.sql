@@ -58,16 +58,17 @@ $$;
 
 do $$ begin
   assert pg_temp.battle_config() -> 'battle' = '{"questions":3,"pool":6,"quota_free":3,"quota_pro":10,"invite_ttl_h":24,"idle_loss_h":48,
-    "reward_win":50,"reward_loss":10}'::jsonb, pg_temp.battle_config()::text;
+    "reward_win":50,"reward_loss":10,"guild_points_win":500}'::jsonb, pg_temp.battle_config()::text;
   assert pg_temp.battle_config() #> '{list_caps,battles_closed}' = '50', 'list_caps.battles_closed';
   assert (select coalesce(note, '') <> '' from wm.config where key = 'battle'), 'note manquante';
 end $$;
 
--- Rejeu de 1900 : mêmes valeurs, et une valeur déjà posée garde la sienne.
+-- Rejeu de 1900, suivi de 2000 qui redéfinit check_invariants (M5b-18) : mêmes valeurs, et une valeur déjà posée garde la sienne.
 create temp table battle_config as select pg_temp.battle_config() v;
 update wm.config set value = value || '{"quota_free": 5}' where key = 'battle';
 update wm.config set value = value || '{"battles_closed": 7}' where key = 'list_caps';
 \ir ../migrations/1900_wm_battle_core.sql
+\ir ../migrations/2000_wm_progress_core.sql
 do $$ begin
   assert pg_temp.battle_config() = jsonb_set(jsonb_set((select v from battle_config), '{battle,quota_free}', '5'), '{list_caps,battles_closed}', '7'),
     pg_temp.battle_config()::text;
@@ -199,7 +200,7 @@ do $$ declare a uuid; b uuid; c uuid; x uuid; r jsonb; d jsonb;
     d := wm.battles_list(a, 'Europe/Paris');
     assert d -> 'challenge_quota' = jsonb_build_object('used', 1, 'limit', 3, 'resets_at', reset), d::text;
     assert d -> 'rules' = '{"questions":3,"pool":6,"quota_free":3,"quota_pro":10,"invite_ttl_h":24,"idle_loss_h":48,"reward_win":50,
-      "reward_loss":10}', d::text;
+      "reward_loss":10,"guild_points_win":500}', d::text;
     -- Détail d'un pending (C5, C6) : les 8 colonnes, les deux joueurs, expires_at, idle_at nul, game_state nul ; ni deck ni récompense.
     d := wm.battle_detail(b, x);
     assert d = jsonb_build_object('battle', jsonb_build_object('id', x, 'challenger_id', a, 'opponent_id', b, 'winner_id', null,
