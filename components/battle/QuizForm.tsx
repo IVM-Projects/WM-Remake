@@ -5,8 +5,9 @@ import { primary } from '@/components/ui/button'
 import type { PendingAttack } from './types'
 
 type Question = PendingAttack['questions'][number]
-// Retour d'une réponse : l'option choisie, le verdict du serveur et le texte de la bonne option, lu dans les options de la question affichée.
-export type Verdict = { choice: string; correct: boolean; right: string }
+// Retour d'une réponse : l'option choisie (null : démentie par la réponse enregistrée), le verdict du serveur et le texte de la bonne
+// option, lu dans les options de la question affichée.
+export type Verdict = { choice: string | null; correct: boolean; right: string }
 
 const inline = 'font-medium text-[var(--color-accent-light)] underline underline-offset-2'
 
@@ -19,13 +20,13 @@ export function QuizForm({ question, k, n, busy, verdict, source, onAnswer, onCo
   n: number
   busy: boolean
   verdict: Verdict | null
-  source: { title: string; url: string }
+  source: { title: string; url: string } | null
   onAnswer: (answerId: string) => void
   onContinue: () => void
 }) {
   const name = useId()
   const [choice, setChoice] = useState<string | null>(null)
-  const picked = verdict?.choice ?? choice
+  const picked = verdict ? verdict.choice : choice
   const off = busy || !picked
 
   function submit(e: FormEvent) {
@@ -67,13 +68,13 @@ export function QuizForm({ question, k, n, busy, verdict, source, onAnswer, onCo
         )}
       </form>
       {/* Attribution du texte de l'article (C21, D:101, R:553). */}
-      <p className="text-xs text-[var(--color-foreground)]/70 wrap-anywhere">
+      {source && <p className="text-xs text-[var(--color-foreground)]/70 wrap-anywhere">
         {'Questions tirées de l\'article Wikipédia « '}
         <a href={source.url} target="_blank" rel="noopener noreferrer" className={inline}>{source.title}</a>
         {' », texte sous licence '}
         <a href="https://creativecommons.org/licenses/by-sa/4.0/deed.fr" target="_blank" rel="noopener noreferrer" className={inline}>CC BY-SA 4.0</a>
         .
-      </p>
+      </p>}
     </div>
   )
 }

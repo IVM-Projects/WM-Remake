@@ -427,8 +427,8 @@ const ARENA_UNSURE = `${UNSURE} La bataille se met à jour.`
 const fmt = (n: number) => new Intl.NumberFormat('fr-FR').format(n)
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 type Copy = { id: string; card: string; title: string; atk: number; def: number }
-// n copies C du seed (sans image), de cartes distinctes : la copie, sa carte, son titre et ses stats figés.
-const copies = (u: User, n = 3): Copy[] => giveCopies(u, 'C', n).map((id) => JSON.parse(sql(`select json_build_object('id', id, 'card', card_id,
+// n copies du seed (sans image), de cartes distinctes : la copie, sa carte, son titre et ses stats figés.
+const copies = (u: User, n = 3, rarity = 'C'): Copy[] => giveCopies(u, rarity, n).map((id) => JSON.parse(sql(`select json_build_object('id', id, 'card', card_id,
 'title', snapshot_title, 'atk', snapshot_atk, 'def', snapshot_def) from public.user_cards where id = :'id'`, { id })) as Copy)
 const accepted = (a: User, b: User) => {
   const id = challenge(a, b)
@@ -437,10 +437,11 @@ const accepted = (a: User, b: User) => {
 }
 const submitDeck = (u: User, id: string, cards: Copy[]) => sql(`select from wm.battle_action(:'u', :'id', 'submit_deck',
 jsonb_build_object('card_ids', string_to_array(:'c', ',')))`, { u: u.uid, id, c: cards.map((c) => c.id).join(',') })
-// a défie b, b accepte, chacun pose 3 copies C : la bataille est active, a attaque au tour 1.
+// a défie b, b accepte, a pose 3 copies C et b 3 copies PC (des cartes différentes, sans KO possible en un tour : DEF de PC ≥ 2 500 et
+// ATK de C ≤ 2 500) : la bataille est active, a attaque au tour 1.
 function active(a: User, b: User) {
   const id = accepted(a, b)
-  const [ca, cb] = [copies(a), copies(b)]
+  const [ca, cb] = [copies(a), copies(b, 3, 'PC')]
   submitDeck(a, id, ca)
   submitDeck(b, id, cb)
   return { id, ca, cb }
@@ -684,6 +685,7 @@ test('attaque et quiz au clavier, deux joueurs : « Attaquer » → « <B> répo
   await both(browser, baseURL, [a, b], async ([pa, pb]) => {
     befriend(a, b)
     const { id, ca } = active(a, b)
+    await pa.clock.install()
     await enter(pa, id)
     await expect(line(pa, 'À toi d\'attaquer : choisis une carte.')).toBeVisible()
     await expect(pa.locator('main').getByText(/^Sans action de ta part avant le .+, tu perds la partie\.$/)).toBeVisible()
@@ -716,6 +718,7 @@ test('attaque et quiz au clavier, deux joueurs : « Attaquer » → « <B> répo
     await expect(verdict(pb)).toBeFocused()
     await press(next(pb))
     await expect(question(pb, 2)).toBeFocused()
+    await pa.clock.runFor(3_000)
     await expect(line(pa, `${b.username} répond aux questions : 1 / 3`)).toBeVisible()
   })
 })
@@ -766,13 +769,15 @@ test('poll sans effacement, choix des cartes : 2 cartes posées, 6 s de poll →
   await expect(validate(page)).toHaveAttribute('aria-disabled', 'true')
 })
 
-test('dernière question d\'un tour (q1 et q2 répondues par sql) : une réponse fausse → le retour avec le texte juste et « Continuer », focalisé ; phase attack en base ; 6 s de poll → le même retour, sans « Attaquer » ; « Continuer » → « À toi d\'attaquer : choisis une carte. » focalisé, le tour au journal', async ({ page, login }) => {
+test('dernière question d\'un tour (deux tours sans erreur, puis q1 fausse et q2 juste par sql) : une réponse fausse → le retour avec le texte juste et « Continuer », focalisé ; phase attack en base ; 6 s de poll → le même retour, sans « Attaquer » ; « Continuer » → « À toi d\'attaquer : choisis une carte. » focalisé ; le journal dit chaque tour', async ({ page, login }) => {
   const me = await viewer(login)
   const friend = player()
   befriend(me, friend)
-  const { id, cb } = active(friend, me)
+  const { id, ca, cb } = active(friend, me)
+  turn(friend, me, id)
+  turn(me, friend, id)
   const [q1, q2, q3] = attack(friend, id)
-  answer(me, id, q1)
+  answer(me, id, q1, false)
   answer(me, id, q2)
   await page.clock.install()
   await enter(page, id)
@@ -792,9 +797,13 @@ test('dernière question d\'un tour (q1 et q2 répondues par sql) : une réponse
   await expect(page.getByRole('button', { name: 'Attaquer' })).toHaveCount(0)
   await press(next(page))
   await expect(line(page, 'À toi d\'attaquer : choisis une carte.')).toBeFocused()
-  const damage = stateOf(id, `game_state #>> '{turnHistory,0,damageDealt}'`)
-  await expect(page.getByRole('log', { name: 'Déroulé de la bataille' }).getByRole('listitem'))
-    .toHaveText([`Tour 1 : ${friend.username} attaque avec ${cb[0].title}. 1 mauvaise réponse sur 3 : ${fmt(Number(damage))} dégâts.`])
+  const damage = Number(stateOf(id, `game_state #>> '{turnHistory,2,damageDealt}'`))
+  expect(damage).toBeGreaterThan(0)
+  await expect(page.getByRole('log', { name: 'Déroulé de la bataille' }).getByRole('listitem')).toHaveText([
+    `Tour 1 : ${friend.username} attaque avec ${ca[0].title}. Aucune erreur : aucun dégât.`,
+    `Tour 2 : ${me.username} attaque avec ${cb[0].title}. Aucune erreur : aucun dégât.`,
+    `Tour 3 : ${friend.username} attaque avec ${ca[1].title}. 2 mauvaises réponses sur 3 : ${fmt(damage)} dégâts.`,
+  ])
 })
 
 test('réponse qui clôt la partie (cinq tours et deux réponses du 6ᵉ par sql) : chez le challenger, « Valider ma réponse » → le retour et « Continuer », sans l\'écran de fin ; « Continuer » → « Victoire ! » ou « Défaite » selon winner_id, focalisé', async ({ page, login }) => {
@@ -1005,4 +1014,137 @@ test('360 px, en quiz, énoncé de 200 caractères : aucun défilement horizonta
     const box = (await target.boundingBox())!
     expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)
   }
+})
+
+// ─── Arène, fix round 1 ───
+
+// Plus aucun minuteur hors de runFor : le poll ne passe qu'à la demande.
+const freeze = async (page: Page) => page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000))
+
+test('« Abandonner » confirmé pendant le retour d\'une réponse → « Défaite » focalisé, le retour effacé', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const { id } = active(friend, me)
+  attack(friend, id)
+  await enter(page, id)
+  await radios(page).first().check()
+  await press(send(page))
+  await expect(verdict(page)).toBeFocused()
+  await press(quit(page))
+  const dialog = page.getByRole('dialog', { name: 'Abandonner la bataille ?' })
+  await expect(dialog).toContainText('Tu perdras la partie.')
+  await press(dialog.getByRole('button', { name: 'Abandonner' }))
+  await expect(page.getByRole('heading', { level: 2, name: 'Défaite', exact: true })).toBeFocused()
+  await expect(verdict(page)).toHaveCount(0)
+  await expect(next(page)).toHaveCount(0)
+  expect(stateOf(id, `status || ' ' || winner_id`)).toBe(`completed ${friend.uid}`)
+})
+
+test('partie finie par l\'adversaire pendant le retour d\'une réponse, focus sur « Abandonner » : au poll, le retour reste et prend le focus ; « Continuer » → « Victoire ! » focalisé', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const { id } = active(friend, me)
+  attack(friend, id)
+  await page.clock.install()
+  await enter(page, id)
+  await radios(page).first().check()
+  await press(send(page))
+  const said = await verdict(page).textContent()
+  await quit(page).focus()
+  act(friend, id, 'forfeit')
+  await page.clock.runFor(3_000)
+  await expect(quit(page)).toHaveCount(0)
+  await expect(verdict(page)).toHaveText(said!)
+  await expect(verdict(page)).toBeFocused()
+  await expect(page.getByRole('heading', { name: /^(Victoire !|Défaite)$/ })).toHaveCount(0)
+  await press(next(page))
+  await expect(page.getByRole('heading', { level: 2, name: 'Victoire !', exact: true })).toBeFocused()
+})
+
+test('poll qui relit l\'arène après une première lecture en échec, focus sur « Réessayer » : l\'arène, le h2 focalisé', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const id = challenge(me, friend)
+  await routeOnce(page, '**/api/battles/*', (r) => r.fulfill({ status: 500 }), (r) => r.request().method() === 'GET')
+  await page.clock.install()
+  await enter(page, id)
+  await freeze(page)
+  await page.getByRole('button', { name: 'Réessayer' }).focus()
+  await page.clock.runFor(3_000)
+  await expect(line(page, `En attente de la réponse de ${friend.username}.`)).toBeVisible()
+  await expect(arenaHead(page, me, friend)).toBeFocused()
+})
+
+test('confirmation d\'abandon ouverte pendant « Deck validé », second deck posé par sql : au poll, la modale se ferme, le focus sur « Abandonner »', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const id = accepted(friend, me)
+  submitDeck(me, id, copies(me))
+  await page.clock.install()
+  await enter(page, id)
+  await press(quit(page))
+  const dialog = page.getByRole('dialog', { name: 'Abandonner la bataille ?' })
+  await expect(dialog).toContainText('La bataille sera annulée.')
+  submitDeck(friend, id, copies(friend, 3, 'PC'))
+  await page.clock.runFor(3_000)
+  await expect(line(page, `${friend.username} choisit sa carte d'attaque.`)).toBeVisible()
+  await expect(dialog).toHaveCount(0)
+  await expect(quit(page)).toBeFocused()
+  expect(stateOf(id, 'status')).toBe('active')
+})
+
+test('question déjà répondue ailleurs (juste, par sql) puis une autre option envoyée : le retour enregistré « Bonne réponse ! », sans radio cochée', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const { id } = active(friend, me)
+  const [q1] = attack(friend, id)
+  await page.clock.install()
+  await enter(page, id)
+  await freeze(page)
+  await expect(question(page, 1)).toBeVisible()
+  answer(me, id, q1)
+  await page.locator(`main input[type=radio][value="${option(id, q1, false)}"]`).check()
+  await send(page).click()
+  await expect(verdict(page)).toHaveText('Bonne réponse !')
+  await expect(page.locator('main').getByRole('radio', { checked: true })).toHaveCount(0)
+})
+
+test('refus d\'une attaque (déjà faite ailleurs, par sql) : l\'alerte sous l\'écran relu ; le tour suivant, au poll, sans l\'alerte', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const { id, ca } = active(me, friend)
+  await page.clock.install()
+  await enter(page, id)
+  await freeze(page)
+  const qs = attack(me, id)
+  await press(cardIn(page, me, ca[1]).getByRole('button', { name: 'Attaquer' }))
+  await expect(arenaAlert(page)).toHaveText('Ce n\'est pas à toi d\'attaquer')
+  await expect(line(page, `${friend.username} répond aux questions : 0 / 3`)).toBeVisible()
+  for (const q of qs) answer(friend, id, q)
+  await page.clock.runFor(3_000)
+  await expect(line(page, `${friend.username} choisit sa carte d'attaque.`)).toBeVisible()
+  await expect(arenaAlert(page)).toHaveCount(0)
+})
+
+test('arène devenue introuvable au poll (404), focus sur « Retirer le défi » : « Bataille introuvable », le focus sur « Retour aux batailles »', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const id = challenge(me, friend)
+  await page.clock.install()
+  await enter(page, id)
+  await freeze(page)
+  await page.getByRole('button', { name: 'Retirer le défi' }).focus()
+  const gone = 'Bataille introuvable'
+  await routeOnce(page, '**/api/battles/*', (r) => r.fulfill({ status: 404, json: { status: 404, error: gone, message: gone } }),
+    (r) => r.request().method() === 'GET')
+  await page.clock.runFor(3_000)
+  await expect(page.locator('main h1')).toHaveText(gone)
+  await expect(page.locator('main').getByRole('link', { name: 'Retour aux batailles' })).toBeFocused()
 })

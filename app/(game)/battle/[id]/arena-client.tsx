@@ -31,7 +31,7 @@ type Reply = BattleDetail & Partial<AnswerResult>
 type Question = PendingAttack['questions'][number]
 type Source = { title: string; url: string }
 // Retour de la dernière réponse, pris à l'envoi (question, h3, source) : affiché devant l'état relu jusqu'à « Continuer ».
-type Answered = { question: Question; k: number; n: number; source: Source; verdict: Verdict }
+type Answered = { question: Question; k: number; n: number; source: Source | null; verdict: Verdict }
 // Cible du focus : le h2 de l'arène, la ligne d'état de l'écran, son premier contrôle utile, le retour d'une réponse.
 type Target = 'head' | 'line' | 'first' | 'verdict'
 
@@ -69,11 +69,12 @@ export function ArenaClient() {
   const [missing, setMissing] = useState(bad)
   const [failed, setFailed] = useState(false)
   const [answered, setAnswered] = useState<Answered | null>(null)
-  const [confirm, setConfirm] = useState(false)
+  // Confirmation d'abandon ouverte, avec ce qu'elle annonce : elle ne vaut que tant que la phase est la même.
+  const [confirm, setConfirm] = useState<'cancel' | 'lose' | null>(null)
   // Une action à la fois : aria-disabled et garde, jamais disabled.
   const [busy, setBusy] = useState(false)
-  // Échec de la dernière action (role=alert). Un refus reste jusqu'à l'action suivante (at null) ; une issue inconnue, tant que l'écran
-  // affiché à son départ reste le même.
+  // Échec de la dernière action (role=alert), affiché tant que l'écran auquel il s'attache reste : l'écran relu après un refus, l'écran du
+  // départ pour une issue inconnue.
   const [error, setError] = useState<{ text: string; at: string | null } | null>(null)
   const inflight = useRef(false)
   // Intention dont la requête est en vol : son issue n'est pas connue, une relecture ne décide pas de sa clé.
@@ -97,22 +98,31 @@ export function ArenaClient() {
     for (const k of keys.current.keys()) if (k !== flying.current && !allows(b, me, k)) keys.current.delete(k)
   }
 
-  const read = () => {
+  // Rend la bataille appliquée, sinon null.
+  const read = (): Promise<Battle | null> => {
     const g = ++gen.current
     return api<Reply | null>(`/api/battles/${id}`).then(
       (r) => {
-        if (g !== gen.current) return
+        if (g !== gen.current) return null
         // 2xx au corps illisible (api() rend null) ou sans bataille : une lecture en échec ; l'état affiché reste.
-        if (!readable(r)) return setFailed(true)
+        if (!readable(r)) {
+          setFailed(true)
+          return null
+        }
         prune(r.battle)
+        // Partie finie ailleurs (abandon adverse, inactivité) pendant le retour d'une réponse : le retour reste jusqu'à « Continuer », mais
+        // « Abandonner » disparaît ; le focus qu'il portait va au retour.
+        if (answered && detail && isOpen(detail.battle) && !isOpen(r.battle)) refocus.current = { t: 'verdict', view: 'answered' }
         setDetail(r)
         setFailed(false)
+        return r.battle
       },
       (e) => {
-        if (g !== gen.current) return
+        if (g !== gen.current) return null
         // Inconnue ou d'autres joueurs (404), adresse invalide (400) : « Bataille introuvable ». Autre échec : l'état affiché reste.
         if (e instanceof ApiError && (e.status === 404 || e.status === 400)) setMissing(true)
         else setFailed(true)
+        return null
       },
     )
   }
@@ -125,16 +135,21 @@ export function ArenaClient() {
   const over = missing || (!!detail && !isOpen(detail.battle))
   usePoll(read, 3_000, !over)
   // Page quittée puis gardée par Activity : on ne la retrouve pas avec la confirmation ouverte.
-  useLayoutEffect(() => () => setConfirm(false), [])
+  useLayoutEffect(() => () => setConfirm(null), [])
 
   const b = detail?.battle
-  const view = b && me ? (answered ? 'answered' : screenOf(b, me)) : null
+  // Écran affiché ; null sans arène (chargement, échec, introuvable, même une bataille déjà lue).
+  const view = b && me && !missing ? (answered ? 'answered' : screenOf(b, me)) : null
 
   // Focus jamais sur body : la cible posée, sinon, l'écran changé (poll, refus relu), son premier contrôle utile, sinon le h2. Rien si le
   // joueur a mis le focus ailleurs. Sans arène (relecture en échec ou introuvable), « Réessayer » ou « Retour aux batailles ».
   useEffect(() => {
     if (!view) {
-      if (refocus.current && (failed || missing) && document.activeElement === document.body) {
+      // Arène devenue introuvable sous le focus, ou cible posée par « Réessayer » : « Retour aux batailles » ou « Réessayer ».
+      const lost = missing && shown.current !== null && shown.current !== 'failed' && shown.current !== 'missing'
+      // Repère : l'arène qui revient après un échec (poll) est un écran changé.
+      if (failed || missing) shown.current = missing ? 'missing' : 'failed'
+      if ((refocus.current || lost) && (failed || missing) && document.activeElement === document.body) {
         refocus.current = null
         ;(missing ? back : retryButton).current?.focus()
       }
@@ -170,8 +185,15 @@ export function ArenaClient() {
       setDetail(r)
     } catch (e) {
       flying.current = null
-      setError(unsure(e) ? { text: userMessage(e, ARENA_UNSURE), at } : { text: userMessage(e, 'L\'action n\'a pas abouti.'), at: null })
-      await read()
+      if (unsure(e)) {
+        setError({ text: userMessage(e, ARENA_UNSURE), at })
+        await read()
+      } else {
+        // Refus : la bataille relue, l'alerte attachée à l'écran qu'elle montre (sinon à celui du départ).
+        const text = userMessage(e, 'L\'action n\'a pas abouti.')
+        const fresh = await read()
+        setError({ text, at: answered ? 'answered' : fresh && me ? screenOf(fresh, me) : at })
+      }
     } finally {
       flying.current = null
       inflight.current = false
@@ -187,16 +209,22 @@ export function ArenaClient() {
   }
 
   // Le texte de la bonne réponse est lu dans les options de la question affichée à l'envoi : après la dernière, pendingAttack est nul.
-  const answer = (q: Question, choice: string, k: number, n: number, source: Source) =>
+  const answer = (q: Question, choice: string, k: number, n: number, source: Source | null) =>
     void act('submit_single_answer', { questionId: q.id, answerId: choice }, `submit_single_answer:${id}:${q.id}`, (r) => {
       const right = q.options.find((o) => o.id === r.correct_answer_id)?.text ?? ''
-      setAnswered({ question: q, k, n, source, verdict: { choice, correct: r.correct === true, right } })
+      const correct = r.correct === true
+      // Réponse enregistrée ailleurs (autre onglet, rejeu) qui contredit le choix affiché : aucune radio cochée plutôt qu'un choix démenti.
+      setAnswered({ question: q, k, n, source, verdict: { choice: (choice === r.correct_answer_id) === correct ? choice : null, correct, right } })
       return 'verdict'
     })
 
   function forfeit() {
-    setConfirm(false)
-    void act('forfeit', {}, `forfeit:${id}`, () => 'first')
+    setConfirm(null)
+    // Pendant le retour d'une réponse aussi : l'écran de fin le remplace.
+    void act('forfeit', {}, `forfeit:${id}`, () => {
+      setAnswered(null)
+      return 'first'
+    })
   }
 
   function retry() {
@@ -234,14 +262,16 @@ export function ArenaClient() {
   const attacking = !answered && b.status === 'active' && g?.phase === 'attack' && g.currentTurnUserId === me
   const myMove = (choosing && !g?.players[me]) || (b.status === 'active' && (pa ? pa.defenderId === me : g?.currentTurnUserId === me))
   const quitting = choosing || b.status === 'active'
-  const sourceOf = (p: PendingAttack): Source => {
+  // Ce qu'un abandon ferait maintenant : la confirmation ouverte sur une autre phase se ferme (le focus revient à « Abandonner »).
+  const stake = choosing ? 'cancel' : b.status === 'active' ? 'lose' : null
+  const sourceOf = (p: PendingAttack): Source | null => {
     const c = g?.players[p.attackerUserId]?.cards.find((x) => x.id === p.attackCardId)
-    return { title: c?.wikipedia_title ?? p.attackCardName, url: c?.wikipedia_url ?? '' }
+    return c ? { title: c.wikipedia_title, url: c.wikipedia_url } : null
   }
   const nameOf = (u: string) => (u === b.challenger_id ? b.challenger : b.opponent).username
   const turnLine = (t: Turn) => {
-    const card = g?.players[t.attackerUserId]?.cards.find((c) => c.id === t.attackCardId)?.wikipedia_title ?? ''
-    const start = `Tour ${formatInt(t.turnNumber)} : ${nameOf(t.attackerUserId)} attaque avec ${card}.`
+    const card = g?.players[t.attackerUserId]?.cards.find((c) => c.id === t.attackCardId)?.wikipedia_title
+    const start = `Tour ${formatInt(t.turnNumber)} : ${nameOf(t.attackerUserId)} attaque${card ? ` avec ${card}` : ''}.`
     if (t.allCorrect) return `${start} Aucune erreur : aucun dégât.`
     return `${start} ${formatInt(t.wrong)} ${t.wrong > 1 ? 'mauvaises réponses' : 'mauvaise réponse'} sur ${formatInt(t.total)} : ${formatInt(t.damageDealt)} dégâts.`
   }
@@ -373,14 +403,14 @@ export function ArenaClient() {
       <div className="card-frame flex flex-col gap-4 p-4 md:p-6">
         {/* Un écran changé est remonté : son contrôle focalisé disparaît, et le focus suit (effet plus haut), même à balise égale. */}
         <Fragment key={view}>{screen()}</Fragment>
-        {error && (error.at === null || error.at === view) && <p role="alert" className="text-sm font-medium text-red-400">{error.text}</p>}
+        {error && error.at === view && <p role="alert" className="text-sm font-medium text-red-400">{error.text}</p>}
         {myMove && b.idle_at && (
           <p className={hint}>
             {`Sans action de ta part avant le ${formatDateTime(b.idle_at)}, ${choosing ? 'la bataille sera annulée' : 'tu perds la partie'}.`}
           </p>
         )}
         {quitting && (
-          <button type="button" aria-haspopup="dialog" aria-disabled={busy || undefined} onClick={() => { if (!busy) setConfirm(true) }}
+          <button type="button" aria-haspopup="dialog" aria-disabled={busy || undefined} onClick={() => { if (!busy) setConfirm(stake) }}
             className={`${ghost} self-start`}>
             Abandonner
           </button>
@@ -399,13 +429,13 @@ export function ArenaClient() {
           </ol>
         </div>
       )}
-      {quitting && confirm && (
-        <Modal onClose={() => setConfirm(false)} labelledBy={`${uid}-quit`} className="card-frame w-full max-w-md space-y-4 p-6 animate-fade-in-up">
+      {confirm && confirm === stake && (
+        <Modal onClose={() => setConfirm(null)} labelledBy={`${uid}-quit`} className="card-frame w-full max-w-md space-y-4 p-6 animate-fade-in-up">
           <h2 id={`${uid}-quit`} className="text-xl font-bold">Abandonner la bataille ?</h2>
-          <p>{choosing ? 'La bataille sera annulée.' : 'Tu perdras la partie.'}</p>
+          <p>{confirm === 'cancel' ? 'La bataille sera annulée.' : 'Tu perdras la partie.'}</p>
           <div className="flex flex-wrap gap-3">
             <button type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) forfeit() }} className={danger}>Abandonner</button>
-            <button type="button" onClick={() => setConfirm(false)} className={ghost}>Annuler</button>
+            <button type="button" onClick={() => setConfirm(null)} className={ghost}>Annuler</button>
           </div>
         </Modal>
       )}
