@@ -887,3 +887,85 @@ do $$ declare v text; s text; p1 int; p2 int; p3 int; p4 int; begin
   assert (select strpos(prosrc, 'perform wm.move_copies(') > 0 and strpos(prosrc, 'update public.user_cards') = 0 from pg_proc
     where oid = to_regproc('wm.trade_move')), 'trade_move par move_copies';
 end $$;
+
+-- Chat de guilde (M5b-6, M5b-9, G10, D-C18) : envoi, rejeu, refus, 100 derniers, membre parti.
+do $$ declare a uuid := pg_temp.player('GuiChA'); b uuid := pg_temp.player('GuiChB'); o uuid := pg_temp.player('GuiChO'); g uuid; r jsonb; d jsonb;
+  c uuid := pg_temp.player('GuiChC'); first_id uuid; begin
+  g := pg_temp.guild(a, array[b, c]);
+  r := wm.guild_chat_send(a, 'Bonjour');
+  assert (select array_agg(k order by k) from jsonb_object_keys(r -> 'message') k) = array['content', 'created_at', 'id', 'profile', 'user', 'user_id', 'username'],
+    r::text;
+  assert r -> 'message' ->> 'username' = 'GuiChA' and r -> 'message' ->> 'content' = 'Bonjour' and r -> 'message' ->> 'user_id' = a::text
+    and r -> 'message' -> 'user' = '{"username":"GuiChA"}' and r -> 'message' -> 'profile' = '{"username":"GuiChA"}', r::text;
+  d := wm.guild_chat_send(a, 'Autre', 'k-gchat');
+  assert wm.guild_chat_send(a, 'Autre', 'k-gchat') = d and (select count(*) from public.guild_chat_messages where guild_id = g) = 2,
+    'rejeu de la clé : ' || d::text;
+  -- now() est figé dans la transaction : l'ordre de deux messages posés ensemble est celui de l'id, seul le contenu est vérifié.
+  assert jsonb_array_length(wm.guild_chat_list(b) -> 'messages') = 2 and (wm.guild_chat_list(b) -> 'messages') @> jsonb_build_array(r -> 'message'),
+    'liste de Bob';
+  -- Refus ; contenu stocké tel quel.
+  d := pg_temp.err(format('select wm.guild_chat_send(%L, %L)', a, E'  \n '));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le message est vide'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_chat_send(%L, null)', a));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le message est vide'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_chat_send(%L, %L)', a, repeat('x', 1001)));
+  assert d = pg_temp.e(400, 'invalid_request', 'Un message fait au plus 1 000 caractères'), coalesce(d::text, 'accepté');
+  assert wm.guild_chat_send(a, repeat('x', 1000)) -> 'message' ->> 'content' = repeat('x', 1000), '1 000 passe';
+  assert wm.guild_chat_send(a, '  espaces  ') -> 'message' ->> 'content' = '  espaces  ', 'contenu tel quel';
+  d := pg_temp.err(format('select wm.guild_chat_send(%L, %L)', o, 'Hello'));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_chat_list(%L)', o));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_chat_send(%L, %L)', a, 'Hello'));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  -- 101 messages : les 100 derniers, du plus ancien au plus récent.
+  delete from public.guild_chat_messages where guild_id = g;
+  insert into public.guild_chat_messages (guild_id, user_id, content, created_at)
+  select g, b, 'm' || i, now() - make_interval(secs => 200 - i) from generate_series(1, 101) i;
+  r := wm.guild_chat_list(a) -> 'messages';
+  assert jsonb_array_length(r) = 100 and r -> 0 ->> 'content' = 'm2' and r -> 99 ->> 'content' = 'm101'
+    and not exists (select from jsonb_array_elements(r) m where m ->> 'content' = 'm1'), 'cent derniers';
+  -- Le message d'un membre parti reste, avec son pseudo.
+  perform wm.guild_leave(b);
+  r := wm.guild_chat_list(a) -> 'messages';
+  assert jsonb_array_length(r) = 100 and r -> 99 ->> 'username' = 'GuiChB', 'membre parti';
+  perform pg_temp.inv('chat de guilde');
+end $$;
+
+-- Seau de rafale partagé avec les messages privés (D-C18) : un seul compteur, 3 par fenêtre ici ; la config est restaurée.
+update wm.config set value = '{"count": 3, "window_s": 60}' where key = 'chat_burst';
+do $$ declare a uuid := pg_temp.player('GuiBuA'); f uuid := pg_temp.player('GuiBuF'); g uuid; d jsonb; begin
+  g := pg_temp.guild(a);
+  perform pg_temp.friends(a, f);
+  perform wm.chat_send(a, f, 'p1');
+  perform wm.chat_send(a, f, 'p2');
+  perform wm.chat_send(a, f, 'p3');
+  d := pg_temp.err(format('select wm.guild_chat_send(%L, %L)', a, 'g1'));
+  assert d ->> 'status' = '429' and d ->> 'error' = 'Le site demande de ralentir' and d ->> 'message' = 'Le site demande de ralentir'
+    and (d ->> 'retry_after')::int between 1 and 60, coalesce(d::text, 'accepté');
+  assert not exists (select from public.guild_chat_messages where guild_id = g), 'aucun message écrit par le 429';
+  update wm.user_state set chat_window_start = chat_window_start - interval '61 seconds' where user_id = a;
+  perform wm.guild_chat_send(a, 'g1');
+  perform wm.guild_chat_send(a, 'g2');
+  perform wm.guild_chat_send(a, 'g3');
+  d := pg_temp.err(format('select wm.chat_send(%L, %L, %L)', a, f, 'p4'));
+  assert d ->> 'status' = '429' and (d ->> 'retry_after')::int between 1 and 60, coalesce(d::text, 'accepté');
+  update wm.user_state set chat_window_start = chat_window_start - interval '61 seconds' where user_id = a;
+  perform wm.chat_send(a, f, 'p4');
+  assert (select chat_window_count from wm.user_state where user_id = a) = 1, 'fenêtre échue';
+end $$;
+update wm.config set value = '{"count": 30, "window_s": 60}' where key = 'chat_burst';
+
+-- Volatilité, lock_timeout avant le premier verrou, ordre des verrous (profil, guilde, adhésion relue sous la guilde).
+do $$ declare v text; s text; p1 int; p2 int; p3 int; begin
+  assert (select provolatile = 's' from pg_proc where oid = 'wm.guild_chat_list(uuid)'::regprocedure), 'guild_chat_list stable';
+  v := tests.lock_timeout_violations(array['guild_chat_send'], array['for update', 'for no key update', 'for key share', 'wm.lock_user(']);
+  assert v is null, 'lock_timeout : ' || v;
+  select prosrc into s from pg_proc where oid = to_regproc('wm.guild_chat_send');
+  p1 := strpos(s, 'wm.lock_user(');
+  p2 := strpos(s, 'for key share');
+  p3 := strpos(s, 'from public.guild_members where user_id = p_uid and guild_id = g');
+  assert p1 > 0 and p1 < p2 and p2 < p3, format('guild_chat_send : profil, guilde, adhésion relue (%s %s %s)', p1, p2, p3);
+end $$;
