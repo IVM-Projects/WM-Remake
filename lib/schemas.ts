@@ -79,6 +79,14 @@ export const GuildWish = z.object({ card_id: z.uuid() })
 export const GuildDonate = z.object({ wishlist_id: z.uuid(), user_card_id: z.uuid() })
 export const GuildMembersQuery = z.object({ limit: intParam.optional(), offset: intParam.default(0) })
 
+// Succès (R§3.8) et classements (D:613) : board et period validés ici, avant la clé du cache (G11).
+export const AchievementCheck = z.object({ event: z.literal('achievements_sync', { error: 'Événement inconnu' }) })
+export const AchievementClaim = z.object({ achievement_id: z.guid({ error: 'UUID invalide' }) }) // guid : les ids du catalogue sont des md5 sans nibble de version, z.uuid() les refuserait
+export const LeaderboardQuery = z.object({
+  board: z.enum(['battles', 'collection', 'legendary'], { error: 'Classement inconnu' }).default('battles'),
+  period: z.enum(['week', 'all'], { error: 'Période inconnue' }).default('week'),
+})
+
 // Abonnement push (M4b-12) : la forme seulement, chaque refus en « Abonnement push invalide » ; l'origine est contrôlée en SQL (B9), le
 // point sur la courbe dans la route (node:crypto). Tailles sans Buffer, ce fichier partant au navigateur : 65 octets en base64url sans
 // remplissage font 87 caractères, le premier B (0x04) et le dernier porteur de 4 bits ; 16 octets font 22 caractères, le dernier porteur de 2.

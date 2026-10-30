@@ -13,6 +13,9 @@ const nextConfig: NextConfig = {
     market: { stale: 30, revalidate: 2, expire: 3 },
     auction: { stale: 30, revalidate: 1, expire: 2 },
     sales: { stale: 30, revalidate: 60, expire: 120 },
+    // Classements (G11, lib/leaderboard-cache.ts) : guildes 30 s, joueurs 60 s (rendus au plus 120 s).
+    guilds: { stale: 30, revalidate: 30, expire: 60 },
+    players: { stale: 30, revalidate: 60, expire: 120 },
   },
   partialPrefetching: true,
   poweredByHeader: false,
