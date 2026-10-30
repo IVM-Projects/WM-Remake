@@ -13,9 +13,14 @@ const PAGE = 50
 const field = 'min-h-11 w-full rounded-xl border border-[var(--color-foreground)]/40 bg-[var(--color-surface-light)] px-3 py-2.5 text-sm'
 type List = { page: number; items: OwnedItem[]; total: number }
 
-// Choix d'une de ses copies (/profile), lues par pages de 50 dans /api/my-collection. Avatar : une copie sans image utilisable (M4b-6) reste
-// visible, sans clic, légendée « Sans image ». onPick lève le texte d'un refus ou d'une issue incertaine : la modale le montre et reste ouverte.
-export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showcase'; onPick: (userCardId: string) => Promise<void>; onClose: () => void }) {
+// Choix d'une de ses copies (/profile, deck de l'arène), lues par pages de 50 dans /api/my-collection. Avatar : une copie sans image
+// utilisable (M4b-6) reste visible, sans clic, légendée « Sans image » ; vitrine et deck prennent toute copie (C17). onPick reçoit aussi la
+// copie, et lève le texte d'un refus ou d'une issue incertaine : la modale le montre et reste ouverte.
+export function CardPicker({ mode, onPick, onClose }: {
+  mode: 'avatar' | 'showcase' | 'deck'
+  onPick: (userCardId: string, item: OwnedItem) => Promise<void>
+  onClose: () => void
+}) {
   const id = useId()
   const [list, setList] = useState<List | null>(null)
   const [failed, setFailed] = useState(false)
@@ -71,14 +76,14 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
     read(0)
   }
 
-  async function pick(userCardId: string) {
+  async function pick(c: OwnedItem) {
     if (inflight.current) return
     inflight.current = true
     setBusy(true)
     setError(null)
     try {
       // Réussi : l'appelant ferme la modale.
-      await onPick(userCardId)
+      await onPick(c.id, c)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -91,7 +96,7 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
     if (!inflight.current) onClose()
   }
 
-  const heading = mode === 'avatar' ? 'Choisir ton avatar' : 'Choisir une carte pour la vitrine'
+  const heading = { avatar: 'Choisir ton avatar', showcase: 'Choisir une carte pour la vitrine', deck: 'Choisir une carte pour ton deck' }[mode]
   return (
     <Modal onClose={close} labelledBy={`${id}-title`} className="card-frame relative w-full max-w-3xl animate-fade-in-up space-y-4 p-6 max-h-[90vh] overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -117,10 +122,10 @@ export function CardPicker({ mode, onPick, onClose }: { mode: 'avatar' | 'showca
         <>
           <ul ref={cards} className="flex flex-wrap justify-center gap-3">
             {list.items.map((c) => {
-              const usable = mode === 'showcase' || showsImage(c.card, true)
+              const usable = mode !== 'avatar' || showsImage(c.card, true)
               return (
                 <li key={c.id} className="flex flex-col items-center gap-1">
-                  <Card card={faceOf(c)} size="grid" count={c.count} isShiny={c.is_shiny} onClick={usable ? () => void pick(c.id) : undefined} clickOff={busy} />
+                  <Card card={faceOf(c)} size="grid" count={c.count} isShiny={c.is_shiny} onClick={usable ? () => void pick(c) : undefined} clickOff={busy} />
                   {!usable && <p className="text-xs text-[var(--color-foreground)]/70">Sans image</p>}
                 </li>
               )

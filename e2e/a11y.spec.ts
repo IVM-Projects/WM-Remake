@@ -46,6 +46,8 @@ const READY: Record<string, string> = {
   '/dms': 'main [data-ready]',
   // Batailles et amis lus (ou en échec), session connue.
   '/battle': 'main [data-ready]',
+  // Bataille lue (ou introuvable, ou en échec), session connue.
+  '/battle/[id]': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -339,6 +341,50 @@ select from wm.battle_action(:'me', :'id', 'withdraw_invite')`, { me: me.uid, a:
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'a', :'b')`, { me: me.uid, a: a.uid, b: b.uid })
+  }
+})
+
+// Bataille de `from` contre `me` par les fonctions (Global Constraints, E2E) : acceptée, puis, en `quiz`, decks posés et attaque de `from` ;
+// en `over`, abandon de `from`. Renvoie son id.
+function duel(from: { uid: string; username: string }, me: { uid: string; username: string }, upTo: 'deck' | 'quiz' | 'over'): string {
+  const id = sql(`select wm.battle_create(:'a', :'b') ->> 'id' as id \\gset
+select from wm.battle_action(:'b', :'id', 'accept') \\g /dev/null
+\\echo :id`, { a: from.uid, b: me.uid })
+  if (upTo === 'deck') return id
+  for (const u of [from, me]) {
+    sql(`select from wm.battle_action(:'u', :'id', 'submit_deck', jsonb_build_object('card_ids', string_to_array(:'c', ',')))`,
+      { u: u.uid, id, c: giveCopies(u, 'C', 3).join(',') })
+  }
+  sql(upTo === 'quiz'
+    ? `select from wm.battle_action(:'u', :'id', 'submit_attack', jsonb_build_object('attack_card_id',
+  (select game_state #>> array['players', :'u', 'cardIds', '0'] from public.battles where id = :'id')))`
+    : `select from wm.battle_action(:'u', :'id', 'forfeit')`, { u: from.uid, id })
+  return id
+}
+
+test('axe /battle/<id> : choix des cartes, sélecteur ouvert ; quiz ; fin', async ({ page, login }) => {
+  const me = await login()
+  const [a, b, c] = [makePlayer(), makePlayer(), makePlayer()]
+  try {
+    for (const f of [a, b, c]) befriend(me, f)
+    const [deck, quiz, over] = [duel(a, me, 'deck'), duel(b, me, 'quiz'), duel(c, me, 'over')]
+    const arena = async (id: string) => {
+      await page.goto(`/battle/${id}`)
+      await page.locator(READY['/battle/[id]']).waitFor()
+    }
+    await arena(deck)
+    await page.getByRole('button', { name: 'Ajouter une carte à l\'emplacement 1' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Choisir une carte pour ton deck' })
+    await expect(dialog.locator('div[class*="glow-"]').first()).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await arena(quiz)
+    await expect(page.getByRole('heading', { level: 3, name: 'Question 1 / 3' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await arena(over)
+    await expect(page.getByRole('heading', { level: 2, name: 'Victoire !' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'a', :'b', :'c')`, { me: me.uid, a: a.uid, b: b.uid, c: c.uid })
   }
 })
 

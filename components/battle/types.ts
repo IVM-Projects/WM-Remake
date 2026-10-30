@@ -114,3 +114,24 @@ export function battleLine(b: Battle, me: string): string {
       return 'Annulée'
   }
 }
+
+// L'état relu permet-il encore l'intention `<action>:<bataille>[:<carte>|:<question>]` de `me` ? Sinon sa clé apiOnce est oubliée : une
+// relance serait une nouvelle intention, et le serveur la refuse ou rejoue la réponse enregistrée sans clé (C5).
+export function allows(b: Battle, me: string, intent: string): boolean {
+  const [action, , arg] = intent.split(':')
+  const g = b.game_state
+  switch (action) {
+    case 'accept':
+    case 'decline':
+    case 'withdraw_invite':
+      return b.status === 'pending'
+    case 'submit_deck':
+      return (b.status === 'deck_selection' || b.status === 'generating_quizzes') && !g?.players[me]
+    case 'submit_attack':
+      return b.status === 'active' && g?.phase === 'attack' && g.currentTurnUserId === me
+    case 'submit_single_answer':
+      return b.status === 'active' && !!g?.pendingAttack?.questions.some((q) => q.id === arg) && !g.pendingAttack.answered.includes(arg)
+    default:
+      return isOpen(b)
+  }
+}

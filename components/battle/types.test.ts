@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { battleLine, isOpen, type Battle, type GameState } from './types'
+import { allows, battleLine, isOpen, type Battle, type GameState, type PlayerState } from './types'
 
 const [A, B] = ['a', 'b']
 const battle = (status: Battle['status'], game_state: GameState | null = null, winner_id: string | null = null): Battle => ({
@@ -25,4 +25,20 @@ test('battleLine : chaque statut, vu du challenger (A) et du défié (B)', () =>
 test('isOpen : tout statut sauf completed et cancelled', () => {
   expect((['pending', 'deck_selection', 'generating_quizzes', 'active', 'completed', 'cancelled'] as const).map((s) => isOpen(battle(s))))
     .toEqual([true, true, true, true, false, false])
+})
+
+test('allows : une intention gardée tant que l\'état relu la permet (défi en attente, deck à poser, attaque à soi, question sans réponse)', () => {
+  const deck = { cardIds: [], usedCardIds: [], currentHp: 1, maxHp: 1, cards: [] } satisfies PlayerState
+  expect(['accept', 'decline', 'withdraw_invite'].map((a) => [allows(battle('pending'), B, `${a}:x`), allows(battle('cancelled'), B, `${a}:x`)]))
+    .toEqual([[true, false], [true, false], [true, false]])
+  expect([allows(battle('deck_selection', state({})), A, 'submit_deck:x'), allows(battle('deck_selection', state({ players: { [A]: deck } })), A, 'submit_deck:x')])
+    .toEqual([true, false])
+  const attack = battle('active', state({ phase: 'attack', currentTurnUserId: A }))
+  expect([allows(attack, A, 'submit_attack:x:c'), allows(attack, B, 'submit_attack:x:c'), allows(battle('active', quiz(B)), A, 'submit_attack:x:c')])
+    .toEqual([true, false, false])
+  const asked = battle('active', state({ phase: 'quiz', pendingAttack: { attackerUserId: A, defenderId: B, attackCardId: 'c', attackCardName: 'Carte',
+    questions: [{ id: 'q1', prompt: 'P', options: [] }, { id: 'q2', prompt: 'P', options: [] }], answered: ['q1'] } }))
+  expect(['q1', 'q2', 'q3'].map((q) => allows(asked, B, `submit_single_answer:x:${q}`))).toEqual([false, true, false])
+  expect(allows(attack, B, 'submit_single_answer:x:q2')).toBe(false)
+  expect([allows(attack, A, 'forfeit:x'), allows(battle('completed'), A, 'forfeit:x')]).toEqual([true, false])
 })
