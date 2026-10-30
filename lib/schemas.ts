@@ -26,6 +26,8 @@ export const BattleAction = z.object({
   attack_card_id: z.uuid().optional(),
   questionId: z.uuid().optional(),
   answerId: z.uuid().optional(),
+  // forfeit : la phase confirmée par la modale (annulation ou défaite), 409 en SQL si elle a changé.
+  expect: z.enum(['cancel', 'lose']).optional(),
 })
 // Corps de POST /api/trades, partagé avec le composer. items : une unité par élément, deux côtés × 100 ; les plafonds par côté et leurs
 // messages français sont des règles SQL (P11).

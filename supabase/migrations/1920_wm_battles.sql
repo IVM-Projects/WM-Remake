@@ -199,6 +199,10 @@ begin
     perform wm.raise_err(409, null, 'Cette bataille est terminée');
   elsif p_action = 'forfeit' and v_status = 'pending' then
     perform wm.raise_err(409, null, 'Ce défi n''est pas encore accepté');
+  elsif p_action = 'forfeit' and coalesce(p_payload ->> 'expect' <> case when v_status = 'active' then 'lose' else 'cancel' end, false) then
+    -- Phase confirmée par le joueur (expect) qui n'est plus celle lue : rien n'est écrit, le client relit (une annulation annoncée ne
+    -- devient pas une défaite).
+    perform wm.raise_err(409, null, 'La bataille a changé : relis-la avant d''abandonner.');
   elsif p_action = 'forfeit' and v_status <> 'active' then
     -- Choix des cartes (ou generating_quizzes hérité, C18) : annulée, sans argent ni notification (M5a-12).
     update public.battles set status = 'cancelled', updated_at = clock_timestamp() where id = b.id;

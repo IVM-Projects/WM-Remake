@@ -393,9 +393,14 @@ do $$ declare a uuid; b uuid; c uuid; x uuid; d jsonb; upd timestamptz; begin
     -- C11 : le statut avant le rôle, A n'a pas le rôle mais lit d'abord le 409.
     d := pg_temp.err(format('select wm.battle_action(%L, %L, %L)', a, x, 'accept'));
     assert d = pg_temp.berr(409, null, 'Ce défi n''est plus en attente'), coalesce(d::text, 'accepté');
-    -- forfeit en deck_selection → cancelled, sans argent ni notification, updated_at reposé ; puis 409 sur la bataille close.
+    -- forfeit en deck_selection confirmé comme une défaite (expect lose, phase changée sous la modale) → 409, rien d'écrit.
     upd := (select updated_at from public.battles where id = x);
-    d := wm.battle_action(a, x, 'forfeit');
+    d := pg_temp.err(format('select wm.battle_action(%L, %L, %L, %L)', a, x, 'forfeit', '{"expect": "lose"}'));
+    assert d = pg_temp.berr(409, null, 'La bataille a changé : relis-la avant d''abandonner.'), coalesce(d::text, 'accepté');
+    assert (select status = 'deck_selection' and updated_at = upd from public.battles where id = x), 'forfeit refusé, bataille écrite';
+    -- forfeit en deck_selection (expect cancel, la phase lue) → cancelled, sans argent ni notification, updated_at reposé ; puis 409 sur
+    -- la bataille close.
+    d := wm.battle_action(a, x, 'forfeit', '{"expect": "cancel"}');
     assert d #>> '{battle,status}' = 'cancelled' and d #> '{battle,idle_at}' = 'null' and (d #>> '{battle,updated_at}')::timestamptz > upd, d::text;
     assert not exists (select from wm.wb_ledger where ref = 'battle:' || x), 'grand livre au forfait';
     assert jsonb_array_length(pg_temp.bnotes(x)) = 2, pg_temp.bnotes(x)::text;
@@ -1054,13 +1059,21 @@ do $$ declare a uuid; b uuid; c uuid[]; x uuid; r jsonb; begin
 end $$;
 
 -- Review Focus, fins : forfeit de B en active → A gagne, +50 et +10 ; de nouveau, ou une attaque de A, → 409 (C11). Puis, pendant un quiz,
--- forfeit de l'attaquant A → B gagne, et la réponse de B → 409.
-do $$ declare a uuid; b uuid; c uuid[]; x uuid; q1 uuid; r jsonb; e jsonb; begin
+-- forfeit de l'attaquant A (expect lose, la phase lue) → B gagne, et la réponse de B → 409. La phase confirmée par la modale (expect) qui
+-- n'est plus celle lue → 409, rien d'écrit.
+do $$ declare a uuid; b uuid; c uuid[]; x uuid; q1 uuid; r jsonb; e jsonb; upd timestamptz; begin
   begin
     a := pg_temp.player('BatFfA'); b := pg_temp.player('BatFfB');
     c := pg_temp.bcards('BatFf', array[1000, 400, 400, 400, 400, 400], array[500, 500, 500, 500, 500, 500]);
     perform pg_temp.fill();
     x := pg_temp.active(a, b, pg_temp.own(a, c[1:3]), pg_temp.own(b, c[4:6]));
+    -- Confirmé comme une annulation (expect cancel, modale ouverte en choix des cartes) → 409, rien d'écrit ni versé ; sans expect, la
+    -- défaite.
+    upd := (select updated_at from public.battles where id = x);
+    e := pg_temp.err(format('select wm.battle_action(%L, %L, %L, %L)', b, x, 'forfeit', '{"expect": "cancel"}'));
+    assert e = pg_temp.berr(409, null, 'La bataille a changé : relis-la avant d''abandonner.'), coalesce(e::text, 'accepté');
+    assert (select status = 'active' and updated_at = upd from public.battles where id = x)
+      and not exists (select from wm.wb_ledger where ref = 'battle:' || x), 'forfeit refusé, bataille écrite';
     r := wm.battle_action(b, x, 'forfeit');
     assert r #>> '{battle,status}' = 'completed' and r #>> '{battle,winner_id}' = a::text and r -> 'reward' = '10'
       and r #>> '{battle,game_state,phase}' = 'over', r::text;
@@ -1074,7 +1087,7 @@ do $$ declare a uuid; b uuid; c uuid[]; x uuid; q1 uuid; r jsonb; e jsonb; begin
     x := pg_temp.active(a, b, c[1:3], c[4:6]);
     perform pg_temp.att(a, x, c[1]);
     q1 := pg_temp.q(x, 1);
-    r := wm.battle_action(a, x, 'forfeit');
+    r := wm.battle_action(a, x, 'forfeit', '{"expect": "lose"}');
     assert r #>> '{battle,status}' = 'completed' and r #>> '{battle,winner_id}' = b::text and r #> '{battle,game_state,pendingAttack}' = 'null',
       r::text;
     assert pg_temp.rewards(x) = jsonb_build_object(a, 10, b, 50), pg_temp.rewards(x)::text;

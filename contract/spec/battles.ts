@@ -212,6 +212,17 @@ export const battleAction: RouteSpec = {
       },
     },
     {
+      name: 'forfeit en choix des cartes confirmé comme une défaite { expect: lose } → 409 exact, rien d\'écrit ; { expect: cancel } → annulée',
+      run: async (env) => {
+        const [a, b] = friends(env)
+        const id = challenged(env, a.uid, b.uid, true)
+        const before = sql(env, `select status || ' ' || updated_at from public.battles where id = :'id'`, { id })
+        await refused(await act(env, a.uid, id, { action: 'forfeit', expect: 'lose' }), 409, 'La bataille a changé : relis-la avant d\'abandonner.')
+        assert.equal(sql(env, `select status || ' ' || updated_at from public.battles where id = :'id'`, { id }), before)
+        assert.equal((await ok(await act(env, a.uid, id, { action: 'forfeit', expect: 'cancel' }), Detail)).battle.status, 'cancelled')
+      },
+    },
+    {
       name: 'accept : même Idempotency-Key deux fois → corps identiques, en choix des cartes',
       run: async (env) => {
         const [a, b] = friends(env)
