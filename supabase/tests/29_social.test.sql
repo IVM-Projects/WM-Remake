@@ -69,10 +69,12 @@ do $$ begin
     'list_caps') and coalesce(note, '') = ''), 'note manquante';
 end $$;
 
--- Rejeu de 1800 (B3) : mêmes valeurs, et un plafond déjà posé garde sa valeur.
+-- Rejeu de 1800 (B3) : mêmes valeurs, et un plafond déjà posé garde sa valeur. Suivi de 2020, qui redéfinit trade_move
+-- (M5b-18).
 create temp table social_config as select pg_temp.social_config() v;
 update wm.config set value = value || '{"messages": 7}' where key = 'list_caps';
 \ir ../migrations/1800_wm_social_core.sql
+\ir ../migrations/2020_wm_guild_help.sql
 do $$ begin
   assert pg_temp.social_config() = jsonb_set((select v from social_config), '{list_caps,messages}', '7'), pg_temp.social_config()::text;
 end $$;

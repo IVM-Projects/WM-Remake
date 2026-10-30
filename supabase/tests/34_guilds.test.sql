@@ -591,3 +591,299 @@ do $$ declare v text; s text; p1 int; p2 int; p3 int; p4 int; begin
   select prosrc into s from pg_proc where oid = to_regproc('wm.guild_transfer');
   assert strpos(s, 'wm.lock_users(') between 1 and strpos(s, 'for no key update'), 'guild_transfer : profils puis guilde';
 end $$;
+
+-- Entraide (2020, Task 5) : souhait, don d'une unité par move_copies, un don reçu par jour UTC, entraide, karma de la semaine.
+
+-- État que rien ne doit changer après un refus : copies, souhaits, dons et notifications de don des joueurs.
+create function pg_temp.help_snap(p_users uuid[]) returns jsonb language sql as $$
+  select jsonb_build_object(
+    'copies', (select jsonb_agg(jsonb_build_array(id, user_id, count, starred) order by id) from public.user_cards where user_id = any (p_users)),
+    'wishes', (select jsonb_agg(jsonb_build_array(id, card_id, fulfilled_at) order by id) from public.guild_wishlists
+      where user_id = any (p_users)),
+    'donations', (select count(*) from public.guild_donations where donor_id = any (p_users) or recipient_id = any (p_users)),
+    'notifications', (select count(*) from public.notifications where type = 'guild_donation' and user_id = any (p_users)))
+$$;
+
+-- Don posé en superutilisateur (souhait clos et sa ligne de don), pour le karma.
+create function pg_temp.gift(p_guild uuid, p_donor uuid, p_recipient uuid, p_card uuid, p_at timestamptz default now())
+returns void language sql as $$
+  with w as (insert into public.guild_wishlists (guild_id, user_id, card_id, fulfilled_at) values (p_guild, p_recipient, p_card, p_at)
+    returning id)
+  insert into public.guild_donations (guild_id, wishlist_id, donor_id, recipient_id, user_card_id, created_at)
+  select p_guild, id, p_donor, p_recipient, gen_random_uuid(), p_at from w
+$$;
+
+-- Souhait (M5b-4) : un seul ouvert, remplacé ; rejeu de la clé ; refus exacts ; retrait.
+do $$ declare a uuid := pg_temp.player('GuiWiA'); b uuid := pg_temp.player('GuiWiB'); o uuid := pg_temp.player('GuiWiO');
+  x uuid := pg_temp.card('GuiWi X'); y uuid := pg_temp.card('GuiWi Y'); g uuid; r jsonb; w public.guild_wishlists; v public.guild_wishlists;
+  d jsonb; begin
+  g := pg_temp.guild(a, array[b]);
+  r := wm.guild_wish_set(b, x);
+  select * into w from public.guild_wishlists where user_id = b and fulfilled_at is null;
+  assert r = jsonb_build_object('wishlist', jsonb_build_object('id', w.id, 'user_id', b, 'card_id', x, 'created_at', w.created_at)), r::text;
+  assert w.guild_id = g and w.card_id = x, 'ligne du souhait';
+  -- Remplacé : un seul souhait ouvert, sur Y, d'un autre id ; l'ancien ouvert est supprimé.
+  r := wm.guild_wish_set(b, y);
+  select * into v from public.guild_wishlists where user_id = b and fulfilled_at is null;
+  assert v.card_id = y and v.id <> w.id and (r -> 'wishlist' ->> 'id')::uuid = v.id, r::text;
+  assert (select count(*) from public.guild_wishlists where user_id = b) = 1, 'un seul souhait';
+  -- Même clé deux fois : même corps, un seul effet (le second appel demanderait X).
+  r := wm.guild_wish_set(b, y, 'k-gwish');
+  assert wm.guild_wish_set(b, x, 'k-gwish') = r, 'rejeu de la clé';
+  assert (select card_id from public.guild_wishlists where user_id = b and fulfilled_at is null) = y, 'un seul effet';
+  -- Refus.
+  d := pg_temp.err(format('select wm.guild_wish_set(%L, %L)', b, gen_random_uuid()));
+  assert d = pg_temp.e(404, null, 'Carte introuvable'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_wish_set(%L, %L)', o, x));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_wish_set(%L, %L)', b, x));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  assert not exists (select from public.guild_wishlists where user_id = o), 'refus sans écriture';
+  assert (select card_id from public.guild_wishlists where user_id = b and fulfilled_at is null) = y, 'souhait inchangé';
+  -- Retrait, puis plus rien à retirer ; sans guilde (C6) ; maintenance ; rejeu de la clé.
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_wish_clear(%L)', b));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  assert exists (select from public.guild_wishlists where user_id = b and fulfilled_at is null), 'maintenance sans effet';
+  assert wm.guild_wish_clear(b) = '{"ok": true}', 'retrait';
+  assert not exists (select from public.guild_wishlists where user_id = b), 'souhait supprimé';
+  d := pg_temp.err(format('select wm.guild_wish_clear(%L)', b));
+  assert d = pg_temp.e(404, null, 'Tu ne demandes aucune carte'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_wish_clear(%L)', o));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  perform wm.guild_wish_set(b, x);
+  assert wm.guild_wish_clear(b, 'k-gclear') = '{"ok": true}' and wm.guild_wish_clear(b, 'k-gclear') = '{"ok": true}', 'rejeu de la clé';
+  assert not exists (select from public.guild_wishlists where user_id = b), 'un seul effet';
+end $$;
+
+-- La copie donnée (Review Focus) : copie entière étoilée, étiquetée, en vitrine et en avatar ; puis une pile de 3.
+do $$ declare a uuid := pg_temp.player('GuiDonA'); b uuid := pg_temp.player('GuiDonB'); c uuid := pg_temp.player('GuiDonC');
+  x uuid := pg_temp.card('GuiDon X'); g uuid; k uuid; k3 uuid; w uuid; w2 uuid; r jsonb; n public.user_cards; begin
+  g := pg_temp.guild(a, array[b, c]);
+  k := pg_temp.copy(a, x);
+  update public.user_cards set starred = true where id = k;
+  with t as (insert into public.tags (user_id, name) values (a, 'GuiDon tag') returning id)
+  insert into public.user_card_tags (user_card_id, tag_id) select k, id from t;
+  insert into public.showcase (user_id, position, user_card_id) values (a, 0, k);
+  update public.profiles set avatar_user_card_id = k, avatar_url = 'u-k' where id = a;
+  w := wm.guild_wish_set(b, x) -> 'wishlist' ->> 'id';
+  r := wm.guild_donate(a, w, k);
+  assert r = jsonb_build_object('ok', true, 'wishlist_id', w), r::text;
+  assert (select user_id = b and count = 1 and not starred from public.user_cards where id = k), 'copie passée à B, sans étoile';
+  assert not exists (select from public.user_card_tags where user_card_id = k), 'sans étiquette';
+  assert not exists (select from public.showcase where user_card_id = k), 'vitrine vidée';
+  assert (select avatar_user_card_id is null and avatar_url is null from public.profiles where id = a), 'avatar vidé';
+  assert (select fulfilled_at = now() from public.guild_wishlists where id = w), 'souhait clos';
+  assert (select jsonb_agg(jsonb_build_array(guild_id, wishlist_id, donor_id, recipient_id, user_card_id)) from public.guild_donations
+    where recipient_id = b) = jsonb_build_array(jsonb_build_array(g, w, a, b, k)), 'ligne de don';
+  assert (select jsonb_agg(data) from public.notifications where user_id = b and type = 'guild_donation')
+    = jsonb_build_array(jsonb_build_object('guild_id', g, 'guild_name', 'Guilde GuiDonA', 'user_id', a, 'username', 'GuiDonA')), 'notification';
+  assert not exists (select from public.notifications where type = 'guild_donation' and user_id in (a, c)), 'une seule notification';
+  perform pg_temp.inv('don d''une copie entière');
+  -- Pile de 3 en vitrine et en avatar : C reçoit une ligne neuve de 1 (même obtained_at), la pile passe à 2 et garde vitrine et avatar.
+  k3 := pg_temp.copy(a, x, 3);
+  update public.user_cards set obtained_at = '2026-01-02 03:04:05+00' where id = k3;
+  insert into public.showcase (user_id, position, user_card_id) values (a, 1, k3);
+  update public.profiles set avatar_user_card_id = k3, avatar_url = 'u-k3' where id = a;
+  w2 := wm.guild_wish_set(c, x) -> 'wishlist' ->> 'id';
+  assert wm.guild_donate(a, w2, k3) = jsonb_build_object('ok', true, 'wishlist_id', w2), 'don d''une unité';
+  assert (select user_id = a and count = 2 from public.user_cards where id = k3), 'pile de A à 2';
+  select * into n from public.user_cards where user_id = c;
+  assert n.id <> k3 and n.card_id = x and n.count = 1 and not n.starred and n.obtained_at = '2026-01-02 03:04:05+00'
+    and n.snapshot_title = 'GuiDon X', 'ligne neuve de C';
+  assert exists (select from public.showcase where user_id = a and position = 1 and user_card_id = k3), 'vitrine gardée';
+  assert (select avatar_user_card_id = k3 and avatar_url = 'u-k3' from public.profiles where id = a), 'avatar gardé';
+  assert (select user_card_id from public.guild_donations where wishlist_id = w2) = k3, 'don de la pile';
+  perform pg_temp.inv('don d''une unité');
+end $$;
+
+-- Refus exacts du don ; après chaque refus, rien n'a bougé. Un don reçu par jour UTC du receveur (D-C13).
+do $$ declare a uuid := pg_temp.player('GuiRefA'); b uuid := pg_temp.player('GuiRefB'); c uuid := pg_temp.player('GuiRefC');
+  dd uuid := pg_temp.player('GuiRefD'); o uuid := pg_temp.player('GuiRefO'); x uuid := pg_temp.card('GuiRef X');
+  z uuid := pg_temp.card('GuiRef Z'); g uuid; wa uuid; wb uuid; wz uuid; ax uuid; az uuid; cx uuid; cz uuid; dx uuid; ox uuid; t uuid;
+  s jsonb; r jsonb; d jsonb; us uuid[]; begin
+  g := pg_temp.guild(a, array[b, c]);
+  perform pg_temp.guild(dd);
+  us := array[a, b, c, dd, o];
+  ax := pg_temp.copy(a, x); az := pg_temp.copy(a, z); cx := pg_temp.copy(c, x); cz := pg_temp.copy(c, z);
+  dx := pg_temp.copy(dd, x); ox := pg_temp.copy(o, x);
+  wa := wm.guild_wish_set(a, x) -> 'wishlist' ->> 'id';
+  wb := wm.guild_wish_set(b, x) -> 'wishlist' ->> 'id';
+  s := pg_temp.help_snap(us);
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', a, wa, ax));
+  assert d = pg_temp.e(400, 'invalid_request', 'Tu ne peux pas te donner une carte'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', a, wb, az));
+  assert d = pg_temp.e(400, 'invalid_request', 'Cette carte n''est pas celle demandée'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', a, wb, cx));
+  assert d = pg_temp.e(403, '42501', 'Vous ne possédez pas cette carte'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', dd, wb, dx));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Ce souhait n''est pas dans ta guilde'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', o, wb, ox));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', a, gen_random_uuid(), ax));
+  assert d = pg_temp.e(404, null, 'Ce souhait n''existe plus'), coalesce(d::text, 'accepté');
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', a, wb, ax));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  -- Une copie X promise par A dans un échange en attente (verrou au niveau card_id, D:676).
+  insert into public.trades (initiator_id, recipient_id, expires_at) values (a, c, now() + interval '1 day') returning id into t;
+  insert into public.trade_items (trade_id, offered_by, user_card_id, card_id, snapshot_rarity) values (t, a, ax, x, 'R');
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', a, wb, ax));
+  assert d = pg_temp.e(409, null, 'Cette carte est déjà engagée dans un échange en attente'), coalesce(d::text, 'accepté');
+  delete from public.trades where id = t;
+  assert pg_temp.help_snap(us) = s, 'refus sans effet : ' || pg_temp.help_snap(us)::text;
+  -- Même clé deux fois : même corps, un seul don ; W clos ensuite → 404.
+  r := wm.guild_donate(a, wb, ax, 'k-gdonate');
+  assert wm.guild_donate(a, wb, ax, 'k-gdonate') = r and r = jsonb_build_object('ok', true, 'wishlist_id', wb), r::text;
+  assert (select count(*) from public.guild_donations where wishlist_id = wb) = 1, 'un seul effet';
+  s := pg_temp.help_snap(us);
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', c, wb, cx));
+  assert d = pg_temp.e(404, null, 'Ce souhait n''existe plus'), coalesce(d::text, 'accepté');
+  assert pg_temp.help_snap(us) = s, 'refus sans effet : ' || pg_temp.help_snap(us)::text;
+  -- B a reçu aujourd'hui : un deuxième souhait du jour ne reçoit rien.
+  wz := wm.guild_wish_set(b, z) -> 'wishlist' ->> 'id';
+  s := pg_temp.help_snap(us);
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', c, wz, cz));
+  assert d = pg_temp.e(409, null, 'Ce membre a déjà reçu un don aujourd''hui'), coalesce(d::text, 'accepté');
+  assert pg_temp.help_snap(us) = s, 'refus sans effet : ' || pg_temp.help_snap(us)::text;
+  -- Premier don reculé à la dernière seconde de la veille (UTC) : le don de C passe.
+  update public.guild_donations set created_at = date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' - interval '1 second'
+  where wishlist_id = wb;
+  assert wm.guild_donate(c, wz, cz) = jsonb_build_object('ok', true, 'wishlist_id', wz), 'don du lendemain';
+  assert (select user_id from public.user_cards where id = cz) = b, 'copie de C à B';
+  perform pg_temp.inv('refus du don');
+end $$;
+
+-- G18 (Review Focus) : le souhait ouvert d'un ancien membre est invisible et ne reçoit aucun don.
+do $$ declare a uuid := pg_temp.player('GuiExA'); e uuid := pg_temp.player('GuiExE'); x uuid := pg_temp.card('GuiEx X'); g uuid;
+  w uuid; ax uuid; s jsonb; d jsonb; begin
+  g := pg_temp.guild(a);
+  ax := pg_temp.copy(a, x);
+  insert into public.guild_wishlists (guild_id, user_id, card_id) values (g, e, x) returning id into w;
+  assert wm.guild_home(a) -> 'wishlists' = '[]', wm.guild_home(a)::text;
+  s := pg_temp.help_snap(array[a, e]);
+  d := pg_temp.err(format('select wm.guild_donate(%L, %L, %L)', a, w, ax));
+  assert d = pg_temp.e(404, null, 'Ce souhait n''existe plus'), coalesce(d::text, 'accepté');
+  assert pg_temp.help_snap(array[a, e]) = s, 'refus sans effet';
+end $$;
+
+-- Entraide (guild_home) : clés exactes, souhaits des autres membres, copies du lecteur (G6), don du jour.
+do $$ declare a uuid := pg_temp.player('GuiHoA'); b uuid := pg_temp.player('GuiHoB'); c uuid := pg_temp.player('GuiHoC');
+  o uuid := pg_temp.player('GuiHoO'); x uuid := pg_temp.card('GuiHo X'); y uuid := pg_temp.card('GuiHo Y'); g uuid; k1 uuid; k2 uuid;
+  wb uuid; wc uuid; h jsonb; e jsonb; t uuid; d jsonb; begin
+  g := pg_temp.guild(a, array[b, c]);
+  k1 := pg_temp.copy(a, x, 2);
+  k2 := pg_temp.copy(a, x);
+  update public.user_cards set is_shiny = true where id = k2;
+  perform pg_temp.copy(b, y);
+  wb := wm.guild_wish_set(b, x) -> 'wishlist' ->> 'id';
+  wc := wm.guild_wish_set(c, y) -> 'wishlist' ->> 'id';
+  h := wm.guild_home(a);
+  assert (select array_agg(k order by k) from jsonb_object_keys(h) k)
+    = array['my_wishlist', 'received_donation_today', 'weekly_karma_donors', 'wishlists'], h::text;
+  assert h -> 'my_wishlist' = 'null' and h -> 'received_donation_today' = 'false' and h -> 'weekly_karma_donors' = '[]', h::text;
+  -- Même created_at (now() figé) : départage par id.
+  assert (select jsonb_agg(v ->> 'id') from jsonb_array_elements(h -> 'wishlists') v) = jsonb_build_array(least(wb, wc), greatest(wb, wc)),
+    h::text;
+  select v into e from jsonb_array_elements(h -> 'wishlists') v where v ->> 'id' = wb::text;
+  assert e = (select jsonb_build_object('id', wb, 'user_id', b, 'card', jsonb_build_object('id', c.id, 'wikipedia_title', c.wikipedia_title,
+        'rarity', c.rarity, 'category', c.category, 'atk', c.atk, 'def', c.def, 'image_url', c.image_url, 'hide_image', c.hide_image,
+        'nsfw_image', c.nsfw_image, 'wikipedia_url', c.wikipedia_url, 'description', c.category, 'summary', c.summary),
+      'created_at', w.created_at, 'can_donate', true, 'recipient_received_today', false,
+      'user', jsonb_build_object('id', b, 'username', 'GuiHoB'), 'recipient', jsonb_build_object('id', b, 'username', 'GuiHoB'),
+      'my_copies', jsonb_build_array(jsonb_build_object('id', least(k1, k2), 'count', case when k1 < k2 then 2 else 1 end,
+        'is_shiny', k2 < k1), jsonb_build_object('id', greatest(k1, k2), 'count', case when k1 < k2 then 1 else 2 end, 'is_shiny', k2 > k1)))
+    from public.cards c, public.guild_wishlists w where c.id = x and w.id = wb), e::text;
+  assert jsonb_typeof(e -> 'card') = 'object' and (select count(*) from jsonb_object_keys(e -> 'card')) = 12, 'douze clés de card';
+  -- A sans copie de Y : my_copies vide, can_donate faux.
+  select v into e from jsonb_array_elements(h -> 'wishlists') v where v ->> 'id' = wc::text;
+  assert e -> 'my_copies' = '[]' and e -> 'can_donate' = 'false' and e -> 'recipient_received_today' = 'false', e::text;
+  -- my_wishlist de B : son souhait ouvert (can_donate faux pour l'auteur) ; ses wishlists, celles des autres.
+  h := wm.guild_home(b);
+  assert h -> 'my_wishlist' ->> 'id' = wb::text and h -> 'my_wishlist' -> 'can_donate' = 'false', h::text;
+  assert (select jsonb_agg(v ->> 'id') from jsonb_array_elements(h -> 'wishlists') v) = jsonb_build_array(wc), h::text;
+  -- X promise par A dans un échange en attente : my_copies vide (G6).
+  insert into public.trades (initiator_id, recipient_id, expires_at) values (a, c, now() + interval '1 day') returning id into t;
+  insert into public.trade_items (trade_id, offered_by, user_card_id, card_id, snapshot_rarity) values (t, a, k1, x, 'R');
+  select v into e from jsonb_array_elements(wm.guild_home(a) -> 'wishlists') v where v ->> 'id' = wb::text;
+  assert e -> 'my_copies' = '[]' and e -> 'can_donate' = 'false', e::text;
+  delete from public.trades where id = t;
+  -- Après un don à B : un nouveau souhait de B montre recipient_received_today, can_donate faux.
+  perform wm.guild_donate(a, wb, k1);
+  wb := wm.guild_wish_set(b, x) -> 'wishlist' ->> 'id';
+  select v into e from jsonb_array_elements(wm.guild_home(a) -> 'wishlists') v where v ->> 'id' = wb::text;
+  assert e -> 'recipient_received_today' = 'true' and e -> 'can_donate' = 'false' and jsonb_array_length(e -> 'my_copies') = 2, e::text;
+  assert wm.guild_home(b) -> 'received_donation_today' = 'true' and wm.guild_home(a) -> 'received_donation_today' = 'false',
+    'received_donation_today';
+  perform wm.guild_wish_clear(b);
+  assert wm.guild_home(b) -> 'my_wishlist' = 'null', 'my_wishlist nul';
+  d := pg_temp.err(format('select wm.guild_home(%L)', o));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  perform pg_temp.inv('entraide');
+end $$;
+
+-- Karma de la semaine (M5b-7) : dons dans cette guilde depuis week_start, karma = tous les dons, 10 au plus, égalités par username.
+do $$ declare a uuid := pg_temp.player('GuiKarA'); c uuid := pg_temp.player('GuiKarC'); e uuid := pg_temp.player('GuiKarE');
+  h uuid := pg_temp.player('GuiKarH'); x uuid := pg_temp.card('GuiKar X'); g uuid; g2 uuid; u uuid; i int; r jsonb; begin
+  g := pg_temp.guild(a, array[c, e]);
+  g2 := pg_temp.guild(h);
+  perform pg_temp.gift(g, a, c, x);
+  perform pg_temp.gift(g, a, e, x);
+  perform pg_temp.gift(g, c, a, x);
+  perform pg_temp.gift(g, e, a, x, wm.week_start(now()) - interval '1 second');
+  perform pg_temp.gift(g2, a, h, x);
+  r := wm.guild_home(a) -> 'weekly_karma_donors';
+  assert r = jsonb_build_array(
+    jsonb_build_object('user_id', a, 'username', 'GuiKarA', 'karma', 3, 'karma_this_week', 2, 'donations_this_week', 2),
+    jsonb_build_object('user_id', c, 'username', 'GuiKarC', 'karma', 1, 'karma_this_week', 1, 'donations_this_week', 1)), r::text;
+  -- E donne de nouveau : son don de la semaine passée compte dans karma ; égalité avec C, départage par username.
+  perform pg_temp.gift(g, e, c, x);
+  r := wm.guild_home(a) -> 'weekly_karma_donors';
+  assert r -> 2 = jsonb_build_object('user_id', e, 'username', 'GuiKarE', 'karma', 2, 'karma_this_week', 1, 'donations_this_week', 1)
+    and r -> 1 ->> 'username' = 'GuiKarC', r::text;
+  -- 10 donneurs de plus : 13 en tout, 10 entrées.
+  for i in 1..10 loop
+    u := pg_temp.player('GuiKarP' || lpad(i::text, 2, '0'));
+    insert into public.guild_members (guild_id, user_id, role) values (g, u, 'member');
+    perform pg_temp.gift(g, u, a, x);
+  end loop;
+  r := wm.guild_home(c) -> 'weekly_karma_donors';
+  assert (select jsonb_agg(v ->> 'username') from jsonb_array_elements(r) v) = '["GuiKarA", "GuiKarC", "GuiKarE", "GuiKarP01", "GuiKarP02",
+    "GuiKarP03", "GuiKarP04", "GuiKarP05", "GuiKarP06", "GuiKarP07"]', r::text;
+end $$;
+
+-- Volatilité, lock_timeout avant le premier verrou, ordre des verrous (G3 : souhait, profils, guilde, copie), adhésion relue sous la
+-- guilde, move_copies et guild_score_add sans lock_timeout, trade_move qui passe par move_copies.
+do $$ declare v text; s text; p1 int; p2 int; p3 int; p4 int; begin
+  assert (select provolatile = 's' from pg_proc where oid = 'wm.guild_home(uuid)'::regprocedure), 'guild_home stable';
+  v := tests.lock_timeout_violations(array['guild_wish_set', 'guild_wish_clear', 'guild_donate'],
+    array['for update', 'for no key update', 'for key share', 'wm.lock_users(', 'wm.lock_user(', 'delete from wm.guild_invites',
+      'delete from public.guild_wishlists']);
+  assert v is null, 'lock_timeout : ' || v;
+  select prosrc into s from pg_proc where oid = to_regproc('wm.guild_donate');
+  p1 := strpos(s, 'from public.guild_wishlists');
+  p2 := strpos(s, 'for update');
+  p3 := strpos(s, 'wm.lock_users(');
+  p4 := strpos(s, 'from public.user_cards');
+  assert p1 > 0 and p1 < p2 and p2 < p3 and p3 < p4, format('guild_donate : souhait, profils, copie (%s %s %s %s)', p1, p2, p3, p4);
+  p1 := strpos(s, 'for key share');
+  p2 := strpos(s, 'from public.guild_members where user_id = p_uid');
+  assert p3 < p1 and p1 < p2 and p2 < p4, format('guild_donate : profils, guilde, adhésion relue, copie (%s %s %s %s)', p3, p1, p2, p4);
+  select prosrc into s from pg_proc where oid = to_regproc('wm.guild_wish_set');
+  p1 := strpos(s, 'for update');
+  p2 := strpos(s, 'wm.lock_user(');
+  p3 := strpos(s, 'for key share');
+  p4 := strpos(s, 'from public.guild_members where user_id = p_uid and guild_id = g');
+  assert p1 > 0 and p1 < p2 and p2 < p3 and p3 < p4, format('guild_wish_set : souhait, profil, guilde, adhésion relue (%s %s %s %s)',
+    p1, p2, p3, p4);
+  assert (select bool_and(strpos(prosrc, 'lock_timeout') = 0) and count(*) = 2 from pg_proc
+    where oid in (to_regproc('wm.move_copies'), to_regproc('wm.guild_score_add'))), 'move_copies et guild_score_add sans lock_timeout';
+  assert (select strpos(prosrc, 'update public.user_cards set user_id = case user_id when p_a then p_b else p_a end, starred = false where id = any (v_full)') > 0
+    from pg_proc where oid = to_regproc('wm.move_copies')), 'move_copies : instruction (1)';
+  assert (select strpos(prosrc, 'perform wm.move_copies(') > 0 and strpos(prosrc, 'update public.user_cards') = 0 from pg_proc
+    where oid = to_regproc('wm.trade_move')), 'trade_move par move_copies';
+end $$;
