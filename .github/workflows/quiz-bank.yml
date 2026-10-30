@@ -2,7 +2,8 @@ name: Banques de quiz
 
 # Banques de quiz des batailles (M5a-7) : OmniRoute 3.8.51 en mode self-hosted, un seul fournisseur `openai` vers Mistral,
 # lancé par scripts/quiz/omniroute.sh. Job `probe` : la clé Mistral liste les modèles en direct, puis complète un jeton à
-# travers OmniRoute ; elle doit rendre 200 avant toute génération (M5a-3).
+# travers OmniRoute ; elle doit rendre 200 avant toute génération (M5a-3). Job `smoke` (push, sans secret) : toute la chaîne à
+# travers OmniRoute contre le faux serveur, puis l'arrêt quota. Job `generate` (à la demande, sur develop) : les banques.
 # Dépôt public : aucun énoncé, aucune option, aucune clé dans un journal ni un artefact ; une clé n'est posée que dans l'env:
 # de l'étape qui la lit, jamais dans celui du workflow ou d'un job. Pas de schedule avant un premier run réussi.
 on:
@@ -11,6 +12,15 @@ on:
       - 'scripts/quiz/**'
       - '.github/workflows/quiz-bank.yml'
   workflow_dispatch:
+    inputs:
+      max:
+        description: 'Cartes au plus (vide : vars.QUIZ_MAX, sinon 250 ; plafond 1 500)'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Ni quiz_store ni quiz_fail ; sans --input, la file est lue par wm.quiz_next, dont la remise en file est la seule écriture (C12)'
+        type: boolean
+        default: false
 
 defaults:
   run:
@@ -108,3 +118,97 @@ jobs:
             echo "$model $code $msg"
             sleep 2
           done
+
+  # La chaîne entière à travers OmniRoute (détournement self-hosted, corps de la requête et de la réponse), contre le faux
+  # serveur : aucun secret. OMNIROUTE_KEY n'existe qu'après l'étape de omniroute.sh, d'où generate.ts dans les suivantes.
+  smoke:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+
+      # Sans --retry-connrefused, curl ne relance pas un refus de connexion, et le serveur n'écoute pas encore.
+      - name: Faux serveur, puis OmniRoute devant lui
+        run: |
+          node scripts/quiz/fake-upstream.ts --port 18090 &
+          echo "FAKE_PID=$!" >> "$GITHUB_ENV"
+          curl -fsS --retry 30 --retry-connrefused --retry-delay 1 http://127.0.0.1:18090/v1/models > /dev/null
+          PROVIDER_KEY=fake scripts/quiz/omniroute.sh http://127.0.0.1:18090/v1
+
+      # Les lignes de generate.ts ne portent que des comptes, des card_id et le model ; le résumé est la dernière.
+      - name: Génération à travers OmniRoute (faux serveur)
+        run: |
+          out="$RUNNER_TEMP/smoke.jsonl"
+          node scripts/quiz/generate.ts --base-url http://127.0.0.1:20128/v1 --input scripts/quiz/fixtures/cards.json --text summary --max 5 --min-gap-s 0 --dry-run | tee "$out"
+          tail -n 1 "$out" | jq -e '.summary.cards == 5 and .summary.stored == 5'
+
+      # Le chemin quota à travers OmniRoute (C12) : 429 de l'amont, arrêt du run, sortie 0 ; le ::warning:: est sur stderr.
+      - name: Arrêt quota à travers OmniRoute (faux serveur en rate_limit)
+        run: |
+          out="$RUNNER_TEMP/quota.jsonl"
+          kill "$FAKE_PID"
+          node scripts/quiz/fake-upstream.ts --port 18090 --mode rate_limit &
+          curl -fsS --retry 30 --retry-connrefused --retry-delay 1 http://127.0.0.1:18090/v1/models > /dev/null
+          node scripts/quiz/generate.ts --base-url http://127.0.0.1:20128/v1 --input scripts/quiz/fixtures/cards.json --text summary --max 5 --min-gap-s 0 --dry-run | tee "$out"
+          tail -n 1 "$out" | jq -e '.summary.stopped == "quota"'
+
+  # Génération à la demande, sur develop seulement, après une sonde verte. npm ci passe avant le conteneur : une fois celui-ci
+  # lancé, docker inspect livre son environnement (la clé Mistral) à toute étape suivante, scripts d'installation compris.
+  generate:
+    if: github.event_name != 'push' && github.ref == 'refs/heads/develop'
+    needs: probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    concurrency:
+      group: quiz-bank-generate
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Secrets
+        id: secrets
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          if [[ -z $MISTRAL_API_KEY ]]; then
+            echo "::notice::Sonde sautée : secret MISTRAL_API_KEY absent (D:1116)"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [[ -z $SUPABASE_SECRET_KEY ]]; then
+            echo "::error::Secret SUPABASE_SECRET_KEY absent (Settings → Secrets and variables → Actions)"
+            exit 1
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: OmniRoute
+        if: steps.secrets.outputs.run == 'true'
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: PROVIDER_KEY="$MISTRAL_API_KEY" scripts/quiz/omniroute.sh https://api.mistral.ai/v1
+
+      # MAX en bash, pas par une expression || : une entrée '0' est passée telle quelle à --max.
+      - name: Génération des banques à travers OmniRoute
+        if: steps.secrets.outputs.run == 'true'
+        env:
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          MAX_INPUT: ${{ inputs.max }}
+          QUIZ_MAX: ${{ vars.QUIZ_MAX }}
+        run: |
+          MAX="${MAX_INPUT:-${QUIZ_MAX:-250}}"
+          node scripts/quiz/generate.ts --base-url http://127.0.0.1:20128/v1 --max "$MAX" --deadline-min 50 --min-gap-s "${{ vars.QUIZ_MIN_GAP_S || 30 }}" --text extracts ${{ inputs.dry_run && '--dry-run' || '' }}
