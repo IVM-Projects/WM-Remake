@@ -14,7 +14,7 @@ import { messages, PROMPT_VERSION, REQUEST } from './prompt.ts'
 import { RULES, validate, type Question, type Rule } from './schema.ts'
 
 export type QueueCard = { card_id: string; page_id: number | null; title: string; category: string | null; summary: string | null; rarity: string }
-export type Summary = { cards: number; stored: number; failed: number; skipped: number; rejected: Partial<Record<Rule, number>>;
+export type Summary = { cards: number; stored: number; failed: number; skipped: number; fallback: number; rejected: Partial<Record<Rule, number>>;
   stopped: null | 'quota' | 'deadline' | 'network' }
 type Options = { baseUrl: string; apiKey?: string; max: number; deadlineMin: number; minGapS: number; dryRun: boolean;
   text: 'extracts' | 'summary'; input?: QueueCard[]; store?: { url: string; key: string }; log?: (line: string) => void;
@@ -37,7 +37,7 @@ export async function run(o: Options): Promise<Summary> {
   const log = o.log ?? ((line: string) => console.log(line))
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const fetchImpl = o.fetchImpl ?? fetch
-  const summary: Summary = { cards: 0, stored: 0, failed: 0, skipped: 0, rejected: {}, stopped: null }
+  const summary: Summary = { cards: 0, stored: 0, failed: 0, skipped: 0, fallback: 0, rejected: {}, stopped: null }
   const end = Date.now() + o.deadlineMin * 60_000
   // Échéance vue avant chaque requête amont, écart minimal compris : une requête partie avant elle finit avant la fin du job.
   const due = () => Date.now() + o.minGapS * 1000 >= end
@@ -119,8 +119,8 @@ export async function run(o: Options): Promise<Summary> {
 
   // Texte de la carte ; null si l'échéance tombe pendant la lecture de Wikipédia. Une lecture en échec (réseau, 5xx répétés, erreur de
   // l'API) prend le résumé, comme une page sans extrait : une page qui échoue toujours n'arrête pas chaque run.
-  async function textOf(card: QueueCard): Promise<string | null> {
-    if (o.text === 'summary' || card.page_id === null) return cut(card.summary ?? '')
+  async function textOf(card: QueueCard): Promise<{ text: string; fallback: boolean } | null> {
+    if (o.text === 'summary' || card.page_id === null) return { text: cut(card.summary ?? ''), fallback: false }
     let timer: ReturnType<typeof setTimeout> | undefined
     let pages: { page_id: number; extract: string }[] | null
     try {
@@ -128,11 +128,12 @@ export async function run(o: Options): Promise<Summary> {
       const body = await Promise.race([wiki.get(EXTRACT + card.page_id), late])
       pages = body === null ? null : parseExtracts(body)
     } catch {
-      return cut(card.summary ?? '')
+      // Seule une lecture en échec est un repli compté (G7) ; une page sans extrait garde le chemin normal.
+      return { text: cut(card.summary ?? ''), fallback: true }
     } finally {
       clearTimeout(timer)
     }
-    return pages && cut(pages[0]?.extract ?? card.summary ?? '')
+    return pages && { text: cut(pages[0]?.extract ?? card.summary ?? ''), fallback: false }
   }
 
   const add = (into: Partial<Record<Rule, number>>, from: Partial<Record<Rule, number>>) => {
@@ -155,15 +156,18 @@ export async function run(o: Options): Promise<Summary> {
     const t0 = Date.now()
     const line = (ok: boolean, kept: number, rejected: Partial<Record<Rule, number>>, model: string | null) =>
       log(JSON.stringify({ card_id: card.card_id, ok, kept, rejected, model, ms: Date.now() - t0 }))
-    const text = await textOf(card)
-    if (text === null) {
+    const got = await textOf(card)
+    if (got === null) {
       summary.stopped = 'deadline'
       break
     }
+    const { text } = got
+    if (got.fallback) summary.fallback++
     const ctx = { title: card.title, text }
     if (text.length < 200) {
       summary.skipped++
-      await fail(card, 'short_text')
+      // Un résumé de repli trop court n'est pas la faute de la carte : elle reste en file (M5b-16).
+      if (!got.fallback) await fail(card, 'short_text')
       line(false, 0, {}, null)
       continue
     }

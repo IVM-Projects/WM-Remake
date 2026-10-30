@@ -63,13 +63,13 @@ test('ok, 3 cartes, dry run → 3 banques, un nouvel essai sous 6 questions (ses
     const n = cards.slice(0, 3).map((c) => fakeQuestions(c.summary ?? '', c.title).length)
     expect(n.slice(0, 2)).toEqual([6, 6])
     const s = await run({ ...base, ...quiet, baseUrl: `${fake.url}/v1`, input: cards.slice(0, 3) })
-    expect(s).toEqual({ cards: 3, stored: 3, failed: 0, skipped: 0, rejected: n[2] < 6 ? { duplicate: n[2] } : {}, stopped: null })
+    expect(s).toEqual({ cards: 3, stored: 3, failed: 0, skipped: 0, fallback: 0, rejected: n[2] < 6 ? { duplicate: n[2] } : {}, stopped: null })
     expect(fake.calls()).toBe(n[2] < 6 ? 4 : 3)
   }))
 
 test('junk → un nouvel essai par carte, puis échec, json compté', () => withFake('junk', async (fake) => {
   const s = await run({ ...base, ...quiet, baseUrl: `${fake.url}/v1`, input: cards.slice(0, 2) })
-  expect(s).toEqual({ cards: 2, stored: 0, failed: 2, skipped: 0, rejected: { json: 4 }, stopped: null })
+  expect(s).toEqual({ cards: 2, stored: 0, failed: 2, skipped: 0, fallback: 0, rejected: { json: 4 }, stopped: null })
   expect(fake.calls()).toBe(4)
 }))
 
@@ -98,7 +98,7 @@ test.each([['provider_error', 'quota'], ['service_unavailable', null]])('503 de 
 test.each(['error', 'unauthorized'] as const)('%s, quatre cartes → network après trois appels, rien de compté', (mode) =>
   withFake(mode, async (fake) => {
     const s = await run({ ...base, ...quiet, baseUrl: `${fake.url}/v1`, input: cards.slice(0, 4) })
-    expect(s).toEqual({ cards: 4, stored: 0, failed: 0, skipped: 0, rejected: {}, stopped: 'network' })
+    expect(s).toEqual({ cards: 4, stored: 0, failed: 0, skipped: 0, fallback: 0, rejected: {}, stopped: 'network' })
     expect(fake.calls()).toBe(3)
   }))
 
@@ -157,7 +157,7 @@ test('écriture : quiz_store reçoit les 6 questions gardées, PROMPT_VERSION et
 
 test('max 0 → résumé à zéro, aucun appel ; cliOptions : --max 0, défaut 250, plafond 1 500', () => withFake('ok', async (fake) => {
   const s = await run({ ...base, ...quiet, max: 0, baseUrl: `${fake.url}/v1`, input: cards.slice(0, 3) })
-  expect(s).toEqual({ cards: 0, stored: 0, failed: 0, skipped: 0, rejected: {}, stopped: null })
+  expect(s).toEqual({ cards: 0, stored: 0, failed: 0, skipped: 0, fallback: 0, rejected: {}, stopped: null })
   expect(fake.calls()).toBe(0)
   expect(cliOptions(['--base-url', 'u', '--max', '0']).max).toBe(0)
   expect(cliOptions(['--base-url', 'u']).max).toBe(250)
@@ -172,6 +172,15 @@ test('texte de 150 caractères → skipped et quiz_fail(short_text), aucun appel
   expect(s).toMatchObject({ cards: 1, skipped: 1, stored: 0, failed: 0 })
   expect(upstream).toEqual([])
   expect(rpc[1]).toEqual({ fn: 'quiz_fail', args: { p_card_id: card.card_id, p_reason: 'short_text' } })
+})
+
+test('Wikimédia en échec et résumé de 150 caractères → skipped 1, fallback 1, aucun quiz_fail, aucun appel amont', async () => {
+  const page = { ...card, page_id: 4242, summary: 'Une phrase courte. '.repeat(8).slice(0, 150) }
+  const { fetchImpl, upstream, rpc } = stub({ card: page, wikiReply: () => new Response('', { status: 404 }) })
+  const s = await run({ ...base, ...quiet, text: 'extracts', dryRun: false, store, baseUrl: 'http://amont.test/v1', fetchImpl })
+  expect(s).toMatchObject({ cards: 1, skipped: 1, fallback: 1, stored: 0, failed: 0 })
+  expect(upstream).toEqual([])
+  expect(rpc.map((r) => r.fn)).toEqual(['quiz_next'])
 })
 
 test('extrait de 5 000 caractères → texte envoyé de 4 000 au plus, fini par un point', async () => {
@@ -201,7 +210,7 @@ test('client Wikimedia en échec (trois 503 de suite, puis une 404) → chaque c
   const { fetchImpl, upstream, wiki } = stub({ replies: [ok(pages[0]), ok(pages[1])],
     wikiReply: () => new Response('', { status: ++n <= 3 ? 503 : 404 }) })
   const s = await run({ ...base, ...quiet, text: 'extracts', baseUrl: 'http://amont.test/v1', input: pages, fetchImpl })
-  expect(s).toMatchObject({ cards: 2, stored: 2, failed: 0, stopped: null })
+  expect(s).toMatchObject({ cards: 2, stored: 2, failed: 0, fallback: 2, stopped: null })
   expect([wiki.length, upstream.map(articleOf)]).toEqual([4, [pages[0].summary, pages[1].summary]])
 })
 
@@ -302,7 +311,7 @@ function expectClean(lines: string[]) {
     const o = JSON.parse(line) as Record<string, unknown>
     expect(SHAPES, line).toContainEqual(Object.keys(o).sort())
     const s = (o.summary ?? o) as Record<string, unknown>
-    if (o.summary) expect(Object.keys(s).sort(), line).toEqual(['cards', 'failed', 'rejected', 'skipped', 'stopped', 'stored'])
+    if (o.summary) expect(Object.keys(s).sort(), line).toEqual(['cards', 'failed', 'fallback', 'rejected', 'skipped', 'stopped', 'stored'])
     for (const t of [...strings(s), ...Object.keys(s.rejected ?? {})]) expect(UUID.test(t) || WORDS.has(t), `${t} dans ${line}`).toBe(true)
   }
 }
@@ -343,7 +352,7 @@ test('CLI sans secret de base : quota → dernière ligne summary, ::warning:: s
   expect(r.code).toBe(0)
   const lines = r.stdout.trim().split('\n')
   expectClean(lines)
-  expect(JSON.parse(lines.at(-1) ?? '')).toEqual({ summary: { cards: 5, stored: 0, failed: 0, skipped: 0, rejected: {}, stopped: 'quota' } })
+  expect(JSON.parse(lines.at(-1) ?? '')).toEqual({ summary: { cards: 5, stored: 0, failed: 0, skipped: 0, fallback: 0, rejected: {}, stopped: 'quota' } })
   expect(r.stderr.split('\n').filter(Boolean)).toEqual([expect.stringMatching(/^::warning::/)])
   const f = await cli(['--base-url', `${fake.url}/v1`, '--input', 'scripts/quiz/fixtures/absent.json', '--dry-run'])
   expect([f.code, f.stdout]).toEqual([1, '{"fatal":"input"}\n'])
