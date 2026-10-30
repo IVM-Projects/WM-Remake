@@ -27,10 +27,13 @@
 # 13. kick contre guild_wish_set de l'exclu : W_B tenu, guild_wish_set(B, Y) d'abord, puis le chef exclut B → servis, aucun souhait ouvert
 #     de B.
 # 14. leave contre guild_wish_set du même joueur : W_B tenu, guild_wish_set(B, Y) d'abord, puis B quitte G → servis, aucun souhait ouvert
-#     de B ; puis A seul, même gabarit → sa guilde dissoute, aucun souhait ouvert de A.
-# 15. Départ ou exclusion en vol (transaction tenue 1 s après l'appel), contre un souhait, un don, un message ou la fin :
-#     a. leave(B), B sans souhait, puis guild_wish_set(B, Y) → servi sans attendre : souhait orphelin (course acceptée de G3), invisible
-#        dans guild_home et refusé au don en 404 « Ce souhait n'existe plus » (G18) ;
+#     de B ; puis A seul, même gabarit → sa guilde dissoute, aucun souhait ouvert de A ; puis W_B tenu, guild_kick(L, B) d'abord, puis
+#     guild_leave(B) → kick servi, leave 404 « Tu n'es dans aucune guilde » (leave attend le souhait sans rien tenir encore).
+# 15. Départ ou exclusion en vol (transaction tenue 1 s, ou 3 s quand rien ne l'attend, après l'appel), contre un souhait, un don, un
+#     message ou la fin :
+#     a. leave(B), B sans souhait, puis guild_wish_set(B, Y), un don à ce souhait, et un second guild_wish_set(B, Y), tous avant le commit
+#        du départ → servis sans attendre : un don atteint un ex-membre, puis reste un souhait orphelin (courses acceptées de G3 ; kick ne
+#        les permet pas, c), invisible dans guild_home et refusé au don en 404 « Ce souhait n'existe plus » (G18) ;
 #     b. leave(C), C avec W_C, puis guild_donate(A, W_C) et guild_wish_set(C, X) → servis après le départ : 404 « Ce souhait n'existe
 #        plus » et 404 « Tu n'es dans aucune guilde », aucun souhait ouvert de C ;
 #     c. kick(D), puis guild_wish_set(D, Y) et guild_chat_send(D) → 404 « Tu n'es dans aucune guilde » chacun, ni souhait ni message ;
@@ -48,13 +51,13 @@ cleanup() {
   # Clés NO ACTION vers public.cards : le pool d'abord (1200_wm_packs.sql:25), puis les guildes du tag (une guilde survit à ses membres,
   # et ses dons retiennent les profils), puis les joueurs, leurs copies et leurs batailles avec eux, puis les cartes, leurs banques et leur
   # file avec elles. Les clés d'idempotence n'ont pas de clé étrangère vers les profils.
+  q -c "update wm.config set value = '$cfg'::jsonb -> key where key in ($keys)" >/dev/null  # d'abord : un delete en échec ne la laisse pas
   q -c "select wm.pool_remove(id) from public.cards where wikipedia_title like '$tag %'" \
     -c "delete from public.guilds where id in (select guild_id from public.guild_members m join public.profiles p on p.id = m.user_id
       where p.username like '${tag}_%') or leader_id in (select id from public.profiles where username like '${tag}_%')" \
     -c "delete from wm.idempotency_keys where user_id in (select id from public.profiles where username like '${tag}_%')" \
     -c "delete from auth.users where id in (select id from public.profiles where username like '${tag}_%')" \
-    -c "delete from public.cards where wikipedia_title like '$tag %'" \
-    -c "update wm.config set value = '$cfg'::jsonb -> key where key in ($keys)" >/dev/null
+    -c "delete from public.cards where wikipedia_title like '$tag %'" >/dev/null
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -119,6 +122,7 @@ released() {
   local max; max="$(cat "$tmp/$1.out")"
   echo "20_guilds_concurrency : $1 : $max appels au plus en attente derrière le bloqueur" >&2
   (( max >= $2 )) || fail "$1 : contention insuffisante, $max appels en attente ($2 au moins)"
+  (( max >= 2 )) || echo "20_guilds_concurrency : $1 : avertissement, un seul appel vu en attente" >&2
 }
 ms() { echo $(( (${EPOCHREALTIME/[.,]/} - ${t0/[.,]/}) / 1000 )); }  # depuis t0=$EPOCHREALTIME
 deck() { echo "jsonb_build_object('card_ids', array['$1', '$2', '$3'])"; }
@@ -168,9 +172,9 @@ first() {
     sleep 0.05
   done
 }
-# Transaction tenue 1 s après $2 (fichier d'erreurs $1) ; rendu à son PgSleep.
+# Transaction tenue ${3:-1} s après $2 (fichier d'erreurs $1) ; rendu à son PgSleep. 3 s seulement si rien ne l'attend (lock_timeout 2 s).
 held() {
-  q -v VERBOSITY=verbose -c "begin; $2; select pg_sleep(1); commit;" >/dev/null 2>"$tmp/$1" &
+  q -v VERBOSITY=verbose -c "begin; $2; select pg_sleep(${3:-1}); commit;" >/dev/null 2>"$tmp/$1" &
   blocker=$!
   sleeping "$tmp/$1"
 }
@@ -210,7 +214,7 @@ quiet "$tmp/1e" "$tmp/1j"
 got="$(member "$b") $(gp "$bt") $(score "$g") $(inv)"
 [[ $got == "1 500 500 0 []" ]] || fail "join contre la fin : B membre, guildPoints, score de G, invariants : $got"
 
-# 2. invite contre la fin : M invite B (lock_users, puis la guilde) pendant que la fin tient A et demande B.
+# 2. invite contre la fin : M invite B (lock_users, puis la guilde) pendant que la fin attend B (en tenant A si A < B).
 a="$(player 2a)"; b="$(player 2b)"; l="$(player 2l)"; m="$(player 2m)"
 g="$(guild "$l" "$a" "$m")"
 q -c "insert into public.friendships (requester_id, addressee_id, status) values ('$m', '$b', 'accepted')" >/dev/null
@@ -372,6 +376,7 @@ a="$(player 9a)"
 read -r x x2 r <<<"$(q -c "select (array_agg(id order by sort_order))[1] || ' ' || (array_agg(id order by sort_order))[2] || ' '
   || (array_agg(wikibidous_reward order by sort_order))[1] from public.achievements")"
 q -c "insert into public.user_achievements (user_id, achievement_id) values ('$a', '$x'), ('$a', '$x2')" >/dev/null
+w0="$(q -c "select wikibidous_balance from public.profiles where id = '$a'")"
 hold s9 "perform from public.profiles where id = '$a' for update" 10
 for k in $(seq 10); do
   q -v VERBOSITY=verbose -c "set role service_role; select wm.achievements_claim('$a', '$x')" >"$tmp/9-$k.out" 2>"$tmp/9-$k" & pids+=($!)
@@ -380,8 +385,8 @@ released s9 5
 waitall
 refusals 'Ce succès a déjà été réclamé' "$tmp"/9-{1..10}
 got="$(cat "$tmp"/9-{1..10}.out | grep -c '^{"ok": true}$') $(cat "$tmp"/9-{1..10} | grep -c '^ERROR:  P0001: Ce succès a déjà été réclamé$') \
-$(q -c "select count(*) from wm.wb_ledger where user_id = '$a' and reason = 'achievement' and ref = 'ach:$x'") $(q -c "select wikibidous_balance from public.profiles
-  where id = '$a'") $(inv)"
+$(q -c "select count(*) from wm.wb_ledger where user_id = '$a' and reason = 'achievement' and ref = 'ach:$x'") $(q -c "select (select wikibidous_balance from public.profiles
+  where id = '$a') - $w0") $(inv)"
 [[ $got == "1 9 1 $r []" ]] || fail "double claim : succès, refus, lignes ach:<X>, solde, invariants : $got (1 9 1 $r [] attendu)"
 dup="select wm.achievements_claim('$a', '$x2', 'k-dup')::text"
 q -v VERBOSITY=verbose -c "set role service_role; begin; $dup; select pg_sleep(1); commit;" >"$tmp/9s1" 2>"$tmp/9s1.err" &
@@ -477,6 +482,20 @@ for pass in membre dissolution; do
   if [[ $pass == membre ]]; then want="0 0 1 []"; else want="0 0 0 []"; fi
   [[ $got == "$want" ]] || fail "leave contre wish_set ($pass) : membre, souhaits ouverts, guilde, invariants : $got ($want attendu)"
 done
+# 14 c. kick puis leave du même B, son souhait tenu : kick attend W_B sans rien tenir ; leave aussi, derrière lui. Souhait pris après la
+# guilde, leave tiendrait la guilde (no key update) en attendant W_B, que kick tient en attendant la guilde (40P01).
+b="$(player 14b)"; l="$(player 14l2)"
+g="$(guild "$l" "$b")"
+w="$(wish "$b" "$cx")"
+hold s14c "perform from public.guild_wishlists where id = '$w' for update" 2
+first 14ck "select wm.guild_kick('$l', '$b')"
+bg 14cl "select wm.guild_leave('$b')"
+released s14c 1
+waitall
+refusals "Tu n'es dans aucune guilde" "$tmp/14ck" "$tmp/14cl"
+quiet "$tmp/14ck"
+got="$(grep -c "^ERROR:  P0001: Tu n'es dans aucune guilde$" "$tmp/14cl") $(member "$b") $(open_wishes "$b") $(inv)"
+[[ $got == "1 0 0 []" ]] || fail "kick puis leave : refus de leave, B membre, souhaits ouverts de B, invariants : $got"
 
 # 15. Départ ou exclusion en vol. leave ne prend aucun profil (M5b-1) et la guilde en no key update, compatible avec le key share de
 # wish_set, chat_send et guild_score_add : un appel lancé pendant le départ, sans souhait ouvert à attendre, lit encore l'appartenance et
@@ -485,17 +504,24 @@ done
 a="$(player 15a)"; b="$(player 15b)"; c="$(player 15c)"; dd="$(player 15d)"; e="$(player 15e)"; h="$(player 15h)"; l="$(player 15l)"
 g="$(guild "$l" "$a" "$b" "$c" "$dd" "$e" "$h")"
 cx="$(card x15)"; cy="$(card y15)"
-q -c "select wm.grant_copy('$a', '$cy', false) from generate_series(1, 2)" >/dev/null
-# a. leave(B), puis wish_set(B) : servi sans attendre, souhait orphelin.
-held 15al "select wm.guild_leave('$b')"
+q -c "select wm.grant_copy('$a', '$cy', false) from generate_series(1, 3)" >/dev/null
+# a. leave(B), puis wish_set(B), un don à ce souhait et un second wish_set(B) : servis sans attendre ; le don atteint un ex-membre, le
+# second souhait reste orphelin. Le départ tenu 3 s : les trois appels finissent avant son commit (vérifié).
+held 15al "select wm.guild_leave('$b')" 3
 t0=$EPOCHREALTIME
-w="$(q -v VERBOSITY=verbose -c "set role service_role; select wm.guild_wish_set('$b', '$cy') #>> '{wishlist,id}'" 2>"$tmp/15aw")" \
+w1="$(q -v VERBOSITY=verbose -c "set role service_role; select wm.guild_wish_set('$b', '$cy') #>> '{wishlist,id}'" 2>"$tmp/15aw")" \
   || fail "départ en vol : wish_set en erreur" "$tmp/15aw"
+q -v VERBOSITY=verbose -c "set role service_role; select wm.guild_donate('$a', '$w1', '$(copy "$a" "$cy")')" >/dev/null 2>"$tmp/15ab" \
+  || fail "départ en vol : don en erreur" "$tmp/15ab"
+w="$(q -v VERBOSITY=verbose -c "set role service_role; select wm.guild_wish_set('$b', '$cy') #>> '{wishlist,id}'" 2>"$tmp/15aw2")" \
+  || fail "départ en vol : second wish_set en erreur" "$tmp/15aw2"
 d="$(ms)"
+kill -0 "$blocker" 2>/dev/null || fail "départ en vol : le départ a validé avant la fin des appels ($d ms), course non jouée"
 wait "$blocker" || fail "départ en vol : leave en erreur" "$tmp/15al"
-echo "20_guilds_concurrency : départ en vol : wish_set servi en $d ms" >&2
-quiet "$tmp/15al" "$tmp/15aw"
-(( d < 500 )) || fail "départ en vol : wish_set servi en $d ms (moins de 500)"
+echo "20_guilds_concurrency : départ en vol : trois appels servis en $d ms" >&2
+quiet "$tmp/15al" "$tmp/15aw" "$tmp/15ab" "$tmp/15aw2"
+[[ "$(q -c "select count(*) from public.guild_donations where wishlist_id = '$w1' and recipient_id = '$b'")" == 1 ]] \
+  || fail "départ en vol : don à l'ex-membre absent"
 q -v VERBOSITY=verbose -c "set role service_role; select wm.guild_donate('$a', '$w', '$(copy "$a" "$cy")')" >/dev/null 2>"$tmp/15ad" || true
 got="$(member "$b") $(open_wishes "$b") $(q -c "select wm.guild_home('$l') -> 'wishlists' @> '[{\"id\": \"$w\"}]'") \
 $(grep -c "^ERROR:  P0001: Ce souhait n'existe plus$" "$tmp/15ad") $(inv)"
@@ -503,7 +529,7 @@ $(grep -c "^ERROR:  P0001: Ce souhait n'existe plus$" "$tmp/15ad") $(inv)"
 # b. leave(C), C avec W_C, puis un don à W_C et wish_set(C) : tous deux attendent W_C, puis le relisent effacé.
 wc="$(wish "$c" "$cy")"
 held 15bl "select wm.guild_leave('$c')"
-bg 15bd "select wm.guild_donate('$a', '$wc', '$(copy "$a" "$cy")')"
+first 15bd "select wm.guild_donate('$a', '$wc', '$(copy "$a" "$cy")')"
 bg 15bw "select wm.guild_wish_set('$c', '$cx')"
 wait "$blocker" || fail "départ en vol : leave en erreur" "$tmp/15bl"
 waitall
@@ -515,7 +541,7 @@ $(member "$c") $(open_wishes "$c") $(inv)"
 [[ $got == "1 1 0 0 []" ]] || fail "départ en vol, souhait ouvert : refus du don, refus de wish_set, C membre, souhaits ouverts, invariants : $got"
 # c. kick(D), puis wish_set(D) et chat_send(D) : tous deux attendent D, puis relisent l'appartenance.
 held 15ck "select wm.guild_kick('$l', '$dd')"
-bg 15cw "select wm.guild_wish_set('$dd', '$cy')"
+first 15cw "select wm.guild_wish_set('$dd', '$cy')"
 bg 15cc "select wm.guild_chat_send('$dd', 'bonjour')"
 wait "$blocker" || fail "exclusion en vol : kick en erreur" "$tmp/15ck"
 waitall
@@ -527,11 +553,12 @@ got="$(cat "$tmp/15cw" "$tmp/15cc" | grep -c "^ERROR:  P0001: Tu n'es dans aucun
 # d. leave(E), puis la fin de E et chat_send(E) : servis sans attendre, la guilde quittée créditée.
 f="$(player 15f)"
 end_of "$e" "$f"
-held 15dl "select wm.guild_leave('$e')"
+held 15dl "select wm.guild_leave('$e')" 3
 bg 15de "$fin"
 bg 15dc "select wm.guild_chat_send('$e', 'bonjour')"
-wait "$blocker" || fail "départ en vol : leave en erreur" "$tmp/15dl"
 waitall
+kill -0 "$blocker" 2>/dev/null || fail "départ en vol contre la fin : le départ a validé avant la fin des appels, course non jouée"
+wait "$blocker" || fail "départ en vol : leave en erreur" "$tmp/15dl"
 quiet "$tmp/15dl" "$tmp/15de" "$tmp/15dc"
 got="$(member "$e") $(gp "$bt") $(score "$g") $(q -c "select count(*) from public.guild_chat_messages where user_id = '$e' and guild_id = '$g'") $(inv)"
 [[ $got == "0 500 500 0 1 []" ]] || fail "départ en vol contre la fin : E membre, guildPoints, score de G, message, invariants : $got"
@@ -539,7 +566,7 @@ got="$(member "$e") $(gp "$bt") $(score "$g") $(q -c "select count(*) from publi
 i="$(player 15i)"
 end_of "$h" "$i"
 held 15ek "select wm.guild_kick('$l', '$h')"
-bg 15ee "$fin"
+first 15ee "$fin"
 wait "$blocker" || fail "exclusion en vol : kick en erreur" "$tmp/15ek"
 waitall
 quiet "$tmp/15ek" "$tmp/15ee"
