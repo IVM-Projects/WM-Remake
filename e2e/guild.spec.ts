@@ -136,15 +136,11 @@ test('refus forcé à « Rejoindre » (guilde pleine) : l\'alerte « Cette guild
   makeGuild(a)
   invite(a, me)
   await open(page)
-  const max = sql(`select value ->> 'max_members' from wm.config where key = 'guild'`)
-  const setMax = (n: string) => sql(`update wm.config set value = value || jsonb_build_object('max_members', :'n'::int) where key = 'guild'`, { n })
-  setMax('1')
-  try {
-    await page.getByRole('button', { name: 'Rejoindre' }).click()
-    await expect(row(page, 'Invitation de').getByRole('alert')).toHaveText('Cette guilde est pleine')
-  } finally {
-    setMax(max)
-  }
+  // Refus posé côté client (forme exacte des erreurs de l'API, 409 sans code) : écrire wm.config guild.max_members, global, ferait échouer
+  // les adhésions des autres workers ; le vrai refus serveur est couvert par le contrat (34_guilds) et la concurrence SQL.
+  await routeOnce(page, '**/api/guilds/join', (r) => r.fulfill({ status: 409, json: { error: 'Cette guilde est pleine', message: 'Cette guilde est pleine' } }))
+  await page.getByRole('button', { name: 'Rejoindre' }).click()
+  await expect(row(page, 'Invitation de').getByRole('alert')).toHaveText('Cette guilde est pleine')
 })
 
 test('issue incertaine sur « Créer la guilde » : UNSURE ; la relecture montre la vue membre, l\'alerte tombe, une seule guilde en base', async ({ page, login }) => {
@@ -312,6 +308,7 @@ test('exclu puis action (C6) : « Inviter » reçoit 404 « Tu n\'es dans aucune
   await dialog(page).getByRole('button', { name: 'Inviter', exact: true }).click()
   await expect(page.locator('main')).toContainText('Tu n\'as pas encore de guilde.')
   await expect(toasts(page)).toContainText('Tu ne fais plus partie de cette guilde.')
+  await expect(h1(page)).toBeFocused()
 })
 
 for (const [label, reply] of FAILS) {
@@ -322,7 +319,10 @@ for (const [label, reply] of FAILS) {
     await open(page)
     await expect(page.locator('main').getByRole('alert')).toHaveText('Impossible de charger cette page.')
     fail = false
-    await page.getByRole('button', { name: 'Réessayer' }).click()
+    // Le clic est cadré dans main et la relecture attendue : la relance est prouvée.
+    const reread = page.waitForResponse((r) => r.request().method() === 'GET' && new URL(r.url()).pathname === '/api/guilds')
+    await page.locator('main').getByRole('button', { name: 'Réessayer' }).click()
+    await reread
     await expect(page.locator('main')).toContainText('Tu n\'as pas encore de guilde.')
     await expect(h1(page)).toBeFocused()
   })
@@ -496,6 +496,7 @@ test('chat : exclu qui envoie (C6) → 404 « Tu n\'es dans aucune guilde » →
   await field(page).press('Enter')
   await expect(page.locator('main')).toContainText('Tu n\'as pas encore de guilde.')
   await expect(toasts(page)).toContainText('Tu ne fais plus partie de cette guilde.')
+  await expect(h1(page)).toBeFocused()
 })
 
 test('chat : un poll en échec garde l\'état affiché, brouillon compris', async ({ page, login }) => {
@@ -777,4 +778,70 @@ test('360 px : chat (message de 1 000 caractères sans espace), entraide (trois 
   await page.getByRole('tab', { name: 'Classement' }).click()
   await expect(panel(page).getByRole('table')).toBeVisible()
   await fits()
+})
+
+
+// --- Task 16, revue finale : clés d'idempotence des écritures de guilde ---
+
+test('quitter, réponse perdue puis réadhésion : le second « Quitter » envoie une autre Idempotency-Key et sort bien', async ({ page, login }) => {
+  const me = await viewer(login)
+  const a = player()
+  const g = makeGuild(a, [me])
+  const keys: string[] = []
+  page.on('request', (r) => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/guilds/leave') keys.push(r.headers()['idempotency-key'] ?? '') })
+  await openTab(page)
+  // Le serveur traite le départ, le navigateur reçoit un 500 : issue incertaine, clé gardée.
+  await routeOnce(page, '**/api/guilds/leave', async (r) => {
+    await r.fetch()
+    await r.fulfill({ status: 500 })
+  })
+  await page.getByRole('button', { name: 'Quitter la guilde' }).click()
+  await dialog(page).getByRole('button', { name: 'Quitter', exact: true }).click()
+  await expect(page.locator('main')).toContainText('Tu n\'as pas encore de guilde.')
+  expect(guildOf(me)).toBe('')
+  // Réinvité (la cloche relit), il rejoint depuis la page, sans rechargement : le composant garde ses clés.
+  sql(`select wm.guild_invite(:'l', :'m')`, { l: a.uid, m: me.uid })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.getByRole('button', { name: 'Rejoindre' }).click()
+  await expect(page.getByRole('button', { name: 'Quitter la guilde' })).toBeVisible()
+  expect(guildOf(me)).toBe(g)
+  await page.getByRole('button', { name: 'Quitter la guilde' }).click()
+  await dialog(page).getByRole('button', { name: 'Quitter', exact: true }).click()
+  await expect(page.locator('main')).toContainText('Tu n\'as pas encore de guilde.')
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).not.toBe(keys[0])
+  expect(guildOf(me)).toBe('')
+})
+
+test('demande de carte, réponse perdue : retirer puis redemander la même carte envoie une autre Idempotency-Key et la demande existe', async ({ page, login }) => {
+  const me = await viewer(login)
+  makeGuild(me)
+  const title = sql(`select wikipedia_title from public.cards where rarity = 'C' order by wikipedia_title limit 1`)
+  const keys: string[] = []
+  page.on('request', (r) => { if (r.method() === 'PUT' && new URL(r.url()).pathname === '/api/guilds/wishlist') keys.push(r.headers()['idempotency-key'] ?? '') })
+  await goHelp(page)
+  const mine = regionOf(page, 'Ma demande')
+  const pick = async () => {
+    await mine.getByRole('button', { name: 'Demander une carte' }).click()
+    const d = page.getByRole('dialog', { name: 'Choisir une carte à demander' })
+    await d.getByRole('searchbox', { name: 'Rechercher une carte' }).fill(title)
+    await d.getByRole('searchbox').press('Enter')
+    await d.getByRole('button', { name: title, exact: true }).click()
+    return d
+  }
+  await routeOnce(page, '**/api/guilds/wishlist', async (r) => {
+    await r.fetch()
+    await r.fulfill({ status: 500 })
+  }, (r) => r.request().method() === 'PUT')
+  const d = await pick()
+  await expect(d.getByRole('alert')).toHaveText('L\'action n\'a pas été confirmée : elle a peut-être eu lieu.')
+  await d.getByRole('button', { name: 'Annuler' }).click()
+  // Issue incertaine : la demande est relue, elle existe.
+  await mine.getByRole('button', { name: 'Retirer ma demande' }).click()
+  await expect(mine.getByRole('button', { name: 'Demander une carte' })).toBeVisible()
+  await pick()
+  await expect(mine.getByRole('button', { name: 'Retirer ma demande' })).toBeVisible()
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).not.toBe(keys[0])
+  expect(sql(`select count(*) from public.guild_wishlists where user_id = :'u' and fulfilled_at is null`, { u: me.uid })).toBe('1')
 })

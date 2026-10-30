@@ -26,6 +26,12 @@ export type GuildBoardData = {
 
 export const membersLabel = (n: number): string => (n === 1 ? '1 membre' : `${formatInt(n)} membres`)
 
+// Avant chaque écriture : seule la clé de l'intention courante reste. Une clé gardée par une issue incertaine rejouerait, plus tard, la
+// réponse stockée d'une action déjà faite (quitter, rejoindre, quitter) au lieu d'agir (motif de Thread).
+export function keepOnly(keys: Map<string, string>, intent: string): void {
+  for (const k of keys.keys()) if (k !== intent) keys.delete(k)
+}
+
 export const NO_GUILD = 'Tu n\'es dans aucune guilde'
 // Refus d'une lecture ou d'une écriture d'onglet par un joueur qui n'est plus membre (exclu, guilde dissoute).
 export const isNoGuild = (e: unknown): boolean => e instanceof ApiError && e.status === 404 && e.message === NO_GUILD

@@ -6,7 +6,7 @@ import { GuildBoard } from '@/components/guild/GuildBoard'
 import { GuildHelp } from '@/components/guild/GuildHelp'
 import { ChefPill, GuildMembers } from '@/components/guild/GuildMembers'
 import { NoGuild } from '@/components/guild/NoGuild'
-import { isGuildState, isNoGuild, membersLabel, type GuildState } from '@/components/guild/types'
+import { isGuildState, isNoGuild, keepOnly, membersLabel, type GuildState } from '@/components/guild/types'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
 import { danger, ghost } from '@/components/ui/button'
@@ -47,7 +47,17 @@ export function GuildClient() {
 
   const apply = (r: GuildState) => {
     const prev = stateRef.current
-    if (prev?.guild && !r.guild) toast('Tu ne fais plus partie de cette guilde.')
+    if (prev?.guild && !r.guild) {
+      toast('Tu ne fais plus partie de cette guilde.')
+      // Le bouton qui avait le focus disparaît avec la vue membre : le h1 le reprend (l'effet [state] vérifie que le focus est sur body).
+      focusTo.current ??= 'h1'
+    }
+    if (!r.guild) {
+      // Plus de guilde : la clé et la modale d'un départ incertain ne valent plus pour la prochaine adhésion.
+      keys.current.delete('leave')
+      setLeaving(false)
+      setLeaveError(null)
+    }
     stateRef.current = r
     setState(r)
     setFailed(false)
@@ -71,7 +81,8 @@ export function GuildClient() {
     const el = t === 'h1' ? h1.current : t === 'h2' ? h2.current : null
     if (!el) return
     focusTo.current = null
-    el.focus()
+    // Un focus posé ailleurs (cloche, lien) n'est pas volé : seul body signale un contrôle disparu.
+    if (document.activeElement === document.body) el.focus()
   }, [state])
 
   // État rendu par une écriture (guilde rejointe, créée, quittée) : il prime sur toute lecture partie avant.
@@ -94,6 +105,7 @@ export function GuildClient() {
     inflight.current = true
     setBusy(true)
     setLeaveError(null)
+    keepOnly(keys.current, 'leave')
     try {
       await apiOnce(keys.current, 'leave', '/api/guilds/leave', { method: 'POST' })
       toast('Tu as quitté la guilde.')

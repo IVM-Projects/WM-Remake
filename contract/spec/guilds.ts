@@ -342,7 +342,10 @@ export const guilds: RouteSpec[] = [
         const w = wish(env, g.leader.uid, copy)
         const msg = (await created(await post(env, '/chat', g.leader.uid, { content: 'secret' }), Sent)).message.id
         await created(await post(env, '/chat', h.leader.uid, { content: 'autre' }), Sent)
-        const text = (await Promise.all(['', '/home', '/members', '/chat'].map(async (p) => (await get(env, p, h.leader.uid)).text()))).join('\n')
+        // Chaque réponse est lue avec son schéma (200) : un 404 ou un 500 ne passe pas pour « rien de fuité ».
+        const bodies = [await ok(await get(env, '', h.leader.uid), State), await ok(await get(env, '/home', h.leader.uid), Home),
+          await ok(await get(env, '/members', h.leader.uid), Members), await ok(await get(env, '/chat', h.leader.uid), Messages)]
+        const text = JSON.stringify(bodies)
         for (const id of [msg, w, g.guild, g.leader.uid, ...g.rest.map((r) => r.uid)]) assert.ok(!text.includes(id), `fuite de ${id}`)
       },
     },

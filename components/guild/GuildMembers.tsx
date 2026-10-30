@@ -9,7 +9,7 @@ import { ReadError } from '@/components/ui/Section'
 import { toast } from '@/components/ui/toast'
 import { api, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatShortDate } from '@/lib/format'
-import { isNoGuild, type Member, type MemberPage } from './types'
+import { isNoGuild, keepOnly, type Member, type MemberPage } from './types'
 
 type Player = { id: string; username: string }
 type Friendship = { status: 'pending' | 'accepted'; requester_id: string; requester: Player; addressee: Player }
@@ -105,6 +105,7 @@ export function GuildMembers({ me, isLeader, onLost, onChanged, onHeading, onTab
     inflight.current = true
     setBusy(true)
     setError(null)
+    keepOnly(keys.current, `${kind}:${m.user_id}`)
     try {
       await apiOnce(keys.current, `${kind}:${m.user_id}`, kind === 'kick' ? '/api/guilds/kick' : '/api/guilds/transfer-leadership',
         { method: 'POST', body: JSON.stringify({ user_id: m.user_id }) })

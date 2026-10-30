@@ -10,7 +10,7 @@ import { toast } from '@/components/ui/toast'
 import { api, ApiError, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 import { CatalogPicker } from './CatalogPicker'
-import { isNoGuild, type GuildHome, type Wish } from './types'
+import { isNoGuild, keepOnly, type GuildHome, type Wish } from './types'
 
 const readable = (r: GuildHome | null): GuildHome | null =>
   (r && 'my_wishlist' in r && Array.isArray(r.wishlists) && Array.isArray(r.weekly_karma_donors) ? r : null)
@@ -67,6 +67,7 @@ export function GuildHelp({ onLost, onTab }: { onLost: () => void; onTab: () => 
   useEffect(() => refocus(), [home, failed])
 
   async function pick(cardId: string, title: string) {
+    keepOnly(keys.current, `wish:${cardId}`)
     try {
       await apiOnce(keys.current, `wish:${cardId}`, '/api/guilds/wishlist', { method: 'PUT', body: JSON.stringify({ card_id: cardId }) })
     } catch (e) {
@@ -74,6 +75,8 @@ export function GuildHelp({ onLost, onTab }: { onLost: () => void; onTab: () => 
         setAsking(false)
         return onLost()
       }
+      // Issue incertaine : la demande a pu être posée, la relecture le montre.
+      if (unsure(e)) void read()
       throw new Error(fail(e))
     }
     toast(`Demande enregistrée : ${title}.`)
@@ -87,6 +90,7 @@ export function GuildHelp({ onLost, onTab }: { onLost: () => void; onTab: () => 
     inflight.current = true
     setBusy(true)
     setError(null)
+    keepOnly(keys.current, 'clear')
     try {
       await apiOnce(keys.current, 'clear', '/api/guilds/wishlist', { method: 'DELETE' })
       after.current = 'ask'
