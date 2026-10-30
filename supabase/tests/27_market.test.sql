@@ -1146,6 +1146,50 @@ do $$ declare u uuid := gen_random_uuid(); x uuid := (select auction_id from wm.
   assert (select array_agg(id order by id) from wm.wishlist_alert_queue where id = any (q)) = q[2:3], 'lignes de file restantes';
 end $$;
 
+-- Score de guilde du vendeur (2040, M5b-2) : vente réglée d'un membre de G → score_wb = final_price ; invendue → rien ; vendeur sans
+-- guilde → aucune ligne, la guilde H de l'acheteur ne gagne rien ; deux ventes de G réglées par le lot → la somme ; réponse inchangée.
+do $$ declare s1 uuid := pg_temp.player('GuiVente1'); s2 uuid := pg_temp.player('GuiVente2'); n uuid := pg_temp.player('GuiVente3');
+  b uuid := pg_temp.player('GuiVente4', 1000); c uuid := pg_temp.card('Guilde marché'); g uuid; h uuid; x uuid; y uuid[]; r jsonb;
+  w date := wm.week_start(now()); cnt bigint; begin
+  perform wm.settle_due_auctions(100000);
+  g := (wm.guild_create(s1, 'Guilde GuiVente1') -> 'guild' ->> 'id')::uuid;
+  insert into public.friendships (requester_id, addressee_id, status) values (s1, s2, 'accepted');
+  perform wm.guild_invite(s1, s2);
+  perform wm.guild_join(s2, g);
+  h := (wm.guild_create(b, 'Guilde GuiVente4') -> 'guild' ->> 'id')::uuid;
+  cnt := (select count(*) from public.guild_weekly_scores);
+  -- Vendue (B à 12) par settle_auction.
+  x := pg_temp.listing(s1, c);
+  perform wm.place_bid(b, x, 12);
+  update public.auctions set end_at = now() - interval '1 minute' where id = x;
+  r := wm.settle_auction(x);
+  assert r = jsonb_build_object('id', x, 'status', 'settled_sold', 'settled', true), r::text;
+  assert (select score_wb = 12 and score_battles = 0 from public.guild_weekly_scores where week_start = w and guild_id = g), 'vendue : score';
+  assert wm.settle_auction(x) = jsonb_build_object('id', x, 'status', 'settled_sold', 'settled', false)
+    and (select score_wb from public.guild_weekly_scores where week_start = w and guild_id = g) = 12, 'second règlement';
+  -- Invendue : rien.
+  x := pg_temp.listing(s1, c);
+  update public.auctions set end_at = now() - interval '1 minute' where id = x;
+  assert wm.settle_auction(x) = jsonb_build_object('id', x, 'status', 'settled_unsold', 'settled', true), 'invendue';
+  assert (select score_wb from public.guild_weekly_scores where week_start = w and guild_id = g) = 12, 'invendue : score';
+  -- Vendeur sans guilde, acheteur de H : aucune ligne.
+  x := pg_temp.listing(n, c);
+  perform wm.place_bid(b, x, 20);
+  update public.auctions set end_at = now() - interval '1 minute' where id = x;
+  assert wm.settle_auction(x) ->> 'status' = 'settled_sold', 'vendeur sans guilde';
+  assert (select count(*) from public.guild_weekly_scores) = cnt + 1 and not exists (select from public.guild_weekly_scores where guild_id = h),
+    'ligne sans guilde ou de l''acheteur';
+  -- Deux ventes de G par le lot : 12 + 15 + 30.
+  y := array[pg_temp.listing(s1, c), pg_temp.listing(s2, c)];
+  perform wm.place_bid(b, y[1], 15);
+  perform wm.place_bid(b, y[2], 30);
+  update public.auctions set end_at = now() - interval '1 minute' where id = any (y);
+  assert wm.settle_due_auctions(500) = 2, 'lot';
+  assert (select score_wb = 57 and score_battles = 0 from public.guild_weekly_scores where week_start = w and guild_id = g), 'lot : score';
+  assert (select count(*) from public.guild_weekly_scores) = cnt + 1, 'lot : lignes';
+  perform pg_temp.inv('score de guilde du vendeur');
+end $$;
+
 -- Santé (M3-21, P13) et cron (P12), dans cet ordre ; le rollback du banc défait tout, faux schéma cron compris.
 -- Échues des blocs précédents réglées d'abord (elles fausseraient overdue_s). Sans pg_cron : les deux clés sont le JSON null.
 do $$ declare h jsonb; begin
