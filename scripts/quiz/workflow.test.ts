@@ -130,13 +130,14 @@ test('omniroute.sh : OmniRoute n’écoute que sur la boucle locale', () => {
   expect(sh).toContain('-e OMNIROUTE_HOSTNAME=127.0.0.1')
 })
 
-test('déclencheurs : push sur les deux chemins et workflow_dispatch, sans pull_request ; aucun concurrency à la racine', () => {
+test('déclencheurs : push sur les deux chemins, workflow_dispatch et schedule quotidien, sans pull_request ; aucun concurrency à la racine', () => {
   const paths = block(block(yml, 'on:').join('\n'), '    paths:')
     .slice(1)
     .map((l) => l.trim().replace(/^- /, '').replace(/^'(.*)'$/, '$1'))
     .filter(Boolean)
   expect(paths).toEqual(['scripts/quiz/**', '.github/workflows/quiz-bank.yml'])
   expect(block(yml, 'on:')).toContain('  workflow_dispatch:')
+  expect(block(yml, 'on:').join('\n')).toContain("  schedule:\n    - cron: '37 3 * * *'")
   expect(yml).not.toContain('pull_request')
   expect(yml).not.toMatch(/^concurrency:/m)
 })

@@ -5,6 +5,8 @@ import { befriend, cookieFor, expect, giveCopies, hydrated, makePlayer, routeOnc
 // Les workers partagent la base du banc : chaque test a ses joueurs, supprimés à la fin (batailles, decks, amitiés, grand livre et
 // notifications suivent en cascade).
 const trash: string[] = []
+// Cible de 44 px à 0,01 près : la mise en page tombe parfois juste sous le pixel (43,99998 px, CI run 41034418031), comme profile.spec.ts.
+const MIN_TARGET = 44 - 0.01
 test.afterEach(() => void sql(`delete from auth.users where id = any(string_to_array(:'uids', ',')::uuid[])`, { uids: trash.splice(0).join(',') }))
 
 type User = { uid: string; username: string }
@@ -465,7 +467,7 @@ test('360 px, un ami au pseudo de 24 caractères qui me défie, un autre à déf
   await expect(targets).toHaveCount(8)
   for (const target of await targets.all()) {
     const box = (await target.boundingBox())!
-    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)
+    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(MIN_TARGET)
   }
 })
 
@@ -1064,7 +1066,7 @@ test('360 px, en quiz, énoncé de 200 caractères : aucun défilement horizonta
   await expect(buttons).toHaveCount(2)
   for (const target of [...await labels.all(), ...await buttons.all()]) {
     const box = (await target.boundingBox())!
-    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)
+    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(MIN_TARGET)
   }
 })
 
