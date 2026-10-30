@@ -139,11 +139,14 @@ do $$ begin
     'index (user_id, created_at desc) absent';
 end $$;
 
--- Chaque fonction wm : security definer, search_path vide, EXECUTE à service_role seul. Aucun droit sur les tables.
+-- Chaque fonction wm : security definer, search_path vide (plus le délai de 60 s de quiz_next, 1960), EXECUTE à service_role seul. Aucun
+-- droit sur les tables.
 do $$ declare bad text; begin
   select string_agg(p.oid::regprocedure::text, ', ') into bad from pg_proc p
   where p.pronamespace = 'wm'::regnamespace
-    and (not p.prosecdef or p.proconfig is distinct from array['search_path=""']
+    and (not p.prosecdef
+         or p.proconfig is distinct from case when p.oid = 'wm.quiz_next(int)'::regprocedure
+           then array['search_path=""', 'statement_timeout=60s'] else array['search_path=""'] end
          or has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute')
          or exists (select from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.grantee = 0)
          or not has_function_privilege('service_role', p.oid, 'execute'));
