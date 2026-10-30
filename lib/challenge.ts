@@ -1,3 +1,4 @@
+import { toast } from '@/components/ui/toast'
 import { ApiError, apiOnce, calendarTz } from './api'
 
 // « Défier » un ami (lobby, profil, C17) : une Idempotency-Key par ami, gardée tant que l'issue est inconnue (apiOnce), le quota suivant le
@@ -18,4 +19,12 @@ export async function challengeFriend(keys: Map<string, string>, opponentId: str
   }
   if (typeof r?.id !== 'string') throw new Error('Réponse du défi illisible')
   return { id: r.id, existing: false }
+}
+
+// Suite d'un défi abouti (lobby, profil, PF19) : l'arène seulement si la page est encore affichée (une réponse tardive n'emmène pas
+// ailleurs un joueur parti entre-temps), et toujours le toast.
+export function afterChallenge(router: { push: (href: string) => void }, res: { id: string; existing: boolean }, username: string,
+  onScreen: boolean): void {
+  if (onScreen) router.push(`/battle/${res.id}`)
+  toast(res.existing ? `Une bataille est déjà en cours avec ${username}.` : `Défi envoyé à ${username}.`)
 }

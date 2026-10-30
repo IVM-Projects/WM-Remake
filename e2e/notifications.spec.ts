@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
-import { expect, hydrated, routeOnce, sql, test } from './fixtures'
+import { befriend, expect, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a son joueur, supprimé à la fin (ses notifications suivent en cascade).
 const trash: string[] = []
@@ -138,6 +138,19 @@ test('message privé : « Alice t\'a écrit », lien vers le fil /dms?with=<user
   await expect(badge(page)).toHaveText('1')
   await bell(page).click()
   await expect(panel(page).getByRole('link', { name: 'Alice t\'a écrit', exact: true })).toHaveAttribute('href', `/dms?with=${from}`)
+})
+
+test('défi reçu (wm.battle_create par sql) : « <pseudo> te défie en bataille », lien vers /battle/<id>', async ({ page, login }) => {
+  const me = await login()
+  const from = makePlayer()
+  trash.push(me.uid, from.uid)
+  befriend(from, me)
+  // Une bataille posée par sql passe par les fonctions : battle_create écrit la battle_invite de wm.notify_battle.
+  const battle = sql(`select wm.battle_create(:'a', :'b') ->> 'id'`, { a: from.uid, b: me.uid })
+  await page.goto('/pulls')
+  await expect(badge(page)).toHaveText('1')
+  await bell(page).click()
+  await expect(panel(page).getByRole('link', { name: `${from.username} te défie en bataille`, exact: true })).toHaveAttribute('href', `/battle/${battle}`)
 })
 
 test('vide : « Aucune notification. » ; la cloche et « Tout marquer comme lu » font au moins 44 px', async ({ page, login }) => {

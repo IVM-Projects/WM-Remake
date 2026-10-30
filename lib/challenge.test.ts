@@ -1,8 +1,15 @@
 import { afterEach, expect, test, vi } from 'vitest'
+import { toast } from '@/components/ui/toast'
 import { ApiError, unsure } from './api'
-import { challengeFriend } from './challenge'
+import { afterChallenge, challengeFriend } from './challenge'
 
-afterEach(() => vi.unstubAllGlobals())
+// toast écrit dans le DOM : remplacé par un espion (aucun DOM ici).
+vi.mock('@/components/ui/toast', () => ({ toast: vi.fn() }))
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.clearAllMocks()
+})
 
 // Réponses servies dans l'ordre, une par appel de fetch.
 function stubFetch(...replies: (() => Promise<Response>)[]) {
@@ -62,4 +69,18 @@ test('201 au corps illisible : lève une Error incertaine, jamais { id: undefine
   expect(unsure(e)).toBe(true)
   expect(await challengeFriend(keys, 'u2')).toEqual({ id: 'b1', existing: false })
   expect(keyOf(fetch.mock.calls[1][1])).toBe(keyOf(fetch.mock.calls[0][1]))
+})
+
+test('afterChallenge, défi neuf, page affichée : router.push vers l\'arène, toast « Défi envoyé à … »', () => {
+  const router = { push: vi.fn() }
+  afterChallenge(router, { id: 'b1', existing: false }, 'Alice', true)
+  expect(router.push.mock.calls).toEqual([['/battle/b1']])
+  expect(vi.mocked(toast).mock.calls).toEqual([['Défi envoyé à Alice.']])
+})
+
+test('afterChallenge, bataille déjà ouverte, page quittée : aucun router.push, toast « Une bataille est déjà en cours avec … »', () => {
+  const router = { push: vi.fn() }
+  afterChallenge(router, { id: 'b0', existing: true }, 'Alice', false)
+  expect(router.push).not.toHaveBeenCalled()
+  expect(vi.mocked(toast).mock.calls).toEqual([['Une bataille est déjà en cours avec Alice.']])
 })

@@ -12,6 +12,7 @@ export function notificationView({ type, data }: Pick<Notification, 'type' | 'da
   const price = () => `${formatInt(amount)} ${wikibidous(amount)}`
   const trade = `/trades/${data.trade_id}`
   const auction = `/marketplace/${data.auction_id}`
+  const battle = `/battle/${data.battle_id}`
   switch (type) {
     case 'trade_received': return { text: `${u} te propose un échange`, href: trade }
     case 'trade_countered': return { text: `${u} a fait une contre-offre`, href: trade }
@@ -26,6 +27,14 @@ export function notificationView({ type, data }: Pick<Notification, 'type' | 'da
     case 'auction_unsold': return { text: `${c} n'a pas trouvé preneur`, href: auction }
     case 'wishlist_listed': return { text: `${c}, de ta liste de souhaits, est en vente`, href: auction }
     case 'chat_message': return { text: `${u} t'a écrit`, href: `/dms?with=${data.user_id}` }
+    // Cloche seulement : aucun type battle_* n'est dans push_types (M5a-13).
+    case 'battle_invite': return { text: `${u} te défie en bataille`, href: battle }
+    case 'battle_accepted': return { text: `${u} a accepté ton défi`, href: battle }
+    case 'battle_declined': return { text: `${u} a refusé ton défi`, href: battle }
+    case 'battle_started': return { text: `${u} a choisi ses cartes : la bataille commence`, href: battle }
+    case 'battle_attacked': return { text: `${u} t'attaque : à toi de répondre`, href: battle }
+    case 'battle_won': return { text: `Victoire contre ${u}`, href: battle }
+    case 'battle_lost': return { text: `Défaite contre ${u}`, href: battle }
     default: return { text: 'Nouvelle notification', href: null }
   }
 }

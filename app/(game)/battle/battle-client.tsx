@@ -13,9 +13,8 @@ import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { ReadError, Section } from '@/components/ui/Section'
 import { tabKey } from '@/components/ui/tabs'
-import { toast } from '@/components/ui/toast'
 import { api, ApiError, calendarTz, UNSURE, unsure, userMessage } from '@/lib/api'
-import { challengeFriend } from '@/lib/challenge'
+import { afterChallenge, challengeFriend } from '@/lib/challenge'
 import { formatInt, formatShortDate, formatTime } from '@/lib/format'
 import { usePoll } from '@/lib/poll'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -167,9 +166,7 @@ export function BattleClient() {
     setBusy(true)
     setError(null)
     try {
-      const r = await challengeFriend(keys.current, f.id)
-      if (onScreen.current) router.push(`/battle/${r.id}`)
-      toast(r.existing ? `Une bataille est déjà en cours avec ${f.username}.` : `Défi envoyé à ${f.username}.`)
+      afterChallenge(router, await challengeFriend(keys.current, f.id), f.username, onScreen.current)
     } catch (e) {
       // Issue inconnue : clé gardée (apiOnce), la relance rejoue ; l'alerte tombe quand la relecture change la ligne. Jamais de toast.
       setError(unsure(e)
