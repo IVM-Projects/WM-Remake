@@ -1,10 +1,14 @@
 import type { Metadata } from 'next'
 import { navEntry } from '@/components/shell/nav'
-import { ComingSoon } from '@/components/shell/PageHeader'
+import { BattleClient } from './battle-client'
 
-const entry = navEntry('/battle')
-export const metadata: Metadata = { title: entry.title }
+export const metadata: Metadata = { title: navEntry('/battle').title }
 
+// Coquille statique ; batailles, quota et amis se lisent au client (/api/battles, /api/friends), d'après la session du navigateur (P16).
 export default function BattlePage() {
-  return <ComingSoon entry={entry} />
+  return (
+    <div className="flex-1 p-4 md:p-6 space-y-6">
+      <BattleClient />
+    </div>
+  )
 }

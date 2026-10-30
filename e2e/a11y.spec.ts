@@ -44,6 +44,8 @@ const READY: Record<string, string> = {
   '/profile': 'main [data-ready]',
   // Liste des conversations lue, avec le fil quand `with` est là (ou l'échec).
   '/dms': 'main [data-ready]',
+  // Batailles et amis lus (ou en échec), session connue.
+  '/battle': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -52,9 +54,9 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
-  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings']) {
+  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle']) {
   test(`axe ${path}`, async ({ page, login }) => {
-    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings'].includes(path)) await login()
+    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle'].includes(path)) await login()
     // Adresse posée par /login (compte non confirmé) dans sessionStorage, jamais dans l'URL.
     if (path === '/verify-email') await page.addInitScript(() => sessionStorage.setItem('wm.verifyEmail', 'a11y@test.local'))
     await page.goto(path)
@@ -313,6 +315,30 @@ from generate_series(1, 10) i`, { me: me.uid, f: friend.uid })
     await expectNoSeriousViolations(page)
   } finally {
     sql(`delete from auth.users where id in (:'me', :'f')`, { me: me.uid, f: friend.uid })
+  }
+})
+
+test('axe /battle : une bataille par onglet (en attente, retirée), puis l\'aide ouverte', async ({ page, login }) => {
+  const me = await login()
+  const [a, b] = [makePlayer(), makePlayer()]
+  try {
+    befriend(me, a)
+    befriend(me, b)
+    sql(`select wm.battle_create(:'me', :'a') \\g /dev/null
+select wm.battle_create(:'me', :'b') ->> 'id' as id \\gset
+select from wm.battle_action(:'me', :'id', 'withdraw_invite')`, { me: me.uid, a: a.uid, b: b.uid })
+    await page.goto('/battle')
+    await page.locator(READY['/battle']).waitFor()
+    for (const name of ['En cours', 'Terminées']) {
+      await page.getByRole('tab', { name }).click()
+      await expect(page.getByRole('tabpanel').getByRole('link')).toHaveCount(1)
+      await expectNoSeriousViolations(page)
+    }
+    await page.getByRole('button', { name: 'Comment ça marche ?' }).click()
+    await expect(page.getByRole('dialog', { name: 'Comment ça marche ?' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id in (:'me', :'a', :'b')`, { me: me.uid, a: a.uid, b: b.uid })
   }
 })
 
