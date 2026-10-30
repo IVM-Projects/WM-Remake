@@ -133,7 +133,8 @@ export function ArenaClient() {
   useEffect(() => onShow(), [])
   useEffect(() => void readMe(), [])
   const over = missing || (!!detail && !isOpen(detail.battle))
-  usePoll(read, 3_000, !over)
+  // Arrêté pendant une action : un passage ferait jeter la relecture qui suit un refus (génération), et l'alerte perdrait son écran.
+  usePoll(read, 3_000, !over && !busy)
   // Page quittée puis gardée par Activity : on ne la retrouve pas avec la confirmation ouverte.
   useLayoutEffect(() => () => setConfirm(null), [])
 
@@ -145,8 +146,8 @@ export function ArenaClient() {
   // joueur a mis le focus ailleurs. Sans arène (relecture en échec ou introuvable), « Réessayer » ou « Retour aux batailles ».
   useEffect(() => {
     if (!view) {
-      // Arène devenue introuvable sous le focus, ou cible posée par « Réessayer » : « Retour aux batailles » ou « Réessayer ».
-      const lost = missing && shown.current !== null && shown.current !== 'failed' && shown.current !== 'missing'
+      // Arène ou échec devenus introuvables sous le focus, ou cible posée par « Réessayer » : « Retour aux batailles » ou « Réessayer ».
+      const lost = missing && shown.current !== null && shown.current !== 'missing'
       // Repère : l'arène qui revient après un échec (poll) est un écran changé.
       if (failed || missing) shown.current = missing ? 'missing' : 'failed'
       if ((refocus.current || lost) && (failed || missing) && document.activeElement === document.body) {

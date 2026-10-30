@@ -1018,7 +1018,8 @@ test('360 px, en quiz, énoncé de 200 caractères : aucun défilement horizonta
 
 // ─── Arène, fix round 1 ───
 
-// Plus aucun minuteur hors de runFor : le poll ne passe qu'à la demande.
+// Plus aucun minuteur hors de runFor : le poll ne passe qu'à la demande. Sans garde de temps (openFrozen) : là où il sert, un poll passé
+// avant l'arrêt relit le même état.
 const freeze = async (page: Page) => page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000))
 
 test('« Abandonner » confirmé pendant le retour d\'une réponse → « Défaite » focalisé, le retour effacé', async ({ page, login }) => {
@@ -1069,9 +1070,7 @@ test('poll qui relit l\'arène après une première lecture en échec, focus sur
   befriend(me, friend)
   const id = challenge(me, friend)
   await routeOnce(page, '**/api/battles/*', (r) => r.fulfill({ status: 500 }), (r) => r.request().method() === 'GET')
-  await page.clock.install()
-  await enter(page, id)
-  await freeze(page)
+  await openFrozen(page, id)
   await page.getByRole('button', { name: 'Réessayer' }).focus()
   await page.clock.runFor(3_000)
   await expect(line(page, `En attente de la réponse de ${friend.username}.`)).toBeVisible()
@@ -1144,6 +1143,61 @@ test('arène devenue introuvable au poll (404), focus sur « Retirer le défi »
   const gone = 'Bataille introuvable'
   await routeOnce(page, '**/api/battles/*', (r) => r.fulfill({ status: 404, json: { status: 404, error: gone, message: gone } }),
     (r) => r.request().method() === 'GET')
+  await page.clock.runFor(3_000)
+  await expect(page.locator('main h1')).toHaveText(gone)
+  await expect(page.locator('main').getByRole('link', { name: 'Retour aux batailles' })).toBeFocused()
+})
+
+test('refus d\'une attaque, un passage du poll pendant la relecture du refus : l\'alerte reste sous l\'écran relu', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const { id, ca } = active(me, friend)
+  await page.clock.install()
+  await enter(page, id)
+  await freeze(page)
+  attack(me, id)
+  // La relecture qui suit le refus est retenue le temps de faire passer l'horloge du poll ; seule la première lecture après le PATCH l'est.
+  let armed = false
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  let reached!: () => void
+  const waiting = new Promise<void>((r) => { reached = r })
+  await routeOnce(page, '**/api/battles/*', async (r) => {
+    armed = true
+    await r.fallback()
+  }, (r) => r.request().method() === 'PATCH')
+  await routeOnce(page, '**/api/battles/*', async (r) => {
+    reached()
+    await held
+    await r.fallback()
+  }, (r) => armed && r.request().method() === 'GET')
+  try {
+    await press(cardIn(page, me, ca[1]).getByRole('button', { name: 'Attaquer' }))
+    await waiting
+    await page.clock.runFor(3_000)
+    await wait(500)
+  } finally {
+    release()
+  }
+  await expect(line(page, `${friend.username} répond aux questions : 0 / 3`)).toBeVisible()
+  await expect(arenaAlert(page)).toHaveText('Ce n\'est pas à toi d\'attaquer')
+  // Horloge arrêtée : l'attente se fait côté test (settle passerait par un setTimeout de la page).
+  await wait(300)
+  await expect(arenaAlert(page)).toHaveText('Ce n\'est pas à toi d\'attaquer')
+})
+
+test('première lecture en échec, focus sur « Réessayer », puis le poll lit un 404 : « Bataille introuvable », le focus sur « Retour aux batailles »', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const id = challenge(me, friend)
+  await routeOnce(page, '**/api/battles/*', (r) => r.fulfill({ status: 500 }), (r) => r.request().method() === 'GET')
+  await openFrozen(page, id)
+  const gone = 'Bataille introuvable'
+  await routeOnce(page, '**/api/battles/*', (r) => r.fulfill({ status: 404, json: { status: 404, error: gone, message: gone } }),
+    (r) => r.request().method() === 'GET')
+  await page.getByRole('button', { name: 'Réessayer' }).focus()
   await page.clock.runFor(3_000)
   await expect(page.locator('main h1')).toHaveText(gone)
   await expect(page.locator('main').getByRole('link', { name: 'Retour aux batailles' })).toBeFocused()
