@@ -59,6 +59,10 @@ create index if not exists guild_invites_inviter_idx on wm.guild_invites (invite
 create index if not exists user_stats_battles_won_idx on wm.user_stats (battles_won desc) where battles_won > 0;
 create index if not exists battles_completed_idx on public.battles (updated_at) where status = 'completed';
 create index if not exists user_cards_obtained_idx on public.user_cards (obtained_at);
+-- Clés étrangères seules (les index partiels ci-dessus ne servent pas une cascade) : profil, guilde ou succès supprimé sans balayage.
+create index if not exists guild_wishlists_user_idx on public.guild_wishlists (user_id);
+create index if not exists guild_wishlists_guild_fk_idx on public.guild_wishlists (guild_id);
+create index if not exists user_achievements_achievement_idx on public.user_achievements (achievement_id);
 
 -- Lundi 00:00 UTC de la semaine de p_at (D-C12), sans dépendre du TimeZone de session. Immutable : timezone(text, timestamptz) et
 -- date_trunc(text, timestamp) le sont.
@@ -93,6 +97,8 @@ begin
   if coalesce(p_amount, 0) <= 0 then
     return 0;
   end if;
+  -- Lecture sans verrou : un battle_finish concomitant d'un leave ou d'un kick non validé peut créditer la guilde que le joueur vient de
+  -- quitter (aucun argent, accepté par C4 ; scénario à regarder à la Task 10).
   select guild_id into g from public.guild_members where user_id = p_user_id;
   if g is null then
     return 0;

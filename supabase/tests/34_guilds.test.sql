@@ -90,30 +90,39 @@ do $$ declare bad text; begin
     ('guild_invites_inviter_idx', '', 'wm.guild_invites USING btree (inviter_id)'),
     ('user_stats_battles_won_idx', '', 'wm.user_stats USING btree (battles_won DESC) WHERE (battles_won > 0)'),
     ('battles_completed_idx', '', 'public.battles USING btree (updated_at) WHERE (status = ''completed''::battle_status)'),
-    ('user_cards_obtained_idx', '', 'public.user_cards USING btree (obtained_at)')) v (n, u, def)
+    ('user_cards_obtained_idx', '', 'public.user_cards USING btree (obtained_at)'),
+    ('guild_wishlists_user_idx', '', 'public.guild_wishlists USING btree (user_id)'),
+    ('guild_wishlists_guild_fk_idx', '', 'public.guild_wishlists USING btree (guild_id)'),
+    ('user_achievements_achievement_idx', '', 'public.user_achievements USING btree (achievement_id)')) v (n, u, def)
   where not exists (select from pg_indexes i where i.indexname = v.n and i.indexdef = format('CREATE %sINDEX %s ON %s', v.u, v.n, v.def));
   assert bad is null, 'index absents ou différents : ' || bad;
 end $$;
 
 -- Borne hebdomadaire (D:1084, D-C12) : lundi 00:00 UTC, quel que soit le TimeZone de session (C3) ; semaine ISO lue en UTC.
-do $$ declare z text; tz text := current_setting('timezone'); begin
+-- Appels dynamiques (execute) : un appel statique d'une fonction immutable sur des constantes serait replié au premier plan, sous UTC, et
+-- gardé dans le cache de plans de PL/pgSQL ; changer de fuseau ne le replanifierait pas.
+do $$ declare z text; tz text := current_setting('timezone'); c record; v timestamptz; iw text; begin
   foreach z in array array['UTC', 'Pacific/Kiritimati', 'America/Los_Angeles'] loop
     perform set_config('timezone', z, true);
-    assert wm.week_start('2026-11-01 23:59:59+00') = '2026-10-26 00:00:00+00', z || ' : dimanche soir';
-    assert wm.week_start('2026-11-01 23:59:59.999999+00') = '2026-10-26 00:00:00+00', z || ' : dernière microseconde';
-    assert wm.week_start('2026-11-02 00:00:00+00') = '2026-11-02 00:00:00+00', z || ' : lundi 00:00';
-    assert wm.week_start('2026-11-02 00:59:59+01') = '2026-10-26 00:00:00+00', z || ' : lundi 00:59:59+01';
-    assert wm.week_start('2027-01-03 23:59:59+00') = '2026-12-28 00:00:00+00', z || ' : semaine 53';
-    assert to_char(wm.week_start('2027-01-03 23:59:59+00') at time zone 'UTC', 'IW') = '53', z || ' : IW 53';
-    assert wm.week_start('2027-01-04 00:00:00+00') = '2027-01-04 00:00:00+00', z || ' : semaine 1';
-    assert to_char(wm.week_start('2027-01-04 00:00:00+00') at time zone 'UTC', 'IW') = '01', z || ' : IW 01';
+    for c in select * from (values
+      ('2026-11-01 23:59:59+00', '2026-10-26 00:00:00+00', null, 'dimanche soir'),
+      ('2026-11-01 23:59:59.999999+00', '2026-10-26 00:00:00+00', null, 'dernière microseconde'),
+      ('2026-11-02 00:00:00+00', '2026-11-02 00:00:00+00', null, 'lundi 00:00'),
+      ('2026-11-02 00:59:59+01', '2026-10-26 00:00:00+00', null, 'lundi 00:59:59+01'),
+      ('2027-01-03 23:59:59+00', '2026-12-28 00:00:00+00', '53', 'semaine 53'),
+      ('2027-01-04 00:00:00+00', '2027-01-04 00:00:00+00', '01', 'semaine 1')) t (at, ws, iw, label)
+    loop
+      execute format('select w, to_char(w at time zone ''UTC'', ''IW'') from wm.week_start(%L::timestamptz) w', c.at) into v, iw;
+      assert v = c.ws::timestamptz, format('%s : %s → %s', z, c.label, v);
+      assert c.iw is null or iw = c.iw, format('%s : %s → IW %s', z, c.label, iw);
+    end loop;
   end loop;
   perform set_config('timezone', tz, true);
   assert (select provolatile = 'i' from pg_proc where oid = 'wm.week_start(timestamptz)'::regprocedure), 'week_start immutable';
 end $$;
 
 -- guild_score_add (G4) : guilde et membres posés en superutilisateur ; Alice membre de G, Bob sans guilde.
-do $$ declare a uuid := pg_temp.player('GuiScoAlice'); b uuid := pg_temp.player('GuiScoBob'); g uuid; n int; m int; total bigint; begin
+do $$ declare a uuid := pg_temp.player('GuiScoAlice'); b uuid := pg_temp.player('GuiScoBob'); g uuid; n int; m int; total bigint; k bigint; begin
   insert into public.guilds (name, leader_id) values ('GuiSco', a) returning id into g;
   insert into public.guild_members (guild_id, user_id, role) values (g, a, 'leader');
   -- Dimanche 23:59:59 et lundi 00:00:00 UTC : deux lignes.
@@ -130,10 +139,12 @@ do $$ declare a uuid := pg_temp.player('GuiScoAlice'); b uuid := pg_temp.player(
     and (score_battles, score_wb, total_score) = (500, 120, 620)), 'cumul';
   -- Sans guilde, montant nul ou absent : 0, rien n'est écrit.
   select sum(total_score) into total from public.guild_weekly_scores;
+  select count(*) into k from public.guild_weekly_scores;
   assert wm.guild_score_add(b, 'battles', 500, '2026-11-02 12:00:00+00') = 0, 'Bob sans guilde';
   assert wm.guild_score_add(a, 'battles', 0, '2026-11-02 12:00:00+00') = 0, 'montant 0';
   assert wm.guild_score_add(a, 'wb', null, '2026-11-02 12:00:00+00') = 0, 'montant nul';
-  assert (select sum(total_score) from public.guild_weekly_scores) = total, 'rien écrit';
+  assert (select sum(total_score) from public.guild_weekly_scores) = total
+    and (select count(*) from public.guild_weekly_scores) = k, 'rien écrit';
   -- Type inconnu : erreur de programmation.
   begin
     perform wm.guild_score_add(a, 'x', 1, '2026-11-02 12:00:00+00');
