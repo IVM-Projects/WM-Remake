@@ -5,7 +5,7 @@ import { befriend, cookieFor, expect, giveCopies, hydrated, makePlayer, sql, tes
 
 type User = ReturnType<typeof makePlayer>
 // Une réponse d'une adresse de bataille, gardée pour la mesure de fuite (C23) : la requête qui l'a demandée et le texte du corps.
-type Kept = { method: string; action: string | null; questionId: string | null; body: string }
+type Kept = { who: string; method: string; action: string | null; questionId: string | null; body: string }
 type Question = { id: string; options: { id: string }[] }
 
 // Sélecteurs repris de battle.spec.ts et social-journey.spec.ts. Une page quittée reste dans le DOM, masquée (Activity) : seul le visible compte.
@@ -64,11 +64,12 @@ test('parcours M5a au clavier : défi → cloche → acceptation → decks → s
     }
     const [ap, bp] = await Promise.all(contexts.map((c) => c.newPage()))
 
-    // 2. Chaque réponse d'une adresse de bataille ; une réponse lue pendant la fermeture des contextes rend null, sans rejet hors du test.
+    // 2. Chaque réponse d'une adresse de bataille, avec le joueur qui l'a reçue. Un corps perdu ou illisible rend null, sans rejet hors du
+    // test : avant l'étape 8, aucun n'est permis (compté là) ; après, la fermeture des contextes peut en perdre.
     const bodies: Promise<Kept | null>[] = []
-    for (const page of [ap, bp]) {
+    for (const [page, u] of [[ap, a], [bp, b]] as const) {
       page.on('response', (r) => {
-        if (isBattle(r.url())) bodies.push(r.body().then((b) => ({ method: r.request().method(), action: r.request().postDataJSON()?.action ?? null, questionId: r.request().postDataJSON()?.questionId ?? null, body: b.toString() }), () => null))
+        if (isBattle(r.url())) bodies.push(r.body().then((b) => ({ who: u.uid, method: r.request().method(), action: r.request().postDataJSON()?.action ?? null, questionId: r.request().postDataJSON()?.questionId ?? null, body: b.toString() })).catch(() => null))
       })
     }
 
@@ -112,9 +113,10 @@ test('parcours M5a au clavier : défi → cloche → acceptation → decks → s
       expect(rights).toHaveLength(3)
       for (const [i, right] of rights.entries()) {
         await expect(question(defPage, i + 1)).toBeVisible(POLL)
-        const texts = await defPage.locator('main fieldset label').allTextContents()
+        const quiz = defPage.locator('main fieldset').filter({ visible: true })
+        const texts = await quiz.locator('label').allTextContents()
         const pick = def === b ? right : texts.find((t) => t !== right)!
-        const radio = defPage.locator('main').getByRole('radio', { name: pick, exact: true })
+        const radio = quiz.getByRole('radio', { name: pick, exact: true })
         await radio.focus()
         await defPage.keyboard.press('Space')
         await expect(radio).toBeChecked()
@@ -144,19 +146,24 @@ where d.battle_id = :'id'`, { id })).toBe(Array(6).fill('template').join(','))
 
     // 8. Fuite, côté navigateur (C23) : aucune réponse reçue ne distingue la bonne option des trois autres, hors du correct_answer_id d'une
     // réponse à sa propre question ; aucune clé interdite à aucune profondeur.
-    const kept = (await Promise.all(bodies)).filter((x) => x !== null)
+    // Les deux contextes sont ouverts et l'app n'interrompt aucune lecture : aucun corps perdu.
+    const all = await Promise.all(bodies)
+    expect(all.filter((x) => x === null), 'corps perdus avant la fermeture').toHaveLength(0)
+    const kept = all.filter((x) => x !== null)
     expect(kept.filter((x) => x.action === 'submit_single_answer'), 'réponses aux 18 questions gardées').toHaveLength(18)
-    const secrets = sql(`select question_id || ' ' || correct_option_id from wm.battle_secrets where battle_id = :'id'`, { id }).split('\n').map((l) => l.split(' '))
+    const secrets = sql(`select question_id || ' ' || correct_option_id || ' ' || defender_id from wm.battle_secrets where battle_id = :'id'`, { id }).split('\n').map((l) => l.split(' '))
     expect(secrets).toHaveLength(18)
     const options = new Map<string, string[]>()
     for (const x of kept) {
       const qs = (JSON.parse(x.body) as { battle?: { game_state?: { pendingAttack?: { questions: Question[] } | null } | null } }).battle?.game_state?.pendingAttack?.questions ?? []
       for (const q of qs) options.set(q.id, q.options.map((o) => o.id))
     }
-    for (const [q, s] of secrets) {
+    for (const [q, s, def] of secrets) {
       const ids = options.get(q)
       expect(ids, `question ${q} jamais vue`).toHaveLength(4)
       expect(ids).toContain(s)
+      // La vue d'un tricheur est mesurée : le défenseur a reçu la question par un GET (le poll qui lui montre la 1re de son tour).
+      expect(kept.some((x) => x.who === def && x.method === 'GET' && idCounts(x.body, ids!).every((k) => k > 0)), `question ${q} sans GET du défenseur`).toBe(true)
       const others = ids!.filter((o) => o !== s)
       for (const x of kept) {
         const [m] = idCounts(x.body, others)
@@ -175,7 +182,8 @@ where d.battle_id = :'id'`, { id })).toBe(Array(6).fill('template').join(','))
     await expect(done).toContainText(`Contre ${b.username}`)
     await expect(done.getByText('Défaite', { exact: true })).toBeVisible()
   } finally {
-    await Promise.all(contexts.map((c) => c.close()))
+    // allSettled : une fermeture en échec n'empêche pas la suppression des joueurs.
+    await Promise.allSettled(contexts.map((c) => c.close()))
     // Bataille, decks, secrets, amitié, copies, grand livre et notifications suivent en cascade.
     sql(`delete from auth.users where id = any(string_to_array(:'uids', ',')::uuid[])`, { uids: uids.join(',') })
   }
