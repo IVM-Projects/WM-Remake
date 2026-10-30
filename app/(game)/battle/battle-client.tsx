@@ -15,6 +15,7 @@ import { ReadError, Section } from '@/components/ui/Section'
 import { tabKey } from '@/components/ui/tabs'
 import { api, ApiError, calendarTz, UNSURE, unsure, userMessage } from '@/lib/api'
 import { afterChallenge, challengeFriend } from '@/lib/challenge'
+import { serverNow } from '@/lib/clock'
 import { formatInt, formatShortDate, formatTime } from '@/lib/format'
 import { usePoll } from '@/lib/poll'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -30,8 +31,9 @@ const ROW = ':scope > a'
 
 type Player = { id: string; username: string }
 type Friendship = { status: 'pending' | 'accepted'; requester_id: string; requester: Player; addressee: Player }
-// Échec du dernier défi : une issue inconnue porte l'ami et l'état de sa ligne au départ ; un refus du quota (429), son suivi par les relectures.
-type Failure = { text: string; friend?: string; open?: boolean; quota?: 'wait' | 'full' }
+// Échec du dernier défi : une issue inconnue porte l'ami et l'état de sa ligne au départ ; un refus du quota (429), son suivi par les relectures
+// et son retry_after (ms, NaN s'il manque).
+type Failure = { text: string; friend?: string; open?: boolean; quota?: 'wait' | 'full'; until?: number }
 
 const openIn = (battles: Battle[], friend: string) => battles.find((b) => isOpen(b) && (b.challenger_id === friend || b.opponent_id === friend))
 
@@ -94,6 +96,8 @@ export function BattleClient() {
         if (e?.friend) return !!openIn(r.battles, e.friend) !== e.open ? null : e
         // Refus du quota : effacé quand le quota relu repasse sous la limite après l'avoir montrée atteinte.
         if (e?.quota === 'wait' && full) return { ...e, quota: 'full' }
+        // Refus de la borne glissante (le quota du jour reste sous la limite) : effacé une fois retry_after passé.
+        if (e?.quota === 'wait' && serverNow() >= (e.until ?? NaN)) return null
         return e?.quota === 'full' && !full ? null : e
       })
       setList(r)
@@ -166,12 +170,15 @@ export function BattleClient() {
     setBusy(true)
     setError(null)
     try {
-      afterChallenge(router, await challengeFriend(keys.current, f.id), f.username, onScreen.current)
+      // onScreen lu après la réponse : une réponse tardive n'emmène pas ailleurs un joueur parti entre-temps.
+      const r = await challengeFriend(keys.current, f.id)
+      afterChallenge(router, r, f.username, onScreen.current)
     } catch (e) {
+      const until = e instanceof ApiError && e.status === 429 ? Date.parse(String((e.body as { retry_after?: unknown } | null)?.retry_after)) : undefined
       // Issue inconnue : clé gardée (apiOnce), la relance rejoue ; l'alerte tombe quand la relecture change la ligne. Jamais de toast.
       setError(unsure(e)
         ? { text: userMessage(e, UNSURE), friend: f.id, open }
-        : { text: userMessage(e, 'L\'action n\'a pas abouti.'), quota: e instanceof ApiError && e.status === 429 ? 'wait' : undefined })
+        : { text: userMessage(e, 'L\'action n\'a pas abouti.'), quota: until === undefined ? undefined : 'wait', until })
       void readBattles()
     } finally {
       inflight.current = false
@@ -184,8 +191,11 @@ export function BattleClient() {
     listFocus.current = 'tab'
     setListFailed(false)
     void readBattles()
-    // Sans joueur connu, la partie reste en échec : la session est relue avec les amis.
-    if (me === null) void readFriends()
+    // Sans joueur connu, la partie reste en échec : la session est relue avec les amis, en chargement jusque-là (le focus attend la lecture).
+    if (me === null) {
+      setMe(undefined)
+      void readFriends()
+    }
   }
 
   function retryFriends() {

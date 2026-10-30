@@ -76,7 +76,7 @@ export function DeckSlots({ busy, onSubmit }: { busy: boolean; onSubmit: (copies
         })}
       </ul>
       <div className="flex flex-wrap items-center gap-x-3">
-        <p className={hint}>Il te faut 3 cartes différentes de ta collection.</p>
+        <p id={`${id}-need`} className={hint}>Il te faut 3 cartes différentes de ta collection.</p>
         <Link href="/pulls" className={link}>Ouvrir des paquets</Link>
       </div>
       <p className="font-semibold">{`PV de ton deck : ${formatInt(hp)}`}</p>
@@ -84,7 +84,8 @@ export function DeckSlots({ busy, onSubmit }: { busy: boolean; onSubmit: (copies
       <button
         type="button"
         aria-disabled={off || undefined}
-        aria-describedby={twice ? `${id}-twice` : undefined}
+        // Inactif : sa raison (un doublon, sinon moins de 3 cartes).
+        aria-describedby={twice ? `${id}-twice` : picked.length < 3 ? `${id}-need` : undefined}
         onClick={() => { if (!off) onSubmit(picked.map((c) => c.id)) }}
         className={primary}
       >

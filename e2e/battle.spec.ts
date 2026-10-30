@@ -153,6 +153,54 @@ test('refus 429 forcé : l\'alerte « Limite quotidienne de défis atteinte » d
   expect(count(me, friend)).toBe('0')
 })
 
+test('refus 429 de la borne glissante (quota du jour sous la limite) : passé retry_after, le poll suivant efface l\'alerte', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  await page.clock.install()
+  await open(page)
+  const until = Date.now() + 2_000
+  await routeOnce(page, '**/api/battles', (r) => r.fulfill({ status: 429,
+    json: { status: 429, error: LIMIT, message: LIMIT, retry_after: new Date(until).toISOString() } }), (r) => r.request().method() === 'POST')
+  const reread = page.waitForResponse((r) => reads(r.request()) && r.status() === 200)
+  await friendRow(page, friend).getByRole('button', { name: 'Défier' }).click()
+  const alert = region(page, 'Défier un ami').getByRole('alert')
+  await expect(alert).toHaveText(LIMIT)
+  await reread
+  // retry_after passé (l'heure du serveur, estimée par l'en-tête Date à la seconde près, retarde d'une seconde au plus).
+  await wait(Math.max(0, until + 1_500 - Date.now()))
+  await page.clock.runFor(15_000)
+  await expect(alert).toHaveCount(0)
+  expect(count(me, friend)).toBe('0')
+})
+
+test('session illisible (getSession nul) : les batailles en échec ; session revenue, « Réessayer » des batailles → les onglets, le focus sur l\'onglet sélectionné', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  // Cookies cachés au JS jusqu'à __session : getSession() rend null, les requêtes gardent leur cookie.
+  await page.addInitScript(() => {
+    const d = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')!
+    Object.defineProperty(document, 'cookie', { configurable: true, get: () => ('__session' in window ? d.get!.call(document) : ''),
+      set: (v: string) => d.set!.call(document, v) })
+  })
+  await open(page)
+  const failed = page.locator('main').getByRole('alert').filter({ hasText: 'Tes batailles n\'ont pas pu être chargées.' })
+  await expect(failed).toBeVisible()
+  await page.evaluate(() => void Object.assign(window, { __session: true }))
+  // Les amis (et la session) relus après les batailles : le focus attend la session.
+  const listed = page.waitForResponse((r) => reads(r.request()) && r.status() === 200)
+  await routeOnce(page, '**/api/friends', async (r) => {
+    await listed
+    await wait(300)
+    await r.fallback()
+  })
+  await press(failed.locator('xpath=..').getByRole('button', { name: 'Réessayer' }))
+  await expect(tab(page, 'En cours')).toHaveAttribute('aria-selected', 'true')
+  await expect(tab(page, 'En cours')).toBeFocused()
+  await expect(friendRow(page, friend).getByRole('button', { name: 'Défier' })).toBeVisible()
+})
+
 test('refus du quota par le serveur (atteint ailleurs après la lecture) : l\'alerte reste tant que le quota relu est atteint ; passé Pro, le poll le relit sous la limite → l\'alerte tombe', async ({ page, login }) => {
   const me = await viewer(login)
   const friend = player()
@@ -578,7 +626,7 @@ test('défi au clavier : reçu, « Accepter » → « Choisis tes 3 cartes », l
   expect(stateOf(third, 'status')).toBe('cancelled')
 })
 
-test('deck au clavier : sélecteur « Choisir une carte pour ton deck », « Changer » focalisé ; doublon → « Choisis 3 cartes différentes. » et « Valider mon deck » inactif ; « Retirer » → « Ajouter… » focalisé ; PV = Σ DEF ; « Valider mon deck » → « Deck validé… » focalisé ; second deck par sql, poll → « Attaquer » de la première carte focalisé', async ({ page, login }) => {
+test('deck au clavier : sélecteur « Choisir une carte pour ton deck », « Changer » focalisé ; « Valider mon deck » inactif et décrit par sa raison ; doublon → « Choisis 3 cartes différentes. » et « Valider mon deck » inactif ; « Retirer » → « Ajouter… » focalisé ; PV = Σ DEF ; « Valider mon deck » → « Deck validé… » focalisé ; second deck par sql, poll → « Attaquer » de la première carte focalisé', async ({ page, login }) => {
   const me = await viewer(login)
   const friend = player()
   befriend(me, friend)
@@ -591,11 +639,13 @@ test('deck au clavier : sélecteur « Choisir une carte pour ton deck », « Cha
   await expect(page.locator('main').getByRole('link', { name: 'Ouvrir des paquets' })).toHaveAttribute('href', '/pulls')
   await expect(line(page, 'PV de ton deck : 0')).toBeVisible()
   await expect(validate(page)).toHaveAttribute('aria-disabled', 'true')
+  await expect(validate(page)).toHaveAccessibleDescription('Il te faut 3 cartes différentes de ta collection.')
   await place(page, 1, x.title)
   await place(page, 2, x.title)
   await expect(line(page, 'Choisis 3 cartes différentes.')).toBeVisible()
   await place(page, 3, z.title)
   await expect(validate(page)).toHaveAttribute('aria-disabled', 'true')
+  await expect(validate(page)).toHaveAccessibleDescription('Choisis 3 cartes différentes.')
   // Un clic sur le bouton inactif n'envoie rien.
   const sent = page.waitForRequest(patches, { timeout: 1_000 }).then(() => true, () => false)
   await validate(page).click({ force: true })
@@ -609,6 +659,7 @@ test('deck au clavier : sélecteur « Choisir une carte pour ton deck », « Cha
   await expect(validate(page)).toHaveAttribute('aria-disabled', 'true')
   await place(page, 3, z.title)
   await expect(validate(page)).not.toHaveAttribute('aria-disabled')
+  await expect(validate(page)).not.toHaveAttribute('aria-describedby')
   await press(validate(page))
   await expect(line(page, `Deck validé. En attente du deck de ${friend.username}.`)).toBeFocused()
   expect(sql(`select card_ids from public.battle_decks where battle_id = :'id' and user_id = :'u'`, { id, u: me.uid })).toBe(`{${x.card},${y.card},${z.card}}`)
@@ -1094,6 +1145,50 @@ test('confirmation d\'abandon ouverte pendant « Deck validé », second deck po
   await expect(dialog).toHaveCount(0)
   await expect(quit(page)).toBeFocused()
   expect(stateOf(id, 'status')).toBe('active')
+})
+
+test('« Abandonner » confirmé sur « La bataille sera annulée. », second deck posé par sql avant tout poll : refusé, la partie n\'est pas perdue ; l\'arène relue, l\'alerte « La bataille a changé… », le focus sur « Abandonner »', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const id = accepted(friend, me)
+  submitDeck(me, id, copies(me))
+  await openFrozen(page, id)
+  await press(quit(page))
+  const dialog = page.getByRole('dialog', { name: 'Abandonner la bataille ?' })
+  await expect(dialog).toContainText('La bataille sera annulée.')
+  // Horloge arrêtée : aucun poll ne lit le second deck avant la confirmation.
+  submitDeck(friend, id, copies(friend, 3, 'PC'))
+  await press(dialog.getByRole('button', { name: 'Abandonner' }))
+  await expect(line(page, `${friend.username} choisit sa carte d'attaque.`)).toBeVisible()
+  await expect(arenaAlert(page)).toHaveText('La bataille a changé : relis-la avant d\'abandonner.')
+  await expect(quit(page)).toBeFocused()
+  expect(stateOf(id, 'status')).toBe('active')
+  expect(sql(`select count(*) from wm.wb_ledger where ref = 'battle:' || :'id'`, { id })).toBe('0')
+})
+
+test('arène relue après « Bataille introuvable » (404 au poll) : « Retour aux batailles », goBack() → la relecture à l\'affichage rend l\'arène, le h2 focalisé', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const id = challenge(me, friend)
+  await openFrozen(page, id)
+  const gone = 'Bataille introuvable'
+  await routeOnce(page, '**/api/battles/*', (r) => r.fulfill({ status: 404, json: { status: 404, error: gone, message: gone } }),
+    (r) => r.request().method() === 'GET')
+  await page.clock.runFor(3_000)
+  await expect(h1(page)).toHaveText(gone)
+  const back = page.locator('main').getByRole('link', { name: 'Retour aux batailles' }).filter({ visible: true })
+  await hydrated(back)
+  await back.click()
+  await expect(page).toHaveURL('/battle')
+  await ready(page)
+  const reread = page.waitForResponse((r) => arenaReads(id)(r.request()) && r.status() === 200)
+  await page.goBack()
+  await expect(page).toHaveURL(`/battle/${id}`)
+  await reread
+  await expect(line(page, `En attente de la réponse de ${friend.username}.`)).toBeVisible()
+  await expect(arenaHead(page, me, friend)).toBeFocused()
 })
 
 test('question déjà répondue ailleurs (juste, par sql) puis une autre option envoyée : le retour enregistré « Bonne réponse ! », sans radio cochée', async ({ page, login }) => {

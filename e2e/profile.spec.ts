@@ -290,6 +290,54 @@ test('« Défier » refusé (429 forcé) : l\'alerte sous les actions, le focus 
   expect(battlesOf(me)).toBe('1')
 })
 
+test('relecture du profil partie avant « Défier » (affichage par goBack, retenue) : son retour n\'efface ni l\'alerte d\'incertitude ni la clé ; de nouveau → la même Idempotency-Key, l\'arène', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const keys: string[] = []
+  page.on('request', (r) => { if (posts(r)) keys.push(r.headers()['idempotency-key'] ?? '') })
+  await open(page, friend.username)
+  const nav = page.locator('nav a[href="/friends"]').first()
+  await hydrated(nav)
+  await nav.click()
+  await expect(page).toHaveURL('/friends')
+  // La relecture du profil à son affichage est retenue jusqu'à release().
+  const path = `/api/profile/${encodeURIComponent(friend.username)}`
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  let reached!: () => void
+  const waiting = new Promise<void>((r) => { reached = r })
+  await routeOnce(page, (u) => u.pathname === path, async (r) => {
+    reached()
+    await held
+    await r.fallback()
+  })
+  await page.goBack()
+  await expect(h1(page)).toHaveText(friend.username)
+  await waiting
+  const challenge = page.getByRole('button', { name: 'Défier' })
+  const alert = page.locator('main').getByRole('alert')
+  const reread = page.waitForResponse((r) => new URL(r.url()).pathname === path)
+  try {
+    await routeOnce(page, '**/api/battles', (r) => r.fulfill({ status: 500 }), (r) => r.request().method() === 'POST')
+    await challenge.focus()
+    await page.keyboard.press('Enter')
+    await expect(alert).toHaveText(UNSURE)
+  } finally {
+    release()
+  }
+  await reread
+  // Le temps que la lecture reçue soit appliquée (une alerte effacée à tort aurait disparu).
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  await expect(alert).toHaveText(UNSURE)
+  await challenge.focus()
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(BATTLE_URL)
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).toBe(keys[0])
+  expect(battlesOf(me)).toBe('1')
+})
+
 test('signalement au clavier : un seul arrêt de tabulation pour le motif, flèches, détails, envoi ; rouvert, prérempli', async ({ page, login }) => {
   const me = await viewer(login)
   const target = player()

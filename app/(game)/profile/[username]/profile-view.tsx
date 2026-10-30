@@ -60,6 +60,8 @@ export function ProfileView() {
   const keys = useRef(new Map<string, string>())
   // Génération : une lecture tardive n'écrase pas une plus récente (réaffichage pendant la relecture d'une action).
   const gen = useRef(0)
+  // Génération courante au dernier « Défier » : une lecture partie avant lui n'efface ni son alerte ni sa clé.
+  const since = useRef(0)
   const title = useRef<HTMLHeadingElement>(null)
   const lost = useRef<HTMLHeadingElement>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
@@ -88,8 +90,10 @@ export function ProfileView() {
       if (!r?.profile) return setFailed(true)
       // État du serveur relu : une relance est une nouvelle intention, refusée par l'amitié relue si elle a déjà eu lieu (un défi déjà
       // ouvert : 409 et sa bataille).
-      keys.current.clear()
-      setError(null)
+      if (g > since.current) {
+        keys.current.clear()
+        setError(null)
+      }
       setView(r)
       setMissing(false)
       setFailed(false)
@@ -143,10 +147,13 @@ export function ProfileView() {
   async function challenge(to: { id: string; username: string }) {
     if (inflight.current) return
     inflight.current = true
+    since.current = gen.current
     setBusy(true)
     setError(null)
     try {
-      afterChallenge(router, await challengeFriend(keys.current, to.id), to.username, onScreen.current)
+      // onScreen lu après la réponse : une réponse tardive n'emmène pas ailleurs un joueur parti entre-temps.
+      const r = await challengeFriend(keys.current, to.id)
+      afterChallenge(router, r, to.username, onScreen.current)
     } catch (e) {
       setError(userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'))
     }

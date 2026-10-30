@@ -115,6 +115,8 @@ export function ArenaClient() {
         if (answered && detail && isOpen(detail.battle) && !isOpen(r.battle)) refocus.current = { t: 'verdict', view: 'answered' }
         setDetail(r)
         setFailed(false)
+        // Relue après un 404 (session revenue, affichage par Activity) : l'arène revient, un écran changé pour le focus.
+        setMissing(false)
         return r.battle
       },
       (e) => {
@@ -221,8 +223,9 @@ export function ArenaClient() {
 
   function forfeit() {
     setConfirm(null)
-    // Pendant le retour d'une réponse aussi : l'écran de fin le remplace.
-    void act('forfeit', {}, `forfeit:${id}`, () => {
+    // Pendant le retour d'une réponse aussi : l'écran de fin le remplace. La phase annoncée par la modale voyage avec la requête : changée
+    // entre-temps (second deck adverse avant le poll), le serveur refuse (409) et la bataille est relue.
+    void act('forfeit', { expect: confirm }, `forfeit:${id}`, () => {
       setAnswered(null)
       return 'first'
     })
