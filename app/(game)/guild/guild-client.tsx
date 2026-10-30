@@ -100,7 +100,10 @@ export function GuildClient() {
       // État sans guilde posé tout de suite, les lectures parties avant jetées : une relecture qui échoue ou se perd ne ramène ni la vue
       // membre, ni « Tu ne fais plus partie… » (l'état d'avant n'a plus de guilde). La relecture suivante complète les invitations.
       focusTo.current = 'h1'
-      joined({ guild: null, membership: null, member_count: 0, invites: state?.invites ?? [] })
+      const gone: GuildState = { guild: null, membership: null, member_count: 0, invites: state?.invites ?? [] }
+      // stateRef d'abord : apply() ne voit pas un retrait subi, le toast « Tu as quitté… » suffit.
+      stateRef.current = gone
+      joined(gone)
       setLeaving(false)
       await read()
     } catch (e) {

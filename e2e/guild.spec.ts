@@ -379,7 +379,9 @@ test('quitter puis relecture en échec : la vue sans guilde reste, sans « Tu ne
   await expect(page.locator('main')).toContainText('Tu n\'as pas encore de guilde.')
   await expect(page.getByRole('button', { name: 'Quitter la guilde' })).toHaveCount(0)
   await expect(h1(page)).toBeFocused()
-  await expect(toasts(page)).not.toContainText('Tu ne fais plus partie de cette guilde.')
+  // Les toasts sont posés par deux minuteurs de 50 ms : on laisse passer ce délai, puis un seul toast doit rester.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 500)))
+  await expect(toasts(page).locator('p')).toHaveText(['Tu as quitté la guilde.'])
 })
 
 test('« Charger la suite » après une exclusion : le décalage est celui du serveur (4), pas la longueur de la liste (3)', async ({ page, login }) => {
