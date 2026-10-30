@@ -3,9 +3,9 @@ name: Banques de quiz
 # Banques de quiz des batailles (M5a-7) : OmniRoute 3.8.51 en mode self-hosted, un seul fournisseur `openai` vers Mistral,
 # lancé par scripts/quiz/omniroute.sh. Job `probe` : la clé Mistral liste les modèles en direct, puis complète un jeton à
 # travers OmniRoute ; elle doit rendre 200 avant toute génération (M5a-3). Job `smoke` (push, sans secret) : toute la chaîne à
-# travers OmniRoute contre le faux serveur, puis l'arrêt quota. Job `generate` (à la demande, sur develop) : les banques.
+# travers OmniRoute contre le faux serveur, puis l'arrêt quota. Job `generate` (à la demande et chaque nuit, sur develop) : les banques.
 # Dépôt public : aucun énoncé, aucune option, aucune clé dans un journal ni un artefact ; une clé n'est posée que dans l'env:
-# de l'étape qui la lit, jamais dans celui du workflow ou d'un job. Pas de schedule avant un premier run réussi.
+# de l'étape qui la lit, jamais dans celui du workflow ou d'un job. Planifié chaque nuit depuis le premier run réussi (run 41036739472).
 on:
   push:
     paths:
@@ -21,6 +21,8 @@ on:
         description: 'Ni quiz_store ni quiz_fail ; sans --input, la file est lue par wm.quiz_next, dont la remise en file est la seule écriture (C12)'
         type: boolean
         default: false
+  schedule:
+    - cron: '37 3 * * *'
 
 defaults:
   run:
