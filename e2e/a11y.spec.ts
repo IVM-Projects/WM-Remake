@@ -52,6 +52,8 @@ const READY: Record<string, string> = {
   '/guild': 'main [data-ready]',
   // Les deux lectures REST des succès faites (ou l'échec).
   '/achievements': 'main [data-ready]',
+  // Classement des joueurs lu (ou l'échec).
+  '/leaderboard': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -60,9 +62,9 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
-  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements']) {
+  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements', '/leaderboard']) {
   test(`axe ${path}`, async ({ page, login }) => {
-    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements'].includes(path)) await login()
+    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements', '/leaderboard'].includes(path)) await login()
     // Adresse posée par /login (compte non confirmé) dans sessionStorage, jamais dans l'URL.
     if (path === '/verify-email') await page.addInitScript(() => sessionStorage.setItem('wm.verifyEmail', 'a11y@test.local'))
     await page.goto(path)
@@ -559,5 +561,24 @@ test('axe /achievements : un succès verrouillé, un à réclamer, un réclamé'
   await expect(page.getByRole('button', { name: 'Réclamer' }).first()).toBeVisible()
   await expect(page.getByText(/^Réclamé le /).first()).toBeVisible()
   await expect(page.getByText('Verrouillé').first()).toBeVisible()
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /leaderboard : Joueurs (corps posé, ligne du lecteur), Guildes', async ({ page, login }) => {
+  const me = await login()
+  // Corps posé : le classement réel est partagé en cache entre les tests.
+  await page.route('**/api/leaderboard*', (r) => r.fulfill({ json: { board: 'battles', period: 'week', week_start: '2026-10-26T00:00:00.000Z', me: { rank: 2, value: 3 }, entries: [
+    { rank: 1, user_id: '00000000-0000-4000-8000-000000000001', username: 'Alice', avatar_url: null, value: 5 },
+    { rank: 2, user_id: me.uid, username: me.username, avatar_url: null, value: 3 }] } }))
+  await page.route('**/api/guilds/leaderboard', (r) => r.fulfill({ json: {
+    entries: [{ rank: 1, guild_id: '00000000-0000-4000-8000-000000000002', guild_name: 'Les Sages', member_count: 2, score_battles: 500, score_wb: 7, total_score: 507 }],
+    week_start: '2026-10-26T00:00:00.000Z', week_end: '2026-11-02T00:00:00.000Z', season: 'S53', reset_in_ms: 3_600_000, user_guild_id: null } }))
+  await page.goto('/leaderboard')
+  await page.locator(READY['/leaderboard']).waitFor()
+  await expect(page.getByRole('table')).toBeVisible()
+  await settled(page)
+  await expectNoSeriousViolations(page)
+  await page.getByRole('tab', { name: 'Guildes' }).click()
+  await expect(page.getByRole('cell', { name: 'Les Sages' })).toBeVisible()
   await expectNoSeriousViolations(page)
 })
