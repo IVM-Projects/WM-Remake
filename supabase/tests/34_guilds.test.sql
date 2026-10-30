@@ -210,3 +210,198 @@ do $$ declare a uuid := pg_temp.player('GuiAchA'); c uuid := pg_temp.player('Gui
     and jsonb_array_length(d5) = 2, d5::text;
   perform pg_temp.inv('après ach_money');
 end $$;
+
+-- Guildes (2010, Task 3) : lecture, création, invitations, adhésion, refus d'une invitation.
+
+-- Corps d'erreur de wm.raise_err (error = message, code absent si null).
+create function pg_temp.e(p_status int, p_code text, p_message text) returns jsonb language sql as $$
+  select jsonb_strip_nulls(jsonb_build_object('status', p_status, 'code', p_code, 'error', p_message, 'message', p_message))
+$$;
+
+-- Guilde de p_leader par guild_create ; chaque membre devient ami du chef, est invité par lui et rejoint.
+create function pg_temp.guild(p_leader uuid, p_members uuid[] default '{}') returns uuid language plpgsql as $$
+declare g uuid; m uuid; begin
+  g := (wm.guild_create(p_leader, left('Guilde ' || (select username from public.profiles where id = p_leader), 40)) -> 'guild' ->> 'id')::uuid;
+  foreach m in array p_members loop
+    perform pg_temp.friends(p_leader, m);
+    perform wm.guild_invite(p_leader, m);
+    perform wm.guild_join(m, g);
+  end loop;
+  return g;
+end $$;
+
+-- Création (D:583, gratuite) : nom rogné, rôle leader, réponse = guild_get, rejeu de la clé ; refus exacts.
+do $$ declare a uuid := pg_temp.player('GuiCreA'); b uuid := pg_temp.player('GuiCreB'); c uuid := pg_temp.player('GuiCreC');
+  w uuid := pg_temp.player('GuiCreW'); r jsonb; d jsonb; g public.guilds; m public.guild_members; begin
+  r := wm.guild_create(a, '  Les Archivistes ', 'Une guilde.');
+  select * into g from public.guilds where leader_id = a;
+  select * into m from public.guild_members where user_id = a;
+  assert r = jsonb_build_object('guild', jsonb_build_object('id', g.id, 'name', 'Les Archivistes', 'description', 'Une guilde.',
+      'leader_id', a, 'created_at', g.created_at),
+    'membership', jsonb_build_object('guild_id', g.id, 'user_id', a, 'role', 'leader', 'joined_at', m.joined_at),
+    'member_count', 1, 'invites', '[]'::jsonb), r::text;
+  assert g.name = 'Les Archivistes' and m.guild_id = g.id, 'lignes';
+  assert wm.guild_get(a) = r, 'guild_get';
+  -- Sans guilde : guild et membership nuls, 0 membre, invitations en tableau.
+  assert wm.guild_get(b) = '{"guild": null, "membership": null, "member_count": 0, "invites": []}', wm.guild_get(b)::text;
+  -- Même clé deux fois : même corps, une seule guilde (sans clé, le second appel serait un 409).
+  r := wm.guild_create(b, 'Clé', p_idem => 'k-gcreate');
+  assert wm.guild_create(b, 'Clé', p_idem => 'k-gcreate') = r, 'rejeu de la clé';
+  assert (select count(*) from public.guilds where leader_id = b) = 1, 'une seule guilde';
+  -- Description blanche stockée nulle ; nom de 40 caractères exactement.
+  r := wm.guild_create(c, repeat('n', 40), '   ');
+  assert r -> 'guild' -> 'description' = 'null' and r -> 'guild' ->> 'name' = repeat('n', 40), r::text;
+  assert (select description is null from public.guilds where leader_id = c), 'description nulle';
+  -- Refus.
+  d := pg_temp.err(format('select wm.guild_create(%L, %L)', w, '   '));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le nom de la guilde est vide'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_create(%L, null)', w));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le nom de la guilde est vide'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_create(%L, %L)', w, repeat('n', 41)));
+  assert d = pg_temp.e(400, 'invalid_request', 'Un nom de guilde fait au plus 40 caractères'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_create(%L, %L, %L)', w, 'Longue', repeat('d', 281)));
+  assert d = pg_temp.e(400, 'invalid_request', 'Une description fait au plus 280 caractères'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_create(%L, %L)', a, 'Encore'));
+  assert d = pg_temp.e(409, null, 'Tu fais déjà partie d''une guilde'), coalesce(d::text, 'accepté');
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_create(%L, %L)', w, 'Maintenance'));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  assert not exists (select from public.guilds where leader_id = w) and not exists (select from public.guild_members where user_id = w),
+    'refus sans écriture';
+end $$;
+
+-- Invitations (M5b-8, M5b-11) : entre amis, réécrites, notifiées à chaque fois ; refus exacts.
+do $$ declare a uuid := pg_temp.player('GuiInvA'); b uuid := pg_temp.player('GuiInvB'); c uuid := pg_temp.player('GuiInvC');
+  m uuid := pg_temp.player('GuiInvM'); dd uuid := pg_temp.player('GuiInvD'); x uuid := pg_temp.player('GuiInvX');
+  y uuid := pg_temp.player('GuiInvY'); g uuid; t timestamptz; r jsonb; d jsonb; begin
+  g := (wm.guild_create(a, 'Les Archivistes') -> 'guild' ->> 'id')::uuid;
+  perform pg_temp.friends(a, m);
+  perform wm.guild_invite(a, m);
+  perform wm.guild_join(m, g);
+  perform pg_temp.friends(a, b);
+  assert wm.guild_invite(a, b) = '{"ok": true}', 'invite';
+  assert (select jsonb_agg(data) from public.notifications where user_id = b and type = 'guild_invite')
+    = jsonb_build_array(jsonb_build_object('guild_id', g, 'guild_name', 'Les Archivistes', 'user_id', a, 'username', 'GuiInvA')),
+    'notification';
+  select created_at into t from wm.guild_invites where guild_id = g and user_id = b;
+  assert wm.guild_get(b) -> 'invites' = jsonb_build_array(jsonb_build_object('guild_id', g, 'guild_name', 'Les Archivistes',
+    'inviter_username', 'GuiInvA', 'created_at', t)), wm.guild_get(b)::text;
+  -- Réinvité par un autre membre : une ligne, réécrite (inviteur et instant), deux notifications.
+  perform pg_temp.friends(m, b);
+  assert wm.guild_invite(m, b) = '{"ok": true}', 'réinvitation';
+  assert (select count(*) from wm.guild_invites where user_id = b) = 1, 'une ligne';
+  assert (select inviter_id = m and created_at > t from wm.guild_invites where guild_id = g and user_id = b), 'réécrite';
+  assert wm.guild_get(b) -> 'invites' -> 0 ->> 'inviter_username' = 'GuiInvM', wm.guild_get(b)::text;
+  assert (select jsonb_agg(data ->> 'username' order by created_at, data ->> 'username') from public.notifications
+    where user_id = b and type = 'guild_invite') = '["GuiInvA", "GuiInvM"]', 'deux notifications';
+  -- Même clé deux fois : même corps, une seule notification de plus.
+  r := wm.guild_invite(a, b, 'k-ginvite');
+  assert wm.guild_invite(a, b, 'k-ginvite') = r, 'rejeu de la clé';
+  assert (select count(*) from public.notifications where user_id = b and type = 'guild_invite') = 3, 'un seul effet';
+  -- Refus.
+  d := pg_temp.err(format('select wm.guild_invite(%L, %L)', a, a));
+  assert d = pg_temp.e(400, 'invalid_request', 'Tu ne peux pas t''inviter toi-même'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_invite(%L, %L)', a, gen_random_uuid()));
+  assert d = pg_temp.e(404, null, 'Joueur introuvable'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_invite(%L, %L)', a, c));
+  assert d = '{"status":403,"code":"FORBIDDEN","error":"Vous devez être amis pour inviter ce joueur",
+    "message":"Vous devez être amis pour inviter ce joueur"}', coalesce(d::text, 'accepté');
+  perform pg_temp.friends(dd, b);
+  d := pg_temp.err(format('select wm.guild_invite(%L, %L)', dd, b));
+  assert d = pg_temp.e(404, null, 'Tu n''es dans aucune guilde'), coalesce(d::text, 'accepté');
+  perform pg_temp.guild(y, array[x]);
+  perform pg_temp.friends(a, x);
+  d := pg_temp.err(format('select wm.guild_invite(%L, %L)', a, x));
+  assert d = pg_temp.e(409, null, 'Ce joueur fait déjà partie d''une guilde'), coalesce(d::text, 'accepté');
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_invite(%L, %L)', a, b));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  assert not exists (select from wm.guild_invites where user_id in (c, x, a)), 'refus sans écriture';
+  assert (select count(*) from public.notifications where user_id = b and type = 'guild_invite') = 3, 'refus sans notification';
+end $$;
+
+-- Deux invitations : la plus récente d'abord ; rejoindre l'une efface toutes les autres.
+do $$ declare a uuid := pg_temp.player('GuiTwoA'); h uuid := pg_temp.player('GuiTwoH'); b uuid := pg_temp.player('GuiTwoB');
+  g uuid := pg_temp.guild(a); hh uuid := pg_temp.guild(h); r jsonb; d jsonb; begin
+  perform pg_temp.friends(a, b);
+  perform pg_temp.friends(h, b);
+  perform wm.guild_invite(a, b);
+  perform wm.guild_invite(h, b);
+  assert (select jsonb_agg(i ->> 'guild_id') from jsonb_array_elements(wm.guild_get(b) -> 'invites') i)
+    = jsonb_build_array(hh, g), wm.guild_get(b)::text;
+  r := wm.guild_join(b, g);
+  assert r = wm.guild_get(b), 'réponse de guild_get';
+  assert (r -> 'guild' ->> 'id')::uuid = g and r -> 'membership' ->> 'role' = 'member' and (r -> 'membership' ->> 'user_id')::uuid = b
+    and r -> 'member_count' = '2' and r -> 'invites' = '[]', r::text;
+  assert not exists (select from wm.guild_invites where user_id = b), 'invitations effacées';
+  d := pg_temp.err(format('select wm.guild_join(%L, %L)', b, hh));
+  assert d = pg_temp.e(409, null, 'Tu fais déjà partie d''une guilde'), coalesce(d::text, 'accepté');
+end $$;
+
+-- Adhésion : invitation exigée, guilde connue, plafond guild.max_members ; rejeu de la clé ; maintenance.
+do $$ declare a uuid := pg_temp.player('GuiJoiA'); b uuid := pg_temp.player('GuiJoiB'); e uuid := pg_temp.player('GuiJoiE');
+  f uuid := pg_temp.player('GuiJoiF'); k uuid := pg_temp.player('GuiJoiK'); g uuid; r jsonb; d jsonb; begin
+  g := pg_temp.guild(a, array[b]);
+  d := pg_temp.err(format('select wm.guild_join(%L, %L)', f, g));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Aucune invitation de cette guilde'), coalesce(d::text, 'accepté');
+  d := pg_temp.err(format('select wm.guild_join(%L, %L)', f, gen_random_uuid()));
+  assert d = pg_temp.e(404, null, 'Guilde introuvable'), coalesce(d::text, 'accepté');
+  -- Plafond à 2, A et B déjà membres : E invité est refusé, son invitation reste.
+  update wm.config set value = value || '{"max_members": 2}' where key = 'guild';
+  perform pg_temp.friends(a, e);
+  perform wm.guild_invite(a, e);
+  d := pg_temp.err(format('select wm.guild_join(%L, %L)', e, g));
+  update wm.config set value = value || '{"max_members": 200}' where key = 'guild';
+  assert d = pg_temp.e(409, null, 'Cette guilde est pleine'), coalesce(d::text, 'accepté');
+  assert exists (select from wm.guild_invites where guild_id = g and user_id = e), 'invitation restée';
+  assert (select count(*) from public.guild_members where guild_id = g) = 2, 'deux membres';
+  -- Maintenance, puis même clé deux fois : même corps, un seul membre de plus.
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_join(%L, %L)', e, g));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  r := wm.guild_join(e, g, 'k-gjoin');
+  assert wm.guild_join(e, g, 'k-gjoin') = r and r -> 'member_count' = '3', r::text;
+  assert (select count(*) from public.guild_members where guild_id = g) = 3, 'un seul effet';
+  -- Créer une guilde efface les invitations reçues (M5b-8).
+  perform pg_temp.friends(a, k);
+  perform wm.guild_invite(a, k);
+  r := wm.guild_create(k, 'La mienne');
+  assert r -> 'invites' = '[]' and wm.guild_get(k) -> 'invites' = '[]', 'invitations de K';
+  assert not exists (select from wm.guild_invites where user_id = k), 'ligne effacée';
+end $$;
+
+-- Refus d'une invitation : la ligne disparaît ; une invitation absente est un 404 ; rejeu de la clé ; maintenance.
+do $$ declare a uuid := pg_temp.player('GuiDecA'); b uuid := pg_temp.player('GuiDecB'); g uuid := pg_temp.guild(a); d jsonb; begin
+  perform pg_temp.friends(a, b);
+  perform wm.guild_invite(a, b);
+  assert wm.guild_invite_decline(b, g) = '{"ok": true}', 'refus';
+  assert not exists (select from wm.guild_invites where user_id = b), 'ligne supprimée';
+  d := pg_temp.err(format('select wm.guild_invite_decline(%L, %L)', b, g));
+  assert d = pg_temp.e(404, null, 'Aucune invitation de cette guilde'), coalesce(d::text, 'accepté');
+  perform wm.guild_invite(a, b);
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.guild_invite_decline(%L, %L)', b, g));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), coalesce(d::text, 'accepté');
+  assert exists (select from wm.guild_invites where user_id = b), 'refus sans effet';
+  assert wm.guild_invite_decline(b, g, 'k-gdecline') = '{"ok": true}' and wm.guild_invite_decline(b, g, 'k-gdecline') = '{"ok": true}',
+    'rejeu de la clé';
+  assert not exists (select from wm.guild_invites where user_id = b), 'un seul effet';
+end $$;
+
+-- Volatilité, lock_timeout avant le premier verrou (P5), profils puis guilde (M5b-1), aucun profil pour le refus.
+do $$ declare v text; begin
+  assert (select provolatile = 's' from pg_proc where oid = 'wm.guild_get(uuid)'::regprocedure), 'guild_get stable';
+  v := tests.lock_timeout_violations(array['guild_create', 'guild_invite', 'guild_join', 'guild_invite_decline'],
+    array['for update', 'for no key update', 'for key share', 'wm.lock_users(', 'wm.lock_user(', 'delete from wm.guild_invites']);
+  assert v is null, 'lock_timeout : ' || v;
+  assert (select strpos(prosrc, 'wm.lock_user') between 1 and strpos(prosrc, 'for no key update') from pg_proc
+    where oid = to_regproc('wm.guild_invite')), 'guild_invite : profils puis guilde';
+  assert (select strpos(prosrc, 'wm.lock_user') between 1 and strpos(prosrc, 'for no key update') from pg_proc
+    where oid = to_regproc('wm.guild_join')), 'guild_join : profil puis guilde';
+  assert (select strpos(prosrc, 'wm.lock_user') = 0 and strpos(prosrc, 'for no key update') = 0 from pg_proc
+    where oid = to_regproc('wm.guild_invite_decline')), 'guild_invite_decline sans profil ni guilde';
+end $$;
