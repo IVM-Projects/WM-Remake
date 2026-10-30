@@ -87,11 +87,11 @@ begin
     'week_start', case when p_period = 'week' then wm.week_start(now()) end);
 end $$;
 
--- Rang réel parmi tous (pas seulement le top) et valeur du joueur ; rang nul à 0.
+-- Rang réel parmi tous (pas seulement le top) et valeur du joueur ; nul (SQL NULL) à 0 (D-C14).
 create or replace function wm.leaderboard_me(p_uid uuid, p_board text, p_period text)
 returns jsonb language sql stable security definer set search_path = '' as $$
-  select coalesce((select jsonb_build_object('rank', l.rnk, 'value', l.value) from wm.leaderboard_values(p_board, p_period) l
-    where l.user_id = p_uid), jsonb_build_object('rank', null, 'value', 0))
+  select jsonb_build_object('rank', l.rnk, 'value', l.value) from wm.leaderboard_values(p_board, p_period) l
+  where l.user_id = p_uid
 $$;
 
 revoke all on schema wm from public, anon, authenticated;

@@ -143,8 +143,9 @@ do $$ declare ws timestamptz := wm.week_start(now()); a uuid := pg_temp.player('
   -- me : rang réel, égalités partagées, nul à zéro ; accord avec entries pour chaque tableau × période.
   assert wm.leaderboard_me(b, 'collection', 'all') = jsonb_build_object('rank', 2, 'value', 4), wm.leaderboard_me(b, 'collection', 'all')::text;
   assert wm.leaderboard_me(c, 'battles', 'all') = jsonb_build_object('rank', 2, 'value', 3), 'me égalité';
-  assert wm.leaderboard_me(z, 'battles', 'all') = jsonb_build_object('rank', null, 'value', 0), 'me à zéro';
-  assert wm.leaderboard_me(a, 'legendary', 'all') = jsonb_build_object('rank', null, 'value', 0), 'me légendaires à zéro';
+  assert not exists (select from (values ('battles'), ('collection'), ('legendary')) bd (board), (values ('week'), ('all')) pd (period)
+    where wm.leaderboard_me(z, bd.board, pd.period) is not null), 'me à zéro : nul, 3 tableaux × 2 périodes';
+  assert wm.leaderboard_me(a, 'legendary', 'all') is null, 'me légendaires à zéro';
   assert not exists (
     select from (values ('battles'), ('collection'), ('legendary')) bd (board), (values ('week'), ('all')) pd (period),
       jsonb_array_elements(wm.leaderboard_top(bd.board, pd.period) -> 'entries') x
@@ -161,5 +162,5 @@ do $$ declare ws timestamptz := wm.week_start(now()); a uuid := (select id from 
   t := wm.create_trade(a, d, pg_temp.items(a, array[a3])) ->> 'id';
   assert wm.trade_action(d, t, 'accept') ->> 'status' = 'accepted', 'acceptation';
   assert wm.leaderboard_me(d, 'collection', 'all') = jsonb_build_object('rank', 4, 'value', 1), wm.leaderboard_me(d, 'collection', 'all')::text;
-  assert wm.leaderboard_me(d, 'collection', 'week') = jsonb_build_object('rank', null, 'value', 0), 'échange hors semaine';
+  assert wm.leaderboard_me(d, 'collection', 'week') is null, 'échange hors semaine';
 end $$;
