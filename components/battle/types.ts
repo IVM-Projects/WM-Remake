@@ -50,6 +50,8 @@ export type GameState = {
   turnNumber?: number
   pendingAttack?: PendingAttack | null
   winnerId?: string
+  // Points de guilde du gagnant, posés à la fin (M5b-3, G5) ; 0 sans guilde.
+  guildPoints?: number
 }
 
 export type Battle = {
@@ -80,6 +82,7 @@ export type Rules = {
   idle_loss_h: number
   reward_win: number
   reward_loss: number
+  guild_points_win: number
 }
 
 export type Quota = { used: number; limit: number; resets_at: string }

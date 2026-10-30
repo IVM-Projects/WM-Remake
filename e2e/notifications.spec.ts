@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
-import { befriend, expect, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
+import { befriend, makeGuild, expect, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a son joueur, supprimé à la fin (ses notifications suivent en cascade).
 const trash: string[] = []
@@ -151,6 +151,24 @@ test('défi reçu (wm.battle_create par sql) : « <pseudo> te défie en bataille
   await expect(badge(page)).toHaveText('1')
   await bell(page).click()
   await expect(panel(page).getByRole('link', { name: `${from.username} te défie en bataille`, exact: true })).toHaveAttribute('href', `/battle/${battle}`)
+})
+
+test('invitation de guilde (wm.guild_invite par sql) : « <pseudo> t\'invite dans la guilde <nom> », lien vers /guild', async ({ page, login }) => {
+  const me = await login()
+  const leader = makePlayer()
+  trash.push(me.uid, leader.uid)
+  befriend(leader, me)
+  const name = `Guilde ${randomUUID().slice(0, 8)}`
+  const guild = makeGuild(leader, [], name)
+  try {
+    sql(`select wm.guild_invite(:'l', :'m')`, { l: leader.uid, m: me.uid })
+    await page.goto('/pulls')
+    await expect(badge(page)).toHaveText('1')
+    await bell(page).click()
+    await expect(panel(page).getByRole('link', { name: `${leader.username} t'invite dans la guilde ${name}`, exact: true })).toHaveAttribute('href', '/guild')
+  } finally {
+    sql(`delete from public.guilds where id = :'g'`, { g: guild })
+  }
 })
 
 test('vide : « Aucune notification. » ; la cloche et « Tout marquer comme lu » font au moins 44 px', async ({ page, login }) => {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Browser, BrowserContext, Locator, Page, Request } from '@playwright/test'
-import { befriend, cookieFor, expect, giveCopies, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
+import { befriend, cookieFor, expect, giveCopies, hydrated, makeGuild, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a ses joueurs, supprimés à la fin (batailles, decks, amitiés, grand livre et
 // notifications suivent en cascade).
@@ -387,7 +387,7 @@ test('onglets : la bataille close (B abandonne, A gagne) sous « Terminées » e
   await expect(battles(page).getByText('Annulée', { exact: true }).first()).toContainClass('text-[var(--color-foreground)]/60')
 })
 
-test('« Comment ça marche ? » : la modale au titre, « 3 défis par jour, 10 avec Pro », aucun point de guilde ; Échap → le focus sur le bouton ; quota_free à 5 dans la config → le texte suit', async ({ page, login }) => {
+test('« Comment ça marche ? » : la modale au titre, « 3 défis par jour, 10 avec Pro », +500 points de guilde ; Échap → le focus sur le bouton ; quota_free à 5 dans la config → le texte suit', async ({ page, login }) => {
   await viewer(login)
   await open(page)
   const button = page.getByRole('button', { name: 'Comment ça marche ?' })
@@ -397,7 +397,7 @@ test('« Comment ça marche ? » : la modale au titre, « 3 défis par jour, 10 
   await expect(dialog).toContainText('Défie un ami : il a 24 h pour accepter.')
   await expect(dialog).toContainText('3 défis par jour, 10 avec Pro, selon ton fuseau horaire.')
   await expect(dialog).toContainText('Gagnant : +50 wikibidous ; perdant : +10 wikibidous.')
-  await expect(dialog).not.toContainText(/guilde/i)
+  await expect(dialog).toContainText('Gagnant : +500 points pour sa guilde, s\'il en a une.')
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(button).toBeFocused()
@@ -931,6 +931,33 @@ commit;`, { a: a.uid, b: b.uid, id })
     await expect(pb.getByRole('heading', { level: 2, name: 'Défaite', exact: true })).toBeVisible()
     await expect(line(pb, '+10 wikibidous')).toBeVisible()
     await expect(panel(pb, b).getByText(/^PV 0 \//)).toBeVisible()
+  })
+})
+
+test('fin de partie : +500 chez le gagnant membre d\'une guilde ; rien chez le gagnant sans guilde, ni chez le perdant membre', async ({ browser, baseURL }) => {
+  const [a, b, c, d] = [makePlayer(), makePlayer(), makePlayer(), makePlayer()]
+  befriend(a, b)
+  befriend(c, d)
+  // a (guilde) bat b ; c (sans guilde) bat d (guilde).
+  const [ga, gd] = [makeGuild(a), makeGuild(d)]
+  const [wa, wc] = [won(a, b), won(c, d)]
+  const GUILD = 'points pour ta guilde'
+  await both(browser, baseURL, [a, b, c, d], async ([pa, pb, pc, pd]) => {
+    try {
+      await enter(pa, wa)
+      await expect(pa.getByRole('heading', { level: 2, name: 'Victoire !', exact: true })).toBeVisible()
+      await expect(line(pa, '+500 points pour ta guilde')).toBeVisible()
+      await enter(pb, wa)
+      await expect(pb.getByRole('heading', { level: 2, name: 'Défaite', exact: true })).toBeVisible()
+      await enter(pc, wc)
+      await expect(pc.getByRole('heading', { level: 2, name: 'Victoire !', exact: true })).toBeVisible()
+      await enter(pd, wc)
+      await expect(pd.getByRole('heading', { level: 2, name: 'Défaite', exact: true })).toBeVisible()
+      for (const p of [pb, pc, pd]) await expect(p.getByText(GUILD)).toHaveCount(0)
+    } finally {
+      // Avant les auth.users (Global Constraints, E2E).
+      sql(`delete from public.guilds where id = any(string_to_array(:'g', ',')::uuid[])`, { g: `${ga},${gd}` })
+    }
   })
 })
 

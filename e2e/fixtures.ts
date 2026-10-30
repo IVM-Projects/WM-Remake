@@ -28,6 +28,18 @@ select :'uid', id, wikipedia_title, rarity, category, atk, def from public.cards
 export const befriend = (a: User, b: User): string =>
   sql(`insert into public.friendships (requester_id, addressee_id, status) values (:'a', :'b', 'accepted') returning id`, { a: a.uid, b: b.uid })
 
+// Guilde par les fonctions (P20) : chaque membre est ami du chef, invité puis inscrit ; renvoie l'id de la guilde.
+// L'appelant la supprime avant les auth.users (Global Constraints, E2E).
+export const makeGuild = (leader: User, members: User[] = [], name = `Guilde ${randomUUID().slice(0, 8)}`): string => {
+  for (const m of members) befriend(leader, m)
+  const id = sql(`select wm.guild_create(:'l', :'n') -> 'guild' ->> 'id'`, { l: leader.uid, n: name })
+  for (const m of members) {
+    sql(`select wm.guild_invite(:'l', :'m')`, { l: leader.uid, m: m.uid })
+    sql(`select wm.guild_join(:'m', :'g')`, { m: m.uid, g: id })
+  }
+  return id
+}
+
 // Cookie de session d'un joueur de makePlayer, pour son propre contexte de navigateur (P22).
 export const cookieFor = (u: User) => authCookie(backend(), u.uid)
 

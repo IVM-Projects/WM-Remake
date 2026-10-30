@@ -348,6 +348,7 @@ export function ArenaClient() {
               {b.winner_id === me ? 'Victoire !' : 'Défaite'}
             </h2>
             {reward !== null && <p className="font-semibold">{`+${formatInt(reward)} ${wikibidous(reward)}`}</p>}
+            {b.winner_id === me && (g?.guildPoints ?? 0) > 0 && <p className="font-semibold">{`+${formatInt(g!.guildPoints!)} points pour ta guilde`}</p>}
             <div className="flex flex-wrap items-center gap-3">
               <Link href="/battle" className={link}>Retour aux batailles</Link>
               <Link href="/battle" className={primary}>Nouveau défi</Link>
