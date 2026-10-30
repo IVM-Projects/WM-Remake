@@ -34,12 +34,16 @@ select from wm.battle_action(:'b', :'id', 'forfeit');`,
   return id
 }
 const count = (a: User, b: User) => sql(`select count(*) from public.battles where challenger_id = :'a' and opponent_id = :'b'`, { a: a.uid, b: b.uid })
+// Défis lancés par a, du plus ancien au plus récent (un seul attendu là où il sert).
+const battleOf = (a: User) => sql(`select id from public.battles where challenger_id = :'a' order by created_at`, { a: a.uid })
 
 // data-ready : batailles et amis lus (ou en échec), session connue.
 async function open(page: Page) {
   await page.goto('/battle')
   await page.locator('main [data-ready]').waitFor()
 }
+// Le temps qu'une lecture reçue soit appliquée (une alerte effacée à tort aurait disparu).
+const settle = (page: Page) => page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
 const reads = (r: Request) => r.method() === 'GET' && new URL(r.url()).pathname === '/api/battles'
 const posts = (r: Request) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/battles'
 // Cache Components garde les pages quittées dans le DOM (display: none) : seul le visible compte.
@@ -145,19 +149,41 @@ test('refus 429 forcé : l\'alerte « Limite quotidienne de défis atteinte » d
   await open(page)
   await routeOnce(page, '**/api/battles', (r) => r.fulfill({ status: 429, json: { status: 429, error: LIMIT, message: LIMIT } }),
     (r) => r.request().method() === 'POST')
+  const reread = page.waitForResponse((r) => reads(r.request()) && r.status() === 200)
   await friendRow(page, friend).getByRole('button', { name: 'Défier' }).click()
+  await expect(region(page, 'Défier un ami').getByRole('alert')).toHaveText(LIMIT)
+  // Le quota relu n'est pas atteint (en vrai : la borne de 2 × limite sur 24 h) : l'alerte reste jusqu'au défi suivant.
+  await reread
+  await settle(page)
   await expect(region(page, 'Défier un ami').getByRole('alert')).toHaveText(LIMIT)
   await expect(page).toHaveURL('/battle')
   expect(count(me, friend)).toBe('0')
 })
 
-test('issue incertaine (bataille créée, réponse 500) : l\'alerte UNSURE dans « Défier un ami », sans toast ; la relecture relâchée → « Voir la bataille » focalisé, l\'alerte tombe, une seule bataille', async ({ page, login }) => {
+test('refus du quota par le serveur (atteint ailleurs après la lecture) : l\'alerte reste tant que le quota relu est atteint ; passé Pro, le poll le relit sous la limite → l\'alerte tombe', async ({ page, login }) => {
   const me = await viewer(login)
   const friend = player()
   befriend(me, friend)
+  await page.clock.install()
   await open(page)
-  // Le POST atteint le serveur, sa réponse est perdue ; puis la seule relecture qui suit l'échec est retenue jusqu'à release() (sans elle,
-  // l'alerte ne vit que l'aller-retour de cette relecture). Jamais la lecture initiale, déjà faite, ni le poll de 15 s, encore loin.
+  // Trois défis posés ailleurs (un autre onglet) après la lecture : la page montre encore 0 / 3 et « Défier » actif.
+  for (let i = 0; i < 3; i++) act(me, challenge(me, friend), 'withdraw_invite')
+  await friendRow(page, friend).getByRole('button', { name: 'Défier' }).click()
+  const alert = region(page, 'Défier un ami').getByRole('alert')
+  await expect(alert).toHaveText(LIMIT)
+  await expect(page.getByText('3 / 3 défis aujourd\'hui', { exact: true })).toBeVisible()
+  await expect(friendRow(page, friend).getByRole('button', { name: 'Défier' })).toHaveAttribute('aria-disabled', 'true')
+  await settle(page)
+  await expect(alert).toHaveText(LIMIT)
+  sql(`update public.profiles set is_pro = true where id = :'uid'`, { uid: me.uid })
+  await page.clock.runFor(15_000)
+  await expect(page.getByText('3 / 10 défis aujourd\'hui', { exact: true })).toBeVisible()
+  await expect(alert).toHaveCount(0)
+})
+
+// Le POST atteint le serveur, sa réponse est perdue (500) ; puis la seule relecture qui suit l'échec est retenue jusqu'à release() (sans
+// elle, l'alerte ne vit que l'aller-retour de cette relecture). Jamais la lecture initiale, déjà faite, ni le poll de 15 s, encore loin.
+async function lostReply(page: Page): Promise<() => void> {
   let armed = false
   let release!: () => void
   const held = new Promise<void>((r) => { release = r })
@@ -170,6 +196,16 @@ test('issue incertaine (bataille créée, réponse 500) : l\'alerte UNSURE dans 
     await held
     await r.fallback()
   }, (r) => armed && r.request().method() === 'GET')
+  return release
+}
+
+test('issue incertaine (bataille créée, réponse 500) : l\'alerte UNSURE dans « Défier un ami », sans toast ; la relecture relâchée → « Voir la bataille » focalisé, l\'alerte tombe, une seule bataille ; retirée ensuite, la ligne revient à « Défier » sans l\'alerte', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  await page.clock.install()
+  await open(page)
+  const release = await lostReply(page)
   await friendRow(page, friend).getByRole('button', { name: 'Défier' }).focus()
   await page.keyboard.press('Enter')
   const alert = region(page, 'Défier un ami').getByRole('alert')
@@ -180,6 +216,86 @@ test('issue incertaine (bataille créée, réponse 500) : l\'alerte UNSURE dans 
   const see = friendRow(page, friend).getByRole('link', { name: 'Voir la bataille' })
   await expect(see).toBeFocused()
   await expect(alert).toBeHidden()
+  expect(count(me, friend)).toBe('1')
+  // L'issue incertaine est effacée, pas masquée : la ligne qui change encore (défi retiré, lu au poll) ne la fait pas revenir.
+  act(me, battleOf(me), 'withdraw_invite')
+  await page.clock.runFor(15_000)
+  await expect(friendRow(page, friend).getByRole('button', { name: 'Défier' })).toBeVisible()
+  await settle(page)
+  await expect(alert).toHaveCount(0)
+})
+
+test('issue incertaine, défi jamais arrivé (500 sans le serveur) : la relecture ne montre aucune bataille, l\'alerte reste ; « Défier » de nouveau → la même Idempotency-Key, la bataille créée', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  await open(page)
+  await routeOnce(page, '**/api/battles', (r) => r.fulfill({ status: 500 }), (r) => r.request().method() === 'POST')
+  const first = page.waitForRequest(posts)
+  const reread = page.waitForResponse((r) => reads(r.request()) && r.status() === 200)
+  await friendRow(page, friend).getByRole('button', { name: 'Défier' }).click()
+  const key = await (await first).headerValue('idempotency-key')
+  await reread
+  await settle(page)
+  const alert = region(page, 'Défier un ami').getByRole('alert')
+  await expect(alert).toHaveText(UNSURE)
+  expect(count(me, friend)).toBe('0')
+  const second = page.waitForRequest(posts)
+  await friendRow(page, friend).getByRole('button', { name: 'Défier' }).click()
+  expect(await (await second).headerValue('idempotency-key')).toBe(key)
+  await expect(page).toHaveURL(BATTLE_URL)
+  expect(count(me, friend)).toBe('1')
+})
+
+test('issue incertaine, bataille créée puis refusée avant toute relecture : la ligne garde « Défier », l\'alerte reste ; « Défier » de nouveau → une clé neuve et une seconde bataille, jamais le 201 rejoué de la première', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  await open(page)
+  const release = await lostReply(page)
+  const first = page.waitForRequest(posts)
+  await friendRow(page, friend).getByRole('button', { name: 'Défier' }).click()
+  const key = await (await first).headerValue('idempotency-key')
+  const alert = region(page, 'Défier un ami').getByRole('alert')
+  await expect(alert).toHaveText(UNSURE)
+  const old = battleOf(me)
+  act(friend, old, 'decline')
+  release()
+  // Relecture appliquée : le défi refusé compte au quota et passe sous « Terminées ».
+  await expect(page.getByText('1 / 3 défis aujourd\'hui', { exact: true })).toBeVisible()
+  await expect(alert).toHaveText(UNSURE)
+  const second = page.waitForRequest(posts)
+  await friendRow(page, friend).getByRole('button', { name: 'Défier' }).click()
+  expect(await (await second).headerValue('idempotency-key')).not.toBe(key)
+  await expect(page).toHaveURL(BATTLE_URL)
+  expect(new URL(page.url()).pathname).not.toBe(`/battle/${old}`)
+  expect(count(me, friend)).toBe('2')
+})
+
+test('réponse du défi arrivée après un départ vers « Amis » : le joueur reste sur /friends, le toast dit le défi envoyé', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  await open(page)
+  let go!: () => void
+  const gate = new Promise<void>((r) => { go = r })
+  await routeOnce(page, '**/api/battles', async (r) => {
+    await gate
+    await r.fallback()
+  }, (r) => r.request().method() === 'POST')
+  const nav = page.locator('nav a[href="/friends"]').first()
+  await hydrated(nav)
+  const sent = page.waitForRequest(posts)
+  await friendRow(page, friend).getByRole('button', { name: 'Défier' }).click()
+  await sent
+  await nav.click()
+  await expect(page).toHaveURL('/friends')
+  const answered = page.waitForResponse((r) => posts(r.request()))
+  go()
+  expect((await answered).status()).toBe(201)
+  await expect(toasts(page)).toContainText(`Défi envoyé à ${friend.username}.`)
+  expect(await page.waitForURL(BATTLE_URL, { timeout: 1_500 }).then(() => true, () => false), 'la réponse tardive a emmené le joueur vers l\'arène').toBe(false)
+  await expect(page).toHaveURL('/friends')
   expect(count(me, friend)).toBe('1')
 })
 

@@ -14,7 +14,7 @@ import { Loading } from '@/components/ui/Loading'
 import { ReadError, Section } from '@/components/ui/Section'
 import { tabKey } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
-import { api, calendarTz, UNSURE, unsure, userMessage } from '@/lib/api'
+import { api, ApiError, calendarTz, UNSURE, unsure, userMessage } from '@/lib/api'
 import { challengeFriend } from '@/lib/challenge'
 import { formatInt, formatShortDate, formatTime } from '@/lib/format'
 import { usePoll } from '@/lib/poll'
@@ -31,6 +31,10 @@ const ROW = ':scope > a'
 
 type Player = { id: string; username: string }
 type Friendship = { status: 'pending' | 'accepted'; requester_id: string; requester: Player; addressee: Player }
+// Échec du dernier défi : une issue inconnue porte l'ami et l'état de sa ligne au départ ; un refus du quota (429), son suivi par les relectures.
+type Failure = { text: string; friend?: string; open?: boolean; quota?: 'wait' | 'full' }
+
+const openIn = (battles: Battle[], friend: string) => battles.find((b) => isOpen(b) && (b.challenger_id === friend || b.opponent_id === friend))
 
 // /battle : quota du jour, « Défier un ami », batailles en cours et terminées, règles lues dans la config (M5a-16). Deux lectures
 // indépendantes, chacune avec son échec : /api/battles (au poll) et /api/friends avec la session du navigateur (P16). Aucun id fixe.
@@ -46,9 +50,9 @@ export function BattleClient() {
   const [friendsFailed, setFriendsFailed] = useState(false)
   // Un défi à la fois : aria-disabled et garde, jamais disabled.
   const [busy, setBusy] = useState(false)
-  // Échec du dernier défi (role=alert de « Défier un ami ») : un refus reste jusqu'au défi suivant (friend null) ; une issue inconnue, tant
-  // que la ligne de cet ami garde l'état pris au départ (bataille ouverte ou non).
-  const [error, setError] = useState<{ text: string; friend: string | null; open: boolean } | null>(null)
+  // Échec du dernier défi (role=alert de « Défier un ami »), effacé par la relecture qui change ce qu'il décrit (readBattles), sinon par le
+  // défi suivant.
+  const [error, setError] = useState<Failure | null>(null)
   const inflight = useRef(false)
   const keys = useRef(new Map<string, string>())
   // Générations : une lecture partie avant la dernière (poll lent, réaffichage) ne remet pas l'ancien état.
@@ -58,6 +62,8 @@ export function BattleClient() {
   const panel = useRef<HTMLDivElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const friendsTitle = useRef<HTMLHeadingElement>(null)
+  // Page affichée : Activity la cache sans la démonter ; une réponse tardive d'un défi n'emmène pas ailleurs un joueur parti entre-temps.
+  const onScreen = useRef(false)
   // Cibles du focus quand l'élément focalisé disparaît, armées par une lecture réussie ou par « Réessayer », consommées après le rendu
   // seulement si le focus est tombé sur body : rang de la bataille focalisée (ou l'onglet), ami de la ligne focalisée (ou le titre).
   const listFocus = useRef<number | 'tab' | null>(null)
@@ -80,8 +86,17 @@ export function BattleClient() {
       if (g !== listGen.current) return
       if (!r || !Array.isArray(r.battles) || !r.challenge_quota || !r.rules) return setListFailed(true)
       capture(true)
-      // Bataille ouverte avec un ami : sa ligne montre « Voir la bataille », la relance est refusée ; la clé de son défi est oubliée.
-      for (const b of r.battles.filter(isOpen)) for (const u of [b.challenger_id, b.opponent_id]) keys.current.delete(`challenge:${u}`)
+      // Bataille listée avec un ami, ouverte ou close : la clé de son défi est oubliée, faute de quoi elle rejouerait l'ancien 201. Une clé
+      // neuve est sûre : une bataille déjà ouverte avec lui rend 409 et son battle_id.
+      for (const b of r.battles) for (const u of [b.challenger_id, b.opponent_id]) keys.current.delete(`challenge:${u}`)
+      const full = r.challenge_quota.used >= r.challenge_quota.limit
+      setError((e) => {
+        // Issue inconnue : effacée dès que la ligne de l'ami change (bataille ouverte ou non) ; elle ne revient pas si la ligne change encore.
+        if (e?.friend) return !!openIn(r.battles, e.friend) !== e.open ? null : e
+        // Refus du quota : effacé quand le quota relu repasse sous la limite après l'avoir montrée atteinte.
+        if (e?.quota === 'wait' && full) return { ...e, quota: 'full' }
+        return e?.quota === 'full' && !full ? null : e
+      })
       setList(r)
       setListFailed(false)
     })
@@ -95,7 +110,8 @@ export function BattleClient() {
       createBrowserSupabase().auth.getSession().then(({ data }) => data.session?.user.id ?? null, () => null),
     ]).then(([r, uid]) => {
       if (g !== friendsGen.current) return
-      setMe(uid)
+      // Une session illisible après coup ne fait pas oublier le joueur déjà connu.
+      setMe((m) => uid ?? m ?? null)
       if (!uid || !Array.isArray(r?.friendships)) return setFriendsFailed(true)
       capture(false)
       setFriends(r.friendships.filter((f) => f.status === 'accepted').map((f) => (f.requester_id === uid ? f.addressee : f.requester)))
@@ -107,14 +123,18 @@ export function BattleClient() {
     void readBattles()
     void readFriends()
   })
-  useEffect(() => onShow(), [])
+  useEffect(() => {
+    onScreen.current = true
+    onShow()
+    return () => { onScreen.current = false }
+  }, [])
   usePoll(readBattles, 15_000)
 
   const shown = list && me ? { list, me } : null
   const listBad = listFailed || me === null
   const quota = list?.challenge_quota
   const full = !!quota && quota.used >= quota.limit
-  const openWith = (friend: string) => list?.battles.find((b) => isOpen(b) && (b.challenger_id === friend || b.opponent_id === friend))
+  const openWith = (friend: string) => list && openIn(list.battles, friend)
 
   // « Réessayer » des batailles → l'onglet sélectionné, sinon le h1 ; une bataille sortie de l'onglet sous le focus → celle de même rang,
   // sinon l'état vide.
@@ -148,11 +168,13 @@ export function BattleClient() {
     setError(null)
     try {
       const r = await challengeFriend(keys.current, f.id)
-      router.push(`/battle/${r.id}`)
+      if (onScreen.current) router.push(`/battle/${r.id}`)
       toast(r.existing ? `Une bataille est déjà en cours avec ${f.username}.` : `Défi envoyé à ${f.username}.`)
     } catch (e) {
       // Issue inconnue : clé gardée (apiOnce), la relance rejoue ; l'alerte tombe quand la relecture change la ligne. Jamais de toast.
-      setError(unsure(e) ? { text: userMessage(e, UNSURE), friend: f.id, open } : { text: userMessage(e, 'L\'action n\'a pas abouti.'), friend: null, open })
+      setError(unsure(e)
+        ? { text: userMessage(e, UNSURE), friend: f.id, open }
+        : { text: userMessage(e, 'L\'action n\'a pas abouti.'), quota: e instanceof ApiError && e.status === 429 ? 'wait' : undefined })
       void readBattles()
     } finally {
       inflight.current = false
@@ -165,6 +187,8 @@ export function BattleClient() {
     listFocus.current = 'tab'
     setListFailed(false)
     void readBattles()
+    // Sans joueur connu, la partie reste en échec : la session est relue avec les amis.
+    if (me === null) void readFriends()
   }
 
   function retryFriends() {
@@ -235,9 +259,7 @@ export function BattleClient() {
         ) : (
           <Loading label="Chargement des amis" />
         )}
-        {error && (error.friend === null || !!openWith(error.friend) === error.open) && (
-          <p role="alert" className="text-sm font-medium text-red-400">{error.text}</p>
-        )}
+        {error && <p role="alert" className="text-sm font-medium text-red-400">{error.text}</p>}
       </Section>
 
       {shown && rows ? (
