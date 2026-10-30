@@ -20,7 +20,7 @@ type Options = { baseUrl: string; apiKey?: string; max: number; deadlineMin: num
   text: 'extracts' | 'summary'; input?: QueueCard[]; store?: { url: string; key: string }; log?: (line: string) => void;
   sleep?: (ms: number) => Promise<void>; fetchImpl?: typeof fetch }
 
-// Erreur dont le message est un code (store, extracts…), seul imprimé par la CLI.
+// Erreur dont le message est un code (store, usage…), seul imprimé par la CLI.
 export class Fatal extends Error {}
 
 // Page entière, sans exintro (C12).
@@ -29,8 +29,9 @@ const MAX_TEXT = 4000
 // Coupé en fin de phrase à 4 000 caractères au plus.
 const cut = (t: string) => t.length <= MAX_TEXT ? t : (/^[\s\S]*[.!?…](?=\s|$)/.exec(t.slice(0, MAX_TEXT))?.[0] ?? t.slice(0, MAX_TEXT))
 
-// Issue d'une requête amont : questions (null : réponse 2xx illisible), arrêt du run, ou échec amont (la carte reste en file).
-type Reply = { kind: 'ok'; questions: unknown[] | null; model: string | null } | { kind: 'stop' } | { kind: 'fail' }
+// Issue d'une requête amont : questions (null : réponse 2xx illisible), arrêt du run (quota ou échéance), ou échec amont (la carte reste
+// en file).
+type Reply = { kind: 'ok'; questions: unknown[] | null; model: string | null } | { kind: 'stop' } | { kind: 'deadline' } | { kind: 'fail' }
 
 export async function run(o: Options): Promise<Summary> {
   const log = o.log ?? ((line: string) => console.log(line))
@@ -38,6 +39,8 @@ export async function run(o: Options): Promise<Summary> {
   const fetchImpl = o.fetchImpl ?? fetch
   const summary: Summary = { cards: 0, stored: 0, failed: 0, skipped: 0, rejected: {}, stopped: null }
   const end = Date.now() + o.deadlineMin * 60_000
+  // Échéance vue avant chaque requête amont, écart minimal compris : une requête partie avant elle finit avant la fin du job.
+  const due = () => Date.now() + o.minGapS * 1000 >= end
   // Peu de nouvelles tentatives, et chaque lecture courue contre l'échéance (textOf) : le client du catalogue attendrait jusqu'à 30 min.
   const wiki = createClient({ fetchImpl, sleep, maxRetries: 2 })
   const db = o.store && createDb(o.store.url, o.store.key, { auth: { persistSession: false, autoRefreshToken: false },
@@ -69,6 +72,7 @@ export async function run(o: Options): Promise<Summary> {
   async function ask(card: QueueCard, text: string, refusals?: string[]): Promise<Reply> {
     const body = JSON.stringify({ messages: messages(card, text, refusals), ...REQUEST })
     for (let waited = false; ; waited = true) {
+      if (due()) return { kind: 'deadline' }
       const wait = lastStart + o.minGapS * 1000 - Date.now()
       if (wait > 0) await sleep(wait)
       lastStart = Date.now()
@@ -113,7 +117,8 @@ export async function run(o: Options): Promise<Summary> {
     }
   }
 
-  // Texte de la carte ; null si l'échéance tombe pendant la lecture de Wikipédia.
+  // Texte de la carte ; null si l'échéance tombe pendant la lecture de Wikipédia. Une lecture en échec (réseau, 5xx répétés, erreur de
+  // l'API) prend le résumé, comme une page sans extrait : une page qui échoue toujours n'arrête pas chaque run.
   async function textOf(card: QueueCard): Promise<string | null> {
     if (o.text === 'summary' || card.page_id === null) return cut(card.summary ?? '')
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -123,7 +128,7 @@ export async function run(o: Options): Promise<Summary> {
       const body = await Promise.race([wiki.get(EXTRACT + card.page_id), late])
       pages = body === null ? null : parseExtracts(body)
     } catch {
-      throw new Fatal('extracts')
+      return cut(card.summary ?? '')
     } finally {
       clearTimeout(timer)
     }
@@ -143,7 +148,7 @@ export async function run(o: Options): Promise<Summary> {
   summary.cards = list.length
   let failures = 0
   for (const card of list) {
-    if (Date.now() >= end) {
+    if (due()) {
       summary.stopped = 'deadline'
       break
     }
@@ -171,8 +176,9 @@ export async function run(o: Options): Promise<Summary> {
     for (const attempt of [1, 2]) {
       if (attempt === 2 && kept.length >= 6) break
       const reply = await ask(card, text, attempt === 2 ? Object.keys(rejected) : undefined)
-      if (reply.kind === 'stop') {
-        summary.stopped = 'quota'
+      // Un nouvel essai coupé n'écrit rien : la carte reste en file (C12).
+      if (reply.kind === 'stop' || reply.kind === 'deadline') {
+        summary.stopped = reply.kind === 'stop' ? 'quota' : 'deadline'
         stop = true
         break
       }
@@ -181,8 +187,8 @@ export async function run(o: Options): Promise<Summary> {
         break
       }
       failures = 0
-      // Un second 2xx sans model garde celui du premier : quiz_store refuserait un model vide.
-      model = reply.model ?? model
+      // Un second 2xx sans model (ou au model vide) garde celui du premier : quiz_store refuserait un model vide.
+      model = reply.model || model
       const v = reply.questions ? validate([...kept, ...reply.questions], ctx) : { kept, rejected: { json: 1 } }
       kept = v.kept
       add(rejected, v.rejected)

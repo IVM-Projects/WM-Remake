@@ -194,12 +194,15 @@ test('page sans extrait → le résumé', async () => {
   expect([wiki.length, articleOf(upstream[0])]).toEqual([1, card.summary])
 })
 
-test('exception du client Wikimedia → Fatal extracts, ni quiz_fail ni appel amont', async () => {
-  const page = { ...card, page_id: 4242 }
-  const { fetchImpl, upstream, rpc } = stub({ card: page, wikiReply: () => new Response('', { status: 404 }) })
-  await expect(run({ ...base, ...quiet, dryRun: false, store, text: 'extracts', baseUrl: 'http://amont.test/v1', fetchImpl }))
-    .rejects.toThrow('extracts')
-  expect([rpc.map((r) => r.fn), upstream.length]).toEqual([['quiz_next'], 0])
+test('client Wikimedia en échec (trois 503 de suite, puis une 404) → chaque carte traitée sur son résumé, le run continue', async () => {
+  const pages = [{ ...card, page_id: 4242 }, { ...cards[1], page_id: 4243 }]
+  let n = 0
+  const ok = (c: QueueCard) => () => questions(fakeQuestions(c.summary ?? '', c.title))
+  const { fetchImpl, upstream, wiki } = stub({ replies: [ok(pages[0]), ok(pages[1])],
+    wikiReply: () => new Response('', { status: ++n <= 3 ? 503 : 404 }) })
+  const s = await run({ ...base, ...quiet, text: 'extracts', baseUrl: 'http://amont.test/v1', input: pages, fetchImpl })
+  expect(s).toMatchObject({ cards: 2, stored: 2, failed: 0, stopped: null })
+  expect([wiki.length, upstream.map(articleOf)]).toEqual([4, [pages[0].summary, pages[1].summary]])
 })
 
 test('échéance pendant la lecture de Wikipédia → stopped deadline, sans attendre la réponse ni appeler l\'amont', async () => {
@@ -225,10 +228,38 @@ test('échéance lue avant chaque carte : passée pendant la première → la se
   expect(upstream).toHaveLength(1)
 })
 
-test('nouvel essai dont le 2xx n\'a pas de model → quiz_store reçoit celui du premier', async () => {
-  const { fetchImpl, rpc } = stub({ card, replies: [() => questions(qs.slice(0, 4)), () => questions(qs.slice(4, 6), null)] })
+test.each([null, ''])('nouvel essai dont le 2xx a le model %j → quiz_store reçoit celui du premier', async (second) => {
+  const { fetchImpl, rpc } = stub({ card, replies: [() => questions(qs.slice(0, 4)), () => questions(qs.slice(4, 6), second)] })
   expect(await run({ ...base, ...quiet, dryRun: false, store, baseUrl: 'http://amont.test/v1', fetchImpl })).toMatchObject({ stored: 1, failed: 0 })
   expect(rpc.find((r) => r.fn === 'quiz_store')?.args).toMatchObject({ p_model: 'fake-quiz' })
+})
+
+// Échéance vue avant chaque requête amont, écart minimal compris (C12 : un arrêt n'écrit rien, la carte reste en file).
+test('échéance plus proche que l\'écart minimal en tête de carte → stopped deadline, ni lecture ni appel amont', async () => {
+  const page = { ...card, page_id: 4242 }
+  const { fetchImpl, upstream, wiki } = stub({ card: page, replies: [() => questions(qs)] })
+  const s = await run({ ...base, ...quiet, deadlineMin: 0.4, minGapS: 30, text: 'extracts', baseUrl: 'http://amont.test/v1', input: [page],
+    fetchImpl })
+  expect(s).toMatchObject({ cards: 1, stored: 0, failed: 0, stopped: 'deadline' })
+  expect([wiki.length, upstream.length]).toEqual([0, 0])
+})
+
+test.each([
+  ['avant le nouvel essai', () => questions(qs.slice(0, 4))],
+  ['avant la relance d\'un 429 à Retry-After 5', () => new Response('{}', { status: 429, headers: { 'retry-after': '5' } })],
+])('échéance passée pendant le premier appel → arrêt %s, stopped deadline, ni quiz_store ni quiz_fail', async (_label, first) => {
+  const { fetchImpl, upstream, rpc } = stub({ card, replies: [() => {
+    vi.setSystemTime(Date.now() + 6 * 60_000)
+    return first()
+  }, () => questions(qs.slice(4, 6))] })
+  vi.useFakeTimers({ toFake: ['Date'] })
+  try {
+    const s = await run({ ...base, ...quiet, dryRun: false, store, deadlineMin: 5, baseUrl: 'http://amont.test/v1', fetchImpl })
+    expect(s).toMatchObject({ cards: 1, stored: 0, failed: 0, stopped: 'deadline' })
+  } finally {
+    vi.useRealTimers()
+  }
+  expect([upstream.length, rpc.map((r) => r.fn)]).toEqual([1, ['quiz_next']])
 })
 
 test('minGapS 30 → sleep(30000) entre deux appels', async () => {
@@ -261,7 +292,7 @@ test('corps envoyé : messages, response_format, temperature et max_tokens seuls
 
 // Review Focus : lignes JSON de formes connues, valeurs texte sans contenu de quiz (PF9 : valeurs de stopped comprises).
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const WORDS = new Set<string>([...RULES, 'short_text', 'count', 'fake-quiz', 'quota', 'network', 'deadline', 'store', 'extracts', 'input',
+const WORDS = new Set<string>([...RULES, 'short_text', 'count', 'fake-quiz', 'quota', 'network', 'deadline', 'store', 'input',
   'env', 'usage', 'internal'])
 const SHAPES = [['card_id', 'kept', 'model', 'ms', 'ok', 'rejected'], ['summary'], ['fatal']]
 const strings = (v: unknown): string[] => typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : []

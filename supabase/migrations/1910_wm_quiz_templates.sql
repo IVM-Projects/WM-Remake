@@ -325,10 +325,11 @@ begin
   v_out := (select coalesce(jsonb_agg(e order by i), '[]') from jsonb_array_elements(v_out) with ordinality t (e, i)
     where i <= (b ->> 'pool')::int);
   if jsonb_array_length(v_out) < (b ->> 'questions')::int then
-    -- shortcut: une carte sans texte utile n'a que T5, dont chaque question demande une autre combinaison de 4 titres aux vues
-    -- distinctes : un pool de moins de 5 cartes, ou une rareté de 4 (5 pour un titre de plus de 80 caractères, qui prend 4 pairs), n'en
-    -- a qu'une. À 5 et 6 cartes, pairs sans remise et rejeu de T5 n'ont manqué aucun des 14 000 appels mesurés (13 % de manques avant
-    -- eux à 5 cartes) ; jamais sur la démo, dont la plus petite rareté compte environ 77 cartes.
+    -- shortcut: une carte sans texte utile n'a que T5 (une carte à catégorie sans résumé, T1 et T5), dont chaque question demande une
+    -- autre combinaison de 4 titres aux vues distinctes : une rareté de 4 cartes, ou un pool de repli de moins de 5 (pour un titre de plus
+    -- de 80 caractères, qui prend 4 pairs : une rareté de 5, ou un pool de repli de moins de 6), n'en a qu'une. À 5 et 6 cartes, pairs
+    -- sans remise et rejeu de T5 n'ont manqué aucun des 14 000 appels mesurés (13 % de manques avant eux à 5 cartes) ; jamais sur la
+    -- démo, dont la plus petite rareté compte environ 77 cartes.
     raise exception 'template_quiz : % questions pour la carte %', jsonb_array_length(v_out), p_card_id using errcode = 'XX000';
   end if;
   return v_out;

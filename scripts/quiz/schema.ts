@@ -13,8 +13,10 @@ export type Rule = (typeof RULES)[number]
 export const norm = (s: string): string => s.toLowerCase().replaceAll('œ', 'oe').replaceAll('æ', 'ae').normalize('NFD')
   .replace(/\p{M}/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
 
+// Texte que jsonb accepte : ni U+0000 ni surrogate isolé (PostgreSQL refuserait l'appel de quiz_store en citant la question à son journal).
+const Str = z.string().refine((s) => s.isWellFormed() && !s.includes('\u0000'))
 // z.object retire les clés en plus : quiz_store ajoute kind et refuse toute autre clé.
-const Shape = z.object({ prompt: z.string(), options: z.array(z.string()).length(4), correct: z.int().min(0).max(3), evidence: z.string() })
+const Shape = z.object({ prompt: Str, options: z.array(Str).length(4), correct: z.int().min(0).max(3), evidence: Str })
 // Longueurs en caractères, comme char_length.
 const len = (s: string) => [...s].length
 const LINK = /https?:\/\/|www\.|@/i

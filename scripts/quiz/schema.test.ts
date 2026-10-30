@@ -28,6 +28,10 @@ test('deux questions valides : toutes deux gardées, aucun refus', () => {
 test.each<[Rule, string, unknown]>([
   ['shape', '3 options', { ...second, options: ['delta', 'estuaire', 'barrage'] }],
   ['shape', 'correct à 4', { ...second, correct: 4 }],
+  // Chaînes que jsonb refuse : norm en ferait une espace, la question passerait toutes les autres règles.
+  ['shape', 'U+0000 dans l\'evidence', { ...second, evidence: `${second.evidence}\u0000` }],
+  ['shape', 'surrogate isolé dans l\'énoncé', { ...second, prompt: `${second.prompt} \ud83d` }],
+  ['shape', 'U+0000 dans une option', { ...second, options: ['delta', 'estuaire', 'barrage', 'port\u0000'] }],
   ['lengths', 'énoncé de 6', { ...second, prompt: 'Quoi ?' }],
   ['distinct', 'Delta, delta !', { ...second, options: ['estuaire', 'Delta', 'delta !', 'port'], correct: 0 }],
   ['evidence_source', 'evidence hors du texte', { ...second, evidence: 'Son estuaire s\'ouvre sur la mer du Nord, près de Calais.' }],
