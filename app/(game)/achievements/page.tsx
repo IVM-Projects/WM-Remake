@@ -1,10 +1,14 @@
 import type { Metadata } from 'next'
 import { navEntry } from '@/components/shell/nav'
-import { ComingSoon } from '@/components/shell/PageHeader'
+import { AchievementsClient } from './achievements-client'
 
-const entry = navEntry('/achievements')
-export const metadata: Metadata = { title: entry.title }
+export const metadata: Metadata = { title: navEntry('/achievements').title }
 
+// Coquille statique ; le catalogue et les succès du joueur se lisent au client (REST sous RLS).
 export default function AchievementsPage() {
-  return <ComingSoon entry={entry} />
+  return (
+    <div className="flex-1 p-4 md:p-6 space-y-6">
+      <AchievementsClient />
+    </div>
+  )
 }

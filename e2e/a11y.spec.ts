@@ -50,6 +50,8 @@ const READY: Record<string, string> = {
   '/battle/[id]': 'main [data-ready]',
   // État de la guilde lu (ou l'échec) ; l'identité du joueur vient de son adhésion, pas d'une lecture de session.
   '/guild': 'main [data-ready]',
+  // Les deux lectures REST des succès faites (ou l'échec).
+  '/achievements': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -58,9 +60,9 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
-  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild']) {
+  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements']) {
   test(`axe ${path}`, async ({ page, login }) => {
-    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild'].includes(path)) await login()
+    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements'].includes(path)) await login()
     // Adresse posée par /login (compte non confirmé) dans sessionStorage, jamais dans l'URL.
     if (path === '/verify-email') await page.addInitScript(() => sessionStorage.setItem('wm.verifyEmail', 'a11y@test.local'))
     await page.goto(path)
@@ -545,4 +547,17 @@ test('axe /guild : Chat (deux messages), Entraide (un souhait, modale « Donner 
     if (guild) sql(`delete from public.guilds where id = :'g'`, { g: guild })
     sql(`delete from auth.users where id in (:'me', :'m')`, { me: me.uid, m: mate.uid })
   }
+})
+
+test('axe /achievements : un succès verrouillé, un à réclamer, un réclamé', async ({ page, login }) => {
+  const me = await login()
+  giveCopies(me, 'C', 50)
+  sql(`select wm.achievements_check(:'u')`, { u: me.uid })
+  sql(`select wm.achievements_claim(:'u', md5('wm-ach:first_c')::uuid)`, { u: me.uid })
+  await page.goto('/achievements')
+  await page.locator(READY['/achievements']).waitFor()
+  await expect(page.getByRole('button', { name: 'Réclamer' }).first()).toBeVisible()
+  await expect(page.getByText(/^Réclamé le /).first()).toBeVisible()
+  await expect(page.getByText('Verrouillé').first()).toBeVisible()
+  await expectNoSeriousViolations(page)
 })
