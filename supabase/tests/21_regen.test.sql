@@ -51,9 +51,17 @@ do $$ declare u uuid := tests.make_user('Regen6'); c tid; p public.profiles; beg
   assert (select ctid from public.profiles where id = u) = c and p.packs_remaining = 3 and p.packs_last_regen_at = now(), 'horloge réécrite';
 end $$;
 
--- Nouveau compte (trigger : 1/10, sans date) : la première synchro démarre l'horloge ; une période plus tard, 2 paquets.
-do $$ declare u uuid := tests.make_user('Newbie'); r record; begin
-  assert (select packs_remaining = 1 and packs_last_regen_at is null from public.profiles where id = u), 'état de départ inattendu';
+-- Nouveau compte (trigger : 10/10, sans date) : la synchro n'écrit rien et n'annonce aucun paquet. Puis 1/10 sans date (dotation
+-- d'avant 1870, posée ici) : la première synchro démarre l'horloge ; une période plus tard, 2 paquets.
+do $$ declare u uuid := tests.make_user('Newbie'); c tid; r record; begin
+  assert (select packs_remaining = 10 and packs_last_regen_at is null from public.profiles where id = u), 'état de départ inattendu';
+  c := (select ctid from public.profiles where id = u);
+  perform tests.login(u);
+  select * into strict r from public.sync_profile_packs(u);
+  assert r.packs_remaining = 10 and r.packs_last_regen_at is null and r.next_regen_at is null, r::text;
+  perform tests.reset_role();
+  assert (select ctid from public.profiles where id = u) = c, 'stock plein réécrit';
+  update public.profiles set packs_remaining = 1, packs_last_regen_at = null where id = u;
   perform tests.login(u);
   select * into strict r from public.sync_profile_packs(u);
   assert r.packs_remaining = 1 and r.packs_last_regen_at = now() and r.next_regen_at = now() + interval '600 seconds', r::text;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Page } from '@playwright/test'
+import type { Page, Request } from '@playwright/test'
 import { formatMonthYear } from '../lib/format.ts'
 import { befriend, expect, giveCopies, hydrated, imageCopy, makePlayer, routeOnce, sql, test } from './fixtures'
 
@@ -45,6 +45,14 @@ const reportOf = (from: User, to: User) => sql(`select coalesce(string_agg(reaso
 from public.reports where reporter_id = :'f' and reported_user_id = :'t'`, { f: from.uid, t: to.uid })
 const FAILS = [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }]] as const
 const LOAD_FAILED = 'Impossible de charger cette page.'
+// Contrôles de l'en-tête de la page visible (le bloc qui suit le h1), dans l'ordre.
+const actions = (page: Page) => page.locator('main h1 + div').filter({ visible: true }).locator('a, button')
+const posts = (r: Request) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/battles'
+const battlesOf = (u: User) => sql(`select count(*) from public.battles where challenger_id = :'uid'`, { uid: u.uid })
+const BATTLE_URL = /\/battle\/[0-9a-f-]{36}$/
+const LIMIT = 'Limite quotidienne de défis atteinte'
+// Cible de 44 px à 0,01 près : la mise en page tombe parfois juste sous le pixel (43,99999 px vu une fois sur trois runs).
+const MIN_TARGET = 44 - 0.01
 
 test('soi : h1 = son pseudo, « Membre depuis <mois année> », « Modifier mon profil » vers /profile, ni « Ajouter en ami » ni « Signaler »', async ({ page, login }) => {
   const me = await viewer(login)
@@ -88,16 +96,18 @@ select card_id, 'Zz.jpg', 'Jean Dupont', 'CC BY-SA 4.0', 'https://creativecommon
   await expect(panel(page).getByRole('searchbox', { name: 'Rechercher dans sa collection' })).toBeVisible()
 })
 
-test('inconnu public : « Ajouter en ami » au clavier → toast, le focus sur « Demande envoyée »', async ({ page, login }) => {
+test('inconnu public : aucun « Défier » ; « Ajouter en ami » au clavier → toast, le focus sur « Demande envoyée », toujours sans « Défier »', async ({ page, login }) => {
   await viewer(login)
   const owner = player()
   await open(page, owner.username)
+  await expect(page.getByRole('button', { name: 'Défier' })).toHaveCount(0)
   const add = page.getByRole('button', { name: 'Ajouter en ami' })
   await add.focus()
   await page.keyboard.press('Enter')
   await expect(toasts(page)).toContainText(`Demande envoyée à ${owner.username}.`)
   await expect(add).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => document.activeElement?.textContent)).toBe('Demande envoyée')
+  await expect(page.getByRole('button', { name: 'Défier' })).toHaveCount(0)
 })
 
 test('réponse perdue sur « Ajouter en ami » : la relecture montre la demande ; retirée ailleurs, relue au retour, une demande neuve part', async ({ page, login }) => {
@@ -213,15 +223,119 @@ test('demande reçue d\'un joueur au profil privé : aucun onglet ; « Accepter 
   await expect(page.getByRole('link', { name: 'Message', exact: true })).toBeFocused()
 })
 
-test('ami : « Message » vers /dms?with=<id>, « Proposer un échange » vers /trades/new?with=<id>, et « Signaler »', async ({ page, login }) => {
+test('ami : « Message » vers /dms?with=<id>, « Proposer un échange » vers /trades/new?with=<id>, « Défier » juste après, et « Signaler »', async ({ page, login }) => {
   const me = await viewer(login)
   const friend = player()
   befriend(me, friend)
   await open(page, friend.username)
+  await expect(actions(page)).toHaveText(['Message', 'Proposer un échange', 'Défier', 'Signaler'])
   await expect(page.getByRole('link', { name: 'Message', exact: true })).toHaveAttribute('href', `/dms?with=${friend.uid}`)
   await expect(page.getByRole('link', { name: 'Proposer un échange' })).toHaveAttribute('href', `/trades/new?with=${friend.uid}`)
   await expect(page.getByRole('button', { name: 'Signaler' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Ajouter en ami' })).toHaveCount(0)
+})
+
+test('ami, « Défier » au clavier → /battle/<id>, le toast, le h2 de l\'arène ; de nouveau depuis le profil (goBack) → « Une bataille est déjà en cours avec <pseudo>. », la même arène', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  await open(page, friend.username)
+  const challenge = page.getByRole('button', { name: 'Défier' })
+  await challenge.focus()
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(BATTLE_URL)
+  await expect(page.getByRole('heading', { level: 2, name: `${me.username} contre ${friend.username}`, exact: true })).toBeVisible()
+  await expect(toasts(page)).toContainText(`Défi envoyé à ${friend.username}.`)
+  const arena = page.url()
+  expect(sql(`select id from public.battles where challenger_id = :'a' and opponent_id = :'b'`, { a: me.uid, b: friend.uid }))
+    .toBe(new URL(arena).pathname.split('/').pop())
+
+  await page.goBack()
+  await expect(h1(page)).toHaveText(friend.username)
+  await challenge.focus()
+  await page.keyboard.press('Enter')
+  await expect(toasts(page)).toContainText(`Une bataille est déjà en cours avec ${friend.username}.`)
+  await expect(page).toHaveURL(arena)
+  expect(battlesOf(me)).toBe('1')
+})
+
+test('« Défier » refusé (429 forcé) : l\'alerte sous les actions, le focus reste sur « Défier », aucune bataille ; issue incertaine (500 sans le serveur) → le texte d\'incertitude ; de nouveau → la même Idempotency-Key, l\'arène', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const keys: string[] = []
+  page.on('request', (r) => { if (posts(r)) keys.push(r.headers()['idempotency-key'] ?? '') })
+  await open(page, friend.username)
+  const challenge = page.getByRole('button', { name: 'Défier' })
+  const alert = page.locator('main').getByRole('alert')
+  await routeOnce(page, '**/api/battles', (r) => r.fulfill({ status: 429, json: { status: 429, error: LIMIT, message: LIMIT } }),
+    (r) => r.request().method() === 'POST')
+  await challenge.focus()
+  await page.keyboard.press('Enter')
+  await expect(alert).toHaveText(LIMIT)
+  await expect(challenge).toBeFocused()
+  await expect(page).toHaveURL(at(friend.username))
+  expect(battlesOf(me)).toBe('0')
+
+  await routeOnce(page, '**/api/battles', (r) => r.fulfill({ status: 500 }), (r) => r.request().method() === 'POST')
+  await page.keyboard.press('Enter')
+  await expect(alert).toHaveText(UNSURE)
+  await expect(challenge).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(BATTLE_URL)
+  await expect(alert).toHaveCount(0)
+  expect(keys).toHaveLength(3)
+  expect(keys[2]).toBe(keys[1])
+  expect(keys[1]).not.toBe(keys[0])
+  expect(battlesOf(me)).toBe('1')
+})
+
+test('relecture du profil partie avant « Défier » (affichage par goBack, retenue) : son retour n\'efface ni l\'alerte d\'incertitude ni la clé ; de nouveau → la même Idempotency-Key, l\'arène', async ({ page, login }) => {
+  const me = await viewer(login)
+  const friend = player()
+  befriend(me, friend)
+  const keys: string[] = []
+  page.on('request', (r) => { if (posts(r)) keys.push(r.headers()['idempotency-key'] ?? '') })
+  await open(page, friend.username)
+  const nav = page.locator('nav a[href="/friends"]').first()
+  await hydrated(nav)
+  await nav.click()
+  await expect(page).toHaveURL('/friends')
+  // La relecture du profil à son affichage est retenue jusqu'à release().
+  const path = `/api/profile/${encodeURIComponent(friend.username)}`
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  let reached!: () => void
+  const waiting = new Promise<void>((r) => { reached = r })
+  await routeOnce(page, (u) => u.pathname === path, async (r) => {
+    reached()
+    await held
+    await r.fallback()
+  })
+  await page.goBack()
+  await expect(h1(page)).toHaveText(friend.username)
+  await waiting
+  const challenge = page.getByRole('button', { name: 'Défier' })
+  const alert = page.locator('main').getByRole('alert')
+  const reread = page.waitForResponse((r) => new URL(r.url()).pathname === path)
+  try {
+    await routeOnce(page, '**/api/battles', (r) => r.fulfill({ status: 500 }), (r) => r.request().method() === 'POST')
+    await challenge.focus()
+    await page.keyboard.press('Enter')
+    await expect(alert).toHaveText(UNSURE)
+  } finally {
+    release()
+  }
+  await reread
+  // Le temps que la lecture reçue soit appliquée (une alerte effacée à tort aurait disparu).
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  await expect(alert).toHaveText(UNSURE)
+  await challenge.focus()
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(BATTLE_URL)
+  expect(keys).toHaveLength(2)
+  expect(keys[1]).toBe(keys[0])
+  expect(battlesOf(me)).toBe('1')
 })
 
 test('signalement au clavier : un seul arrêt de tabulation pour le motif, flèches, détails, envoi ; rouvert, prérempli', async ({ page, login }) => {
@@ -414,7 +528,9 @@ for (const [label, reply] of FAILS) {
     const owner = player()
     giveCopies(owner, 'C')
     await open(page, owner.username)
-    await routeOnce(page, (u) => u.pathname.endsWith('/collection'), (r) => r.fulfill(reply))
+    // La lecture de l'API seule : un prédicat sur « /collection » prendrait aussi le prefetch du lien de navigation.
+    await routeOnce(page, (u) => u.pathname === `/api/profile/${owner.username}/collection`, (r) => r.fulfill(reply),
+      (r) => r.request().method() === 'GET')
     await tabs(page).getByRole('tab', { name: 'Collection' }).click()
     await expect(panel(page).getByRole('alert')).toHaveText(LOAD_FAILED)
     await panel(page).getByRole('button', { name: 'Réessayer' }).click()
@@ -452,11 +568,11 @@ test('360 px, un ami au pseudo de 24 caractères et à la bio d\'un seul mot de 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   const main = page.locator('main')
   const targets = main.getByRole('button').or(main.getByRole('link', { name: /^(Message|Proposer un échange)$/ })).or(main.getByRole('tab'))
-  // Message, Proposer un échange, Signaler, Vitrine, Collection, la carte de la vitrine.
-  await expect(targets).toHaveCount(6)
+  // Message, Proposer un échange, Défier, Signaler, Vitrine, Collection, la carte de la vitrine.
+  await expect(targets).toHaveCount(7)
   for (const target of await targets.all()) {
     const box = (await target.boundingBox())!
-    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)
+    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(MIN_TARGET)
   }
   // Titre de la modale au pseudo sans coupure : il passe à la ligne, la boîte ne déborde pas.
   await page.getByRole('button', { name: 'Signaler' }).click()
@@ -903,7 +1019,7 @@ from public.user_cards uc join public.cards k on k.id = uc.card_id where uc.id =
   await expect(targets).toHaveCount(9)
   for (const target of await targets.all()) {
     const box = (await target.boundingBox())!
-    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)
+    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(MIN_TARGET)
   }
   await region(page, 'Avatar').getByRole('button', { name: 'Changer l\'avatar' }).click()
   const dialog = page.getByRole('dialog', { name: 'Choisir ton avatar' })

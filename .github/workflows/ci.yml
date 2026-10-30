@@ -35,7 +35,7 @@ jobs:
   integration:
     needs: checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 20 # C31 : budget Actions
+    timeout-minutes: 30 # C31 remplacé par M2-R1 : dépôt public, minutes gratuites ; apt de --with-deps jusqu'à 14 min 31 s (C24 du M5a)
     services:
       postgres:
         image: postgres:17

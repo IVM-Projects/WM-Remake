@@ -17,6 +17,18 @@ export const AuctionParams = z.object({ auctionId: z.uuid() })
 export const FriendshipParams = z.object({ friendshipId: z.uuid() })
 export const TradeParams = z.object({ tradeId: z.uuid() })
 export const PeerParams = z.object({ peerId: z.uuid() })
+export const BattleParams = z.object({ battleId: z.uuid() })
+export const BattleCreate = z.object({ opponent_id: z.uuid() })
+// Corps de PATCH /api/battles/{battleId}, passé entier en p_payload ; questionId et answerId en camelCase (R:277), règles métier en SQL (P11).
+export const BattleAction = z.object({
+  action: pgText,
+  card_ids: z.array(z.uuid()).max(10).optional(),
+  attack_card_id: z.uuid().optional(),
+  questionId: z.uuid().optional(),
+  answerId: z.uuid().optional(),
+  // forfeit : la phase confirmée par la modale (annulation ou défaite), 409 en SQL si elle a changé.
+  expect: z.enum(['cancel', 'lose']).optional(),
+})
 // Corps de POST /api/trades, partagé avec le composer. items : une unité par élément, deux côtés × 100 ; les plafonds par côté et leurs
 // messages français sont des règles SQL (P11).
 export const TradeBody = z.object({

@@ -142,6 +142,20 @@ test('notificationView : chat_message → « Alice t\'a écrit », lien du fil (
   expect(notificationView(n('chat_message', { user_id: 'u-1', username: 'Alice' }))).toEqual({ text: 'Alice t\'a écrit', href: '/dms?with=u-1' })
 })
 
+test('notificationView : les sept types battle_* (data de wm.notify_battle) → leur texte, lien vers l\'arène', () => {
+  const b = { battle_id: 'b-1', user_id: 'u-1', username: 'Alice' }
+  const types = ['battle_invite', 'battle_accepted', 'battle_declined', 'battle_started', 'battle_attacked', 'battle_won', 'battle_lost']
+  expect(types.map((type) => notificationView(n(type, b)))).toEqual([
+    { text: 'Alice te défie en bataille', href: '/battle/b-1' },
+    { text: 'Alice a accepté ton défi', href: '/battle/b-1' },
+    { text: 'Alice a refusé ton défi', href: '/battle/b-1' },
+    { text: 'Alice a choisi ses cartes : la bataille commence', href: '/battle/b-1' },
+    { text: 'Alice t\'attaque : à toi de répondre', href: '/battle/b-1' },
+    { text: 'Victoire contre Alice', href: '/battle/b-1' },
+    { text: 'Défaite contre Alice', href: '/battle/b-1' },
+  ])
+})
+
 test('PUSH_FAMILIES aplati et trié = pushTypes() = push_types de 1800 ; chaque type a son texte', () => {
   const sql = readFileSync(new URL('../supabase/migrations/1800_wm_social_core.sql', import.meta.url), 'utf8')
   const seeded: unknown = JSON.parse(/'push_types',\s*'(\[[^']*\])'/.exec(sql)?.[1] ?? 'null')

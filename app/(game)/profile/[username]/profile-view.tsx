@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { Card } from '@/components/card/Card'
 import { CardModal, type CatalogCard } from '@/components/card/CardModal'
@@ -17,6 +17,7 @@ import { Pagination } from '@/components/ui/Pagination'
 import { tabKey } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
 import { api, ApiError, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
+import { afterChallenge, challengeFriend } from '@/lib/challenge'
 import { formatInt, formatMonthYear } from '@/lib/format'
 import { RARITY, type RarityCode } from '@/lib/rarity'
 
@@ -35,7 +36,7 @@ type Extra = { showcase: ShowcaseItem[]; counts: Record<RarityCode, number> } | 
 // Lecture qui suit le profil : 403 → 'private' ; autre échec → null, comme un 2xx au corps illisible (api() rend null).
 const follow = <T,>(path: string) => api<T | null>(path).catch((e) => (e instanceof ApiError && e.status === 403 ? 'private' as const : null))
 
-// /profile/[username] (M4b-24) : identité, vitrine et collection quand la vue est permise, amitié, message, échange, signalement.
+// /profile/[username] (M4b-24) : identité, vitrine et collection quand la vue est permise, amitié, message, échange, défi, signalement.
 // Aucun polling : relu à chaque affichage (Activity compris), après chaque action et sur « Réessayer ».
 export function ProfileView() {
   // Cachée par Activity, la page se rend avec les paramètres de la page visible : son pseudo est figé au montage. Il arrive encodé
@@ -43,6 +44,7 @@ export function ProfileView() {
   const { username: u } = useParams<{ username: string }>()
   const [username] = useState(u)
   const id = useId()
+  const router = useRouter()
   const [view, setView] = useState<View | null>(null)
   const [extra, setExtra] = useState<Extra | null>(null)
   const [missing, setMissing] = useState(false)
@@ -52,16 +54,22 @@ export function ProfileView() {
   const [reporting, setReporting] = useState(false)
   // Une action à la fois, jusqu'à sa relecture : aria-disabled et garde, jamais disabled.
   const [busy, setBusy] = useState(false)
+  // Échec du dernier « Défier » (role=alert sous les actions), effacé par le défi suivant ou une relecture réussie.
+  const [error, setError] = useState<string | null>(null)
   const inflight = useRef(false)
   const keys = useRef(new Map<string, string>())
   // Génération : une lecture tardive n'écrase pas une plus récente (réaffichage pendant la relecture d'une action).
   const gen = useRef(0)
+  // Génération courante au dernier « Défier » : une lecture partie avant lui n'efface ni son alerte ni sa clé.
+  const since = useRef(0)
   const title = useRef<HTMLHeadingElement>(null)
   const lost = useRef<HTMLHeadingElement>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
   const actions = useRef<HTMLDivElement>(null)
   // Cible du focus après la lecture que l'on attend, s'il est tombé sur body : le contrôle d'amitié (action) ou le h1 (« Réessayer »).
   const refocus = useRef<'act' | 'retry' | null>(null)
+  // Page affichée : Activity la cache sans la démonter ; une réponse tardive d'un défi n'emmène pas ailleurs un joueur parti entre-temps.
+  const onScreen = useRef(false)
 
   const readExtra = (g: number) => Promise.all([
     follow<{ showcase: ShowcaseItem[] }>(`/api/profile/${username}/showcase`),
@@ -80,8 +88,12 @@ export function ProfileView() {
       if (g !== gen.current) return
       // 2xx au corps illisible ou sans profile : une lecture en échec ; le profil affiché reste.
       if (!r?.profile) return setFailed(true)
-      // État du serveur relu : une relance est une nouvelle intention, refusée par l'amitié relue si elle a déjà eu lieu.
-      keys.current.clear()
+      // État du serveur relu : une relance est une nouvelle intention, refusée par l'amitié relue si elle a déjà eu lieu (un défi déjà
+      // ouvert : 409 et sa bataille).
+      if (g > since.current) {
+        keys.current.clear()
+        setError(null)
+      }
       setView(r)
       setMissing(false)
       setFailed(false)
@@ -95,7 +107,11 @@ export function ProfileView() {
     })
   }
   const onShow = useEffectEvent(() => void read())
-  useEffect(() => onShow(), [])
+  useEffect(() => {
+    onScreen.current = true
+    onShow()
+    return () => { onScreen.current = false }
+  }, [])
 
   // Le contrôle focalisé a disparu (action faite, « Réessayer » sous le clic) : le focus tombé sur body va au contrôle d'amitié revenu, au
   // h1, à « Joueur introuvable » ou au « Réessayer » revenu. Rien si le joueur l'a mis ailleurs.
@@ -122,6 +138,25 @@ export function ProfileView() {
     }
     refocus.current = 'act'
     await read()
+    inflight.current = false
+    setBusy(false)
+  }
+
+  // « Défier » (M5a-15), même suite que le lobby. Échec : l'alerte, « Défier » reste et garde le focus ; issue inconnue : clé gardée
+  // (apiOnce), la relance rejoue. Aucune relecture : le profil ne montre aucune bataille.
+  async function challenge(to: { id: string; username: string }) {
+    if (inflight.current) return
+    inflight.current = true
+    since.current = gen.current
+    setBusy(true)
+    setError(null)
+    try {
+      // onScreen lu après la réponse : une réponse tardive n'emmène pas ailleurs un joueur parti entre-temps.
+      const r = await challengeFriend(keys.current, to.id)
+      afterChallenge(router, r, to.username, onScreen.current)
+    } catch (e) {
+      setError(userMessage(e, unsure(e) ? UNSURE : 'L\'action n\'a pas abouti.'))
+    }
     inflight.current = false
     setBusy(false)
   }
@@ -176,6 +211,7 @@ export function ProfileView() {
                     <>
                       <Link href={`/dms?with=${p.id}`} className={primary}>Message</Link>
                       <Link href={`/trades/new?with=${p.id}`} className={ghost}>Proposer un échange</Link>
+                      <button type="button" aria-disabled={busy || undefined} onClick={() => void challenge(p)} className={ghost}>Défier</button>
                     </>
                   ) : !f ? (
                     <button
@@ -205,6 +241,7 @@ export function ProfileView() {
               )}
             </div>
           </PageHeader>
+          {error && <p role="alert" className="text-sm font-medium text-red-400">{error}</p>}
 
           <div className="card-frame flex flex-wrap items-center gap-6 p-6">
             <Avatar url={p.avatar_url} name={p.username} size="lg" />

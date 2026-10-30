@@ -8,7 +8,7 @@ export type RouteSpec = {
   path: string // paramètres en {nom}
   source: string // ex. '§3.5 · S 2926-2940' ou 'D§8.3'
   confidence: 'conf.' | 'prob.' | 'inc.' | 'ajouté'
-  cases: Array<{ name: string; run: (env: ContractEnv) => Promise<void> }>
+  cases: Array<{ name: string; run: (env: ContractEnv) => Promise<void>; timeout?: number }>
 }
 
 export type RecapRoute = { method: string; path: string; section: string }
