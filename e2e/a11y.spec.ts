@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { befriend, expect, giveCopies, imageCopy, makePlayer, sql, test } from './fixtures'
+import { befriend, expect, giveCopies, imageCopy, makeGuild, makePlayer, sql, test } from './fixtures'
 import { stubPush } from './push-stub'
 
 type Known = { rule: string; selector: string }
@@ -48,6 +48,8 @@ const READY: Record<string, string> = {
   '/battle': 'main [data-ready]',
   // Bataille lue (ou introuvable, ou en échec), session connue.
   '/battle/[id]': 'main [data-ready]',
+  // Guilde et session lues (ou en échec).
+  '/guild': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -56,9 +58,9 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
-  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle']) {
+  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild']) {
   test(`axe ${path}`, async ({ page, login }) => {
-    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle'].includes(path)) await login()
+    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild'].includes(path)) await login()
     // Adresse posée par /login (compte non confirmé) dans sessionStorage, jamais dans l'URL.
     if (path === '/verify-email') await page.addInitScript(() => sessionStorage.setItem('wm.verifyEmail', 'a11y@test.local'))
     await page.goto(path)
@@ -480,4 +482,29 @@ test('axe /settings : erreurs affichées (pseudo pris, mots de passe différents
   await expect(page.getByText('Les deux mots de passe ne correspondent pas.', { exact: true })).toBeVisible()
   await expect(page.locator('input[name="sounds"]')).toBeVisible()
   await expectNoSeriousViolations(page)
+})
+
+test('axe /guild : sans guilde (une invitation), membre (onglet Membres, chef), modale « Quitter » ouverte', async ({ page, login }) => {
+  const me = await login()
+  const [leader, mate] = [makePlayer(), makePlayer()]
+  let guild: string | undefined
+  try {
+    guild = makeGuild(leader, [mate])
+    befriend(leader, me)
+    sql(`select wm.guild_invite(:'l', :'m')`, { l: leader.uid, m: me.uid })
+    await page.goto('/guild')
+    await page.locator(READY['/guild']).waitFor()
+    await expect(page.getByRole('button', { name: 'Rejoindre' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Rejoindre' }).click()
+    await page.getByRole('tab', { name: 'Membres' }).click()
+    await expect(page.getByRole('tabpanel').getByRole('listitem')).toHaveCount(3)
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Quitter la guilde' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    if (guild) sql(`delete from public.guilds where id = :'g'`, { g: guild })
+    sql(`delete from auth.users where id in (:'me', :'l', :'m')`, { me: me.uid, l: leader.uid, m: mate.uid })
+  }
 })
