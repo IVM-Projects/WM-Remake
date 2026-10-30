@@ -38,8 +38,16 @@ const MODELS = at('https://api.mistral.ai/v1/models')
 const LAUNCH = at('omniroute.sh')
 const GATE = at('127.0.0.1:20128/v1/chat/completions')
 const DIAG = at('https://api.mistral.ai/v1/chat/completions')
-// Vrai si chaque aiguille est dans `t`, chacune après la précédente.
-const ordered = (t: string, xs: string[]) => xs.map((x) => t.indexOf(x)).every((i, k, a) => i >= 0 && (k === 0 || i > a[k - 1]))
+// Première aiguille absente de `t` ou placée avant la précédente ; undefined si toutes y sont, dans l'ordre.
+const misordered = (t: string, xs: string[]) => {
+  let from = 0
+  for (const x of xs) {
+    const i = t.indexOf(x, from)
+    if (i < 0) return x
+    from = i + x.length
+  }
+  return undefined
+}
 
 // Contexte des secrets (GitHub ignore la casse), hors `steps.secrets.`, la sortie de l'étape de contrôle d'id `secrets`.
 const secretCtx = (t: string) => /\bsecrets\b/i.test(t.replaceAll('steps.secrets.', ''))
@@ -50,6 +58,8 @@ const trace = /\b(set|bash)\b[^#\n]*\s-[A-Za-z]*x|xtrace/i
 const noisy = /(?<![\w-])-[A-Za-z]*[viD]|--verbose|--include|--dump-header|--trace/
 // Attente du faux serveur (smoke) : sa liste de modèles est jetée ; sans --retry-connrefused, un refus n'est pas relancé.
 const WAIT = 'curl -fsS --retry 30 --retry-connrefused --retry-delay 1 http://127.0.0.1:18090/v1/models > /dev/null'
+// Fin de l'ancien faux serveur avant la relance sur le même port (5 s au plus).
+const GONE = 'for _ in {1..50}; do kill -0 "$FAKE_PID" 2> /dev/null || break; sleep 0.1; done'
 const SMOKE_RUN =
   'node scripts/quiz/generate.ts --base-url http://127.0.0.1:20128/v1 --input scripts/quiz/fixtures/cards.json --text summary --max 5 --min-gap-s 0 --dry-run | tee "$out"'
 const OK_READ = `tail -n 1 "$out" | jq -e '.summary.cards == 5 and .summary.stored == 5'`
@@ -268,23 +278,34 @@ test('chaque curl écrit sa réponse dans un fichier (-o "$out" -w code en probe
 
 test('smoke : sans secret ; faux serveur attendu, OmniRoute devant lui, une passe ok puis une passe quota contre le faux serveur relancé', () => {
   expect(secretCtx(smoke.join('\n'))).toBe(false)
+  expect(['actions/checkout', 'actions/setup-node', 'npm ci'].map((x) => at(x, smokeSteps))).toEqual([0, 1, 2])
+  expect(smokeSteps).toHaveLength(6)
+  expect(smokeSteps[0]).toContain('persist-credentials: false')
+  expect(smokeSteps[1]).toContain('node-version-file: .nvmrc')
   const launch = at('omniroute.sh', smokeSteps)
   const ok = at('.summary.stored == 5', smokeSteps)
   const quota = at('kill "$FAKE_PID"', smokeSteps)
-  expect(smokeSteps[launch]).toSatisfy((s: string) =>
-    ordered(s, [
+  expect(
+    misordered(smokeSteps[launch], [
       'node scripts/quiz/fake-upstream.ts --port 18090 &\n',
       'echo "FAKE_PID=$!" >> "$GITHUB_ENV"\n',
       WAIT,
       'PROVIDER_KEY=fake scripts/quiz/omniroute.sh http://127.0.0.1:18090/v1',
     ]),
-  )
+  ).toBeUndefined()
   expect(ok).toBeGreaterThan(launch)
-  expect(smokeSteps[ok]).toSatisfy((s: string) => ordered(s, [`${SMOKE_RUN}\n`, OK_READ]))
+  expect(misordered(smokeSteps[ok], [`${SMOKE_RUN}\n`, OK_READ])).toBeUndefined()
   expect(quota).toBeGreaterThan(ok)
-  expect(smokeSteps[quota]).toSatisfy((s: string) =>
-    ordered(s, ['kill "$FAKE_PID"\n', 'node scripts/quiz/fake-upstream.ts --port 18090 --mode rate_limit &\n', WAIT, `${SMOKE_RUN}\n`, QUOTA_READ]),
-  )
+  expect(
+    misordered(smokeSteps[quota], [
+      'kill "$FAKE_PID"\n',
+      `${GONE}\n`,
+      'node scripts/quiz/fake-upstream.ts --port 18090 --mode rate_limit &\n',
+      WAIT,
+      `${SMOKE_RUN}\n`,
+      QUOTA_READ,
+    ]),
+  ).toBeUndefined()
 })
 
 test('generate : checkout, setup-node, npm ci, contrôle des secrets, omniroute.sh, generate.ts, dans cet ordre', () => {
@@ -292,10 +313,11 @@ test('generate : checkout, setup-node, npm ci, contrôle des secrets, omniroute.
     [0, 1, 2, 3, 4, 5],
   )
   expect(genSteps).toHaveLength(6)
+  expect(genSteps[0]).toContain('persist-credentials: false')
   expect(genSteps[1]).toContain('node-version-file: .nvmrc')
   const [, , , check, launch, run] = genSteps
-  expect(check).toSatisfy((s: string) =>
-    ordered(s, [
+  expect(
+    misordered(check, [
       '        id: secrets\n',
       'echo "::notice::Sonde sautée : secret MISTRAL_API_KEY absent (D:1116)"',
       'echo "run=false" >> "$GITHUB_OUTPUT"',
@@ -303,7 +325,7 @@ test('generate : checkout, setup-node, npm ci, contrôle des secrets, omniroute.
       'exit 1',
       'echo "run=true" >> "$GITHUB_OUTPUT"',
     ]),
-  )
+  ).toBeUndefined()
   for (const s of [launch, run]) expect(s).toContain("\n        if: steps.secrets.outputs.run == 'true'\n")
   expect(launch).toContain('PROVIDER_KEY="$MISTRAL_API_KEY" scripts/quiz/omniroute.sh https://api.mistral.ai/v1')
   expect(run).toContain('          MAX_INPUT: ${{ inputs.max }}\n')
@@ -325,7 +347,16 @@ test('SUPABASE_SECRET_KEY : env: du contrôle et de generate.ts seuls ; MISTRAL_
   for (const s of [check, run]) expect(s).toContain('          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}\n')
 })
 
-test('omniroute.sh : une étape par job, sans 20128 ni generate.ts ; tout appel à OmniRoute vient après ; un seul --base-url', () => {
+test('une étape ne lit un secret que sous ces deux formes exactes : ni crochets, ni toJSON(secrets), ni autre secret', () => {
+  for (const s of steps) {
+    const rest = s.replaceAll('${{ secrets.MISTRAL_API_KEY }}', '').replaceAll('${{ secrets.SUPABASE_SECRET_KEY }}', '')
+    expect([...rest.matchAll(/\$\{\{.*?\}\}/g)].map((m) => m[0]).filter(secretCtx)).toEqual([])
+  }
+})
+
+// Après omniroute.sh, docker inspect livre l'environnement du conteneur (la clé) : aucun gestionnaire de paquets, qui lancerait du
+// code tiers, ne tourne plus.
+test('omniroute.sh : une étape par job, sans 20128 ni generate.ts ; tout appel à OmniRoute vient après, sans npm ; un seul --base-url', () => {
   for (const ss of [own, smokeSteps, genSteps]) {
     const launches = ss.filter((s) => s.includes('omniroute.sh'))
     expect(launches).toHaveLength(1)
@@ -335,6 +366,8 @@ test('omniroute.sh : une étape par job, sans 20128 ni generate.ts ; tout appel 
     ss.forEach((s, i) => {
       if (s.includes('20128') || s.includes('generate.ts')) expect(i).toBeGreaterThan(l)
     })
+    for (const s of [launches[0].slice(launches[0].indexOf('omniroute.sh')), ...ss.slice(l + 1)])
+      expect(s).not.toMatch(/\b(npm|npx|pnpm|yarn)\b/)
   }
   expect(yml.match(/--base-url[=\s]+\S+/g)).toEqual(Array(3).fill('--base-url http://127.0.0.1:20128/v1'))
 })

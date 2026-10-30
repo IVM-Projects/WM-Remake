@@ -156,6 +156,8 @@ jobs:
         run: |
           out="$RUNNER_TEMP/quota.jsonl"
           kill "$FAKE_PID"
+          # Sinon l'attente ci-dessous pourrait encore joindre l'ancien serveur, en mode ok, sur le même port.
+          for _ in {1..50}; do kill -0 "$FAKE_PID" 2> /dev/null || break; sleep 0.1; done
           node scripts/quiz/fake-upstream.ts --port 18090 --mode rate_limit &
           curl -fsS --retry 30 --retry-connrefused --retry-delay 1 http://127.0.0.1:18090/v1/models > /dev/null
           node scripts/quiz/generate.ts --base-url http://127.0.0.1:20128/v1 --input scripts/quiz/fixtures/cards.json --text summary --max 5 --min-gap-s 0 --dry-run | tee "$out"
