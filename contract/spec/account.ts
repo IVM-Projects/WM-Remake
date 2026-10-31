@@ -47,7 +47,7 @@ const login = (env: ContractEnv, email: string, password: string) =>
   })
 
 // Joueur inscrit par l'API admin de GoTrue (identité et métadonnées comme une vraie inscription), vérifié humain comme makeUser.
-async function gotrueUser(env: ContractEnv): Promise<{ uid: string; username: string; email: string; password: string }> {
+async function gotrueUser(env: ContractEnv, created: string[]): Promise<{ uid: string; username: string; email: string; password: string }> {
   const username = `d_${randomUUID().slice(-12)}`
   const email = `${randomUUID()}@test.local`
   const password = 'mot-de-passe-de-test'
@@ -58,6 +58,7 @@ async function gotrueUser(env: ContractEnv): Promise<{ uid: string; username: st
   const text = await res.text()
   assert.equal(res.status, 200, text.slice(0, 500))
   const uid = (JSON.parse(text) as { id: string }).id
+  created.push(uid)
   sql(env, `insert into wm.user_state (user_id, human_verified_until) values (:'u', now() + interval '12 hours')
 on conflict (user_id) do update set human_verified_until = excluded.human_verified_until`, { u: uid })
   return { uid, username, email, password }
@@ -124,10 +125,11 @@ export const account: RouteSpec[] = [
           + 'pierre tombale, GoTrue en suppression douce (ligne gardée, connexion refusée), 401 ensuite, rejeu identique, invariants',
         timeout: 60_000,
         run: async (env) => {
-          const d = await gotrueUser(env)
-          const x = await gotrueUser(env) // témoin : son journal GoTrue ne bouge pas
-          const [m, e, h] = [makeUser(db(env), { balance: 1000, humanVerified: true }), makeUser(db(env)), makeUser(db(env))]
+          const created: string[] = [] // utilisateurs GoTrue à supprimer, notés dès leur création
           try {
+            const d = await gotrueUser(env, created)
+            const x = await gotrueUser(env, created) // témoin : son journal GoTrue ne bouge pas
+            const [m, e, h] = [makeUser(db(env), { balance: 1000, humanVerified: true }), makeUser(db(env)), makeUser(db(env))]
             const [sold, offered] = giveCards(db(env), d.uid, 'C', 2)
             const eCopy = giveCards(db(env), e.uid, 'C')[0]
             const auction = listed(env, d.uid, sold)
@@ -192,7 +194,7 @@ export const account: RouteSpec[] = [
           } finally {
             // Garde des pierres tombales levée pour cette session psql seulement (Task 6a) ; la ligne GoTrue survit à la suppression douce.
             sql(env, `select set_config('wm.allow_tombstone_delete', 'on', false);
-delete from auth.users where id in (:'d', :'x')`, { d: d.uid, x: x.uid })
+delete from auth.users where id = any (string_to_array(:'ids', ',')::uuid[])`, { ids: created.join(',') })
           }
         },
       },

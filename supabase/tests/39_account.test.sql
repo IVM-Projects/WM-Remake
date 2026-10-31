@@ -88,6 +88,24 @@ do $$ declare u uuid := tests.make_user('AccAudit1'); v uuid := tests.make_user(
   assert wm.account_auth_done(u) = '{"ok": true}'::jsonb, 'rejouée';
 end $$;
 
+-- Purge en échec (déclencheur temporaire qui lève 57014 puis XX000) : auth_done_at posé quand même, réponse {ok: true} (G12).
+create function pg_temp.audit_fail() returns trigger language plpgsql as $$ begin
+  raise exception 'purge refusée' using errcode = current_setting('wm.test_errcode');
+end $$;
+create trigger audit_fail before delete on auth.audit_log_entries for each row execute function pg_temp.audit_fail();
+do $$ declare code text; u uuid; begin
+  foreach code in array array['57014', 'XX000'] loop
+    u := tests.make_user('AccAuditFail' || code);
+    perform set_config('wm.test_errcode', code, true);
+    insert into auth.audit_log_entries (id, payload) values (gen_random_uuid(), json_build_object('action', 'login', 'actor_id', u));
+    insert into wm.deleted_accounts (user_id) values (u);
+    assert wm.account_auth_done(u) = '{"ok": true}'::jsonb, 'réponse ' || code;
+    assert (select auth_done_at from wm.deleted_accounts where user_id = u) is not null, 'auth_done_at posé ' || code;
+    assert (select count(*) from auth.audit_log_entries where payload ->> 'actor_id' = u::text) = 1, 'ligne gardée ' || code;
+  end loop;
+end $$;
+drop trigger audit_fail on auth.audit_log_entries;
+
 -- Invariants neufs : pool_removed, deleted_account 'cards', 'friend', 'guild' (sous-transaction annulée).
 do $$ declare c uuid := tests.image_card('Acc Pool'); u uuid := tests.make_user('AccInv1'); w uuid := tests.make_user('AccInv2');
   g uuid; d jsonb; begin
