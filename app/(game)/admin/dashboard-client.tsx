@@ -11,7 +11,8 @@ import { Loading } from '@/components/ui/Loading'
 import { api } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 
-const readable = (d: Dashboard | null): Dashboard | null => (d && typeof d.open_reports === 'number' && d.health && typeof d.health === 'object' ? d : null)
+const COUNTS = ['open_reports', 'image_reports', 'auto_hidden_cards', 'active_sanctions', 'removed_cards', 'auth_pending'] as const
+const readable = (d: Dashboard | null): Dashboard | null => (d && COUNTS.every((k) => Number.isFinite(d[k])) && d.health && typeof d.health === 'object' ? d : null)
 const unmeasured = 'non mesuré'
 const secs = (n: number | null | undefined) => (typeof n === 'number' ? `${formatInt(n)} s` : unmeasured)
 
@@ -30,13 +31,14 @@ export function DashboardClient() {
     if (refocus.current && (data || failed)) { refocus.current = false; (failed ? retry.current : h1.current)?.focus() }
   }, [data, failed])
 
-  const tiles: [string, number, string][] = data ? [
-    ['Signalements à traiter', data.open_reports, '/admin/reports'],
-    ['Images signalées', data.image_reports, '/admin/reports'],
-    ['Images masquées d\'office', data.auto_hidden_cards, '/admin/cards'],
-    ['Sanctions actives', data.active_sanctions, '/admin/users'],
-    ['Cartes retirées', data.removed_cards, '/admin/cards'],
-    ...(data.auth_pending > 0 ? [['Suppressions GoTrue en attente', data.auth_pending, '/admin/users'] as [string, number, string]] : []),
+  // [libellé, nombre, lien, suppression GoTrue en attente]
+  const tiles: [string, number, string, boolean][] = data ? [
+    ['Signalements à traiter', data.open_reports, '/admin/reports', false],
+    ['Images signalées', data.image_reports, '/admin/reports', false],
+    ['Images masquées d\'office', data.auto_hidden_cards, '/admin/cards', false],
+    ['Sanctions actives', data.active_sanctions, '/admin/users', false],
+    ['Cartes retirées', data.removed_cards, '/admin/cards', false],
+    ...(data.auth_pending > 0 ? [['Suppressions GoTrue en attente', data.auth_pending, '/admin/users', true] as [string, number, string, boolean]] : []),
   ] : []
   const h = data?.health
 
@@ -50,11 +52,11 @@ export function DashboardClient() {
       ) : (
         <>
           <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {tiles.map(([label, n, href]) => (
+            {tiles.map(([label, n, href, pending]) => (
               <li key={label} className="card-frame space-y-1 p-4">
                 <p className="text-3xl font-bold tabular-nums">{formatInt(n)}</p>
                 <Link href={href} className={link}>{label}</Link>
-                {label.startsWith('Suppressions') && <p className="text-sm">Resynchroniser depuis la fiche du joueur</p>}
+                {pending && <p className="text-sm">Resynchroniser depuis la fiche du joueur</p>}
               </li>
             ))}
           </ul>

@@ -18,6 +18,7 @@ select null, 'image_auto_hide', :'type', :'t', 'lot de test' from generate_serie
 
 test('un joueur : 404 sur /admin, /admin/audit et /admin/users, sans titre « Administration » ni lien au pied', async ({ page, login }) => {
   await login()
+  // /admin/users n'existe pas avant la Task 16 : son 404 ne prouve pas la garde, seuls /admin et /admin/audit le font.
   for (const path of ['/admin', '/admin/audit', '/admin/users']) {
     await page.goto(path)
     await expect(page.getByRole('heading', { name: 'Page introuvable' })).toBeVisible()
@@ -70,30 +71,52 @@ test('un staff sous suspension : 404', async ({ page }) => {
   }
 })
 
-test('tableau de bord : compteurs lus à l\'écran, « Suppressions GoTrue en attente » absente à 0, présente à 2', async ({ page }) => {
+test('tableau de bord : un compteur distinct par tuile (lecture réelle), « Suppressions GoTrue en attente » absente à 0, présente à 2', async ({ page }) => {
   const u = await asStaff(page)
+  const rep = makeStaff('moderator')
+  const tag = randomUUID().slice(-8)
+  let cards: string[] = []
   try {
+    cards = sql(`select string_agg(tests.image_card('Zz dash ' || :'tag' || ' ' || i || ' z')::text, ',') from generate_series(1, 10) i`, { tag }).split(',')
+    const ids = (from: number, to: number) => cards.slice(from, to).join(',')
+    const ARR = `string_to_array(:'x', ',')::uuid[]`
+    // +1 signalement, +2 images signalées, +3 masquées d'office, +4 sanctions actives, +5 cartes retirées
+    sql(`insert into public.reports (reporter_id, reported_user_id, reason) values (:'a', :'b', (enum_range(null::public.report_reason))[1])`, { a: rep.uid, b: u.uid })
+    sql(`insert into wm.card_image_reports (card_id, user_id) select unnest(${ARR}), :'a'`, { x: ids(0, 2), a: rep.uid })
+    sql(`update public.cards set hide_image = true where id = any(${ARR});
+insert into wm.staff_actions (staff_id, action, target_type, target_id, reason) select null, 'image_auto_hide', 'card', c::text, 'seuil' from unnest(${ARR}) c`, { x: ids(2, 5) })
+    sql(`insert into wm.sanctions (user_id, kind) select :'a', 'warning' from generate_series(1, 4)`, { a: rep.uid })
+    sql(`insert into wm.card_removals (card_id, reason) select unnest(${ARR}), 'test'`, { x: ids(5, 10) })
     const d = JSON.parse(sql(`select wm.staff_dashboard(:'u')`, { u: u.uid })) as Record<string, number>
-    d.auth_pending = 0
-    const body = (n: number) => ({ ...d, auth_pending: n, health: { settle_lag_s: 3, overdue_s: null, push_lag_s: 1200, quiz: { queued: 4, oldest_s: 70 } } })
-    await page.route('**/api/admin/dashboard', (r) => r.fulfill({ json: body(0) }))
+    let pending = 0
+    // Seuls auth_pending et la santé sont posés : le reste est la lecture réelle.
+    await page.route('**/api/admin/dashboard', async (r) => {
+      const real = await (await r.fetch()).json()
+      await r.fulfill({ json: { ...real, auth_pending: pending, health: { settle_lag_s: 3, overdue_s: null, push_lag_s: 1200, quiz: { queued: 4, oldest_s: 70 } } } })
+    })
     await page.goto('/admin')
     await page.locator('main [data-ready]').waitFor()
     const tile = (label: string) => page.getByRole('listitem').filter({ has: page.getByRole('link', { name: label, exact: true }) })
     const n = (v: number) => new Intl.NumberFormat('fr-FR').format(v)
-    await expect(tile('Signalements à traiter')).toContainText(n(d.open_reports))
-    await expect(tile('Sanctions actives')).toContainText(n(d.active_sanctions))
-    await expect(tile('Cartes retirées')).toContainText(n(d.removed_cards))
+    for (const [label, key] of [['Signalements à traiter', 'open_reports'], ['Images signalées', 'image_reports'], ['Images masquées d\'office', 'auto_hidden_cards'],
+      ['Sanctions actives', 'active_sanctions'], ['Cartes retirées', 'removed_cards']] as const) {
+      await expect(tile(label).locator('p').first(), label).toHaveText(n(d[key]))
+    }
     await expect(page.getByRole('link', { name: 'Suppressions GoTrue en attente' })).toHaveCount(0)
     await expect(page.getByText('non mesuré', { exact: true })).toBeVisible()
     await expect(page.getByText('4 en attente', { exact: false })).toBeVisible()
-    await page.unroute('**/api/admin/dashboard')
-    await page.route('**/api/admin/dashboard', (r) => r.fulfill({ json: body(2) }))
+    pending = 2
     await page.reload()
     await expect(tile('Suppressions GoTrue en attente')).toContainText('2')
     await expect(page.getByText('Resynchroniser depuis la fiche du joueur')).toBeVisible()
   } finally {
-    wipe(u.uid)
+    const x = cards.join(',')
+    if (x) {
+      sql(`delete from wm.card_removals where card_id = any(string_to_array(:'x', ',')::uuid[])`, { x })
+      unlog(...cards)
+      sql(`delete from public.cards where id = any(string_to_array(:'x', ',')::uuid[])`, { x })
+    }
+    wipe(u.uid, rep.uid)
   }
 })
 
@@ -139,8 +162,18 @@ test('journal : trois actions des fonctions wm.admin_*, la plus récente d\'abor
     await expect(rows.nth(2)).toContainText(u.username)
     await expect(rows.nth(3)).toContainText('Session resynchronisée')
     await expect(rows.nth(4)).toContainText('Sanction')
+    // Entrée sans rien changer : le tableau reste, jamais « Chargement » (data-ready gardé).
+    await page.getByLabel('Identifiant de cible').press('Enter')
+    await page.getByLabel('Identifiant de cible').press('Enter')
+    await expect(rows).toHaveCount(5)
+    await expect(page.locator('main [data-ready]')).toBeVisible()
+    // Le champ montre toujours le filtre actif : le changement de type applique le brouillon.
+    const reads: string[] = []
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/admin/audit') reads.push(r.url()) })
     await page.getByLabel('Type de cible').selectOption({ label: 'Carte' })
     await expect(page.getByText('Aucune action enregistrée.')).toBeVisible()
+    await expect(page.getByLabel('Identifiant de cible')).toHaveValue(target.uid)
+    expect(reads.at(-1)).toContain(`target_id=${target.uid}`)
     await page.getByLabel('Identifiant de cible').fill(card)
     await page.getByLabel('Identifiant de cible').press('Enter')
     await expect(rows).toHaveCount(2)
@@ -150,6 +183,28 @@ test('journal : trois actions des fonctions wm.admin_*, la plus récente d\'abor
     unlog(target.uid, card)
     if (card) sql(`delete from public.cards where id = :'c'`, { c: card })
     wipe(u.uid, target.uid)
+  }
+})
+
+test('journal : Entrée sur un champ vide ou inchangé garde l\'écran lu', async ({ page }) => {
+  const u = await asStaff(page)
+  try {
+    seed(u.uid)
+    await page.goto('/admin/audit')
+    await page.locator('main [data-ready]').waitFor()
+    await page.getByLabel('Identifiant de cible').press('Enter')
+    await expect(page.getByRole('table')).toBeVisible()
+    await expect(page.locator('main [data-ready]')).toBeVisible()
+    await page.getByLabel('Identifiant de cible').fill(randomUUID())
+    await page.getByLabel('Identifiant de cible').press('Enter')
+    await expect(page.getByText('Aucune action enregistrée.')).toBeVisible()
+    await page.getByLabel('Identifiant de cible').press('Enter')
+    await expect(page.getByText('Aucune action enregistrée.')).toBeVisible()
+    await expect(page.locator('main [data-ready]')).toBeVisible()
+    await expect(page.getByRole('status')).toHaveCount(0)
+  } finally {
+    unlog(u.uid)
+    wipe(u.uid)
   }
 })
 

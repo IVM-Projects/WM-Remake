@@ -49,7 +49,11 @@ export function AuditClient() {
     ;(failed ? retry.current : (caption.current ?? h1.current))?.focus()
   }, [data, failed])
 
-  const change = (t: string, id: string, p: number) => { setType(t); setTarget(id); setPage(p); setData(null); setFailed(false) }
+  // Rien ne change : l'effet de lecture ne rejoue pas, vider data laisserait « Chargement » à l'écran.
+  const change = (t: string, id: string, p: number) => {
+    if (t === type && id === target && p === page) return
+    setType(t); setTarget(id); setPage(p); setData(null); setFailed(false)
+  }
 
   return (
     <div data-ready={data || failed ? '' : undefined} className="space-y-6">
@@ -57,7 +61,7 @@ export function AuditClient() {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <label htmlFor={`${id}-type`} className="text-sm font-semibold">Type de cible</label>
-          <select id={`${id}-type`} value={type} onChange={(e) => change(e.target.value, target, 0)} className={FIELD}>
+          <select id={`${id}-type`} value={type} onChange={(e) => { const id = draft.trim(); setDraft(id); change(e.target.value, id, 0) }} className={FIELD}>
             <option value="">Tous</option>
             {TARGET_TYPES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
           </select>
@@ -69,7 +73,7 @@ export function AuditClient() {
             value={draft}
             maxLength={80}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') change(type, draft.trim(), 0) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { setDraft(draft.trim()); change(type, draft.trim(), 0) } }}
             className={FIELD}
           />
         </div>
