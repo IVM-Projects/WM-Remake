@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
-import { api, created, failed, idem, Iso, makeUser, noSession, ok, psql, refused, send } from '../users.ts'
+import { api, authCookie, created, failed, idem, Iso, makeUser, noSession, ok, psql, refused, send } from '../users.ts'
 
 // Formes strictes (comme guilds.ts) : une clé en plus ferait échouer le cas au lieu de disparaître avant le deepEqual.
 const Role = z.enum(['admin', 'moderator'])
@@ -127,6 +127,7 @@ export const admin: RouteSpec[] = [
         const one = await ok(await get(env, `/audit?staff_id=${boss.uid}&target_type=user&target_id=${p.uid}&page=0`, boss.uid), Audit)
         assert.equal(one.actions.length, 2)
         assert.deepEqual((await ok(await get(env, `/audit?staff_id=${boss.uid}&page=1`, boss.uid), Audit)).actions, [])
+        await refused(await get(env, '/audit?target_type=%00', boss.uid), 400, 'Caractère invalide', 'invalid_request')
       },
     },
   ]),
@@ -162,15 +163,18 @@ export const admin: RouteSpec[] = [
       run: async (env) => {
         const boss = staffOf(env, 'admin')
         const p = player(env)
+        // Cookie (JWT) émis avant le bannissement, réutilisé tel quel après.
+        const c = authCookie(env.backend, p.uid)
+        const cookie = { cookie: `${c.name}=${c.value}` }
         const s = await created(await sanction(env, boss.uid, p.uid, { kind: 'ban' }), Sanctioned)
         assert.deepEqual([s.sanction.kind, s.sanction.active, s.auth.forever, s.auth_synced], ['ban', true, true, true])
         assert.notEqual(bannedUntil(env, p.uid), '')
-        await blocked(await send(env, 'POST', '/api/packs/open', p.uid, {}, idem()), null)
-        await blocked(await api(env, '/api/my-collection', { uid: p.uid }), null)
+        await blocked(await send(env, 'POST', '/api/packs/open', undefined, {}, { ...idem(), ...cookie }), null)
+        await blocked(await api(env, '/api/my-collection', { headers: cookie }), null)
         const lifted = await ok(await post(env, `/sanctions/${s.sanction.id}/revoke`, boss.uid, { reason: 'Erreur de jugement' }), Sanctioned)
         assert.deepEqual([lifted.sanction.active, lifted.auth.forever, lifted.auth_synced], [false, false, true])
         assert.equal(bannedUntil(env, p.uid), '')
-        assert.equal((await api(env, '/api/my-collection', { uid: p.uid })).status, 200)
+        assert.equal((await api(env, '/api/my-collection', { headers: cookie })).status, 200)
       },
     },
     {
@@ -210,6 +214,7 @@ export const admin: RouteSpec[] = [
         const p = player(env)
         const vercelId = randomUUID()
         await created(await sanction(env, boss.uid, p.uid, { kind: 'warning' }, { ...idem(), 'x-vercel-id': vercelId }), Sanctioned)
+        // Journal du serveur lancé par le banc lui-même : ce cas ne vaut que si la suite démarre son propre serveur.
         const log = readFileSync(new URL('../../.cache/logs/next-plain.log', import.meta.url), 'utf8')
         const line = log.split('\n').find((l) => l.includes(vercelId))
         assert.ok(line)

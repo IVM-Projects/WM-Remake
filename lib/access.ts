@@ -1,3 +1,4 @@
+// Import circulaire avec lib/route.ts, sans danger : chacun n'utilise l'autre qu'à l'appel (aucun code de haut niveau à ajouter ici).
 import { toHttpError, type HttpError } from '@/lib/route'
 import { createAdminClient } from '@/lib/supabase/admin'
 

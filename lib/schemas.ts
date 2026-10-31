@@ -113,7 +113,7 @@ export const AdminSanction = z.object({
 })
 export const AdminPageQuery = z.object({ page: intParam.default(0) })
 export const AdminAuditQuery = AdminPageQuery.extend({
-  staff_id: z.uuid().optional(), target_type: z.string().max(32).optional(), target_id: z.string().max(80).optional(),
+  staff_id: z.uuid().optional(), target_type: pgText.max(32).optional(), target_id: pgText.max(80).optional(),
 })
 export const AdminSearchQuery = z.object({ q: pgText })
 export const UserParams = z.object({ userId: z.uuid() })

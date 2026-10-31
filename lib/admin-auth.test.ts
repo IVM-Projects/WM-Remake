@@ -72,6 +72,11 @@ describe('withAuthSync', () => {
     rpcs({ data: { auth: state() }, error: null }, { data: state({ deleted: true }), error: null })
     expect((await withAuthSync('admin_auth_sync')({})).data).toMatchObject({ auth_synced: false })
     expect(rpc).toHaveBeenCalledTimes(2)
+    rpc.mockReset()
+    vi.mocked(console.error).mockClear()
+    rpcs({ data: { auth: state() }, error: null }, { data: state({ deleted: true }), error: null }, { data: null, error: { code: '55P03' } })
+    expect((await withAuthSync('admin_auth_sync')({})).data).toMatchObject({ auth_synced: false })
+    expect(vi.mocked(console.error).mock.calls).toEqual([['{"auth":"sync_failed"}']])
   })
 
   it('état non supprimé → aucun account_auth_done ; erreur ou réponse sans auth → rendue telle quelle', async () => {

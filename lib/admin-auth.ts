@@ -29,6 +29,8 @@ export async function applyAuthState(s: AuthState): Promise<boolean> {
 // Enveloppe `call` de route() : la RPC, puis l'état GoTrue relu (une réponse rejouée porte l'état d'alors, G4) et appliqué.
 // La transaction a abouti : un échec GoTrue ne change que auth_synced.
 export function withAuthSync(fn: string): (args: Record<string, unknown>) => Promise<RpcResult> {
+  // shortcut: deux membres du staff sur le même joueur au même instant peuvent laisser GoTrue en décalage (le dernier appel GoTrue l'emporte),
+  // réparé par POST auth-sync ; passer à un verrou consultatif sur user_id si cela devient gênant.
   return async (args) => {
     const db = createAdminClient().schema('wm')
     const res = await db.rpc(fn, args)
@@ -41,7 +43,10 @@ export function withAuthSync(fn: string): (args: Record<string, unknown>) => Pro
       if (fresh.error || !state) syncFailed()
       else {
         synced = await applyAuthState(state)
-        if (synced && state.deleted) synced = !(await db.rpc('account_auth_done', { p_uid: state.user_id })).error
+        if (synced && state.deleted && (await db.rpc('account_auth_done', { p_uid: state.user_id })).error) {
+          synced = false
+          syncFailed()
+        }
       }
     } catch {
       syncFailed()
