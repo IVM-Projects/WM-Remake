@@ -107,7 +107,7 @@ test('joueurs : recherche, fiche, sanction « Restriction » (refus 403 dit, pui
   }
 })
 
-test('joueurs : un modérateur ne voit ni Suspension ni Bannissement ; admin : session à resynchroniser quand auth_synced est faux', async ({ page }) => {
+test('joueurs : un modérateur ne voit ni Suspension ni Bannissement ni Resynchroniser (toast : un administrateur) ; admin : Resynchroniser toujours, la phrase quand auth_synced est faux', async ({ page }) => {
   const mod = await asStaff(page, 'moderator')
   const a = target()
   const boss = makeStaff('admin')
@@ -118,12 +118,23 @@ test('joueurs : un modérateur ne voit ni Suspension ni Bannissement ; admin : s
     await expect(dialog(page).getByRole('radio', { name: 'Avertissement' })).toBeChecked()
     await expect(dialog(page).getByRole('radio', { name: 'Suspension' })).toHaveCount(0)
     await expect(dialog(page).getByRole('radio', { name: 'Bannissement' })).toHaveCount(0)
-    await page.keyboard.press('Escape')
+    await expect(page.getByRole('button', { name: 'Resynchroniser la session' })).toHaveCount(0)
+    // GoTrue en retard après la sanction d'un modérateur : la resynchronisation revient à un administrateur.
+    await fillReason(dialog(page))
+    await routeOnce(page, '**/api/admin/users/*/sanctions', async (r) => {
+      const real = await (await r.fetch()).json()
+      await r.fulfill({ status: 201, json: { ...real, auth_synced: false } })
+    })
+    await dialog(page).getByRole('button', { name: 'Sanctionner', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'un administrateur doit relancer la synchronisation du compte depuis la fiche du joueur' }))
+      .toBeVisible()
     await expect(page.getByRole('button', { name: 'Resynchroniser la session' })).toHaveCount(0)
 
     await page.context().clearCookies()
     await page.context().addCookies([{ ...cookieFor(boss), url: 'http://127.0.0.1:3100' }])
     await openUser(page, a.uid)
+    // Le bouton est toujours là pour un admin (l'échec signalé ailleurs n'est pas connu de la fiche) ; la phrase seulement après un échec.
+    await expect(page.getByRole('button', { name: 'Resynchroniser la session' })).toBeVisible()
     await expect(page.getByText('La session GoTrue n\'a pas pu être mise à jour')).toHaveCount(0)
     await page.getByRole('button', { name: 'Sanctionner', exact: true }).click()
     await expect(dialog(page).getByRole('radio')).toHaveCount(4)
@@ -137,7 +148,8 @@ test('joueurs : un modérateur ne voit ni Suspension ni Bannissement ; admin : s
     await page.getByRole('button', { name: 'Resynchroniser la session' }).click()
     await fillReason(dialog(page), 'Session à resynchroniser')
     await dialog(page).getByRole('button', { name: 'Resynchroniser', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Resynchroniser la session' })).toHaveCount(0)
+    await expect(page.getByText('La session GoTrue n\'a pas pu être mise à jour')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Resynchroniser la session' })).toBeVisible()
     expect(sql(`select count(*) from wm.staff_actions where action = 'auth_sync' and target_id = :'a'`, { a: a.uid })).toBe('1')
   } finally {
     wipe(mod.uid, boss.uid, a.uid)
@@ -220,7 +232,7 @@ test('signalements : lire (auditée) et supprimer un message, marquer traité, s
   }
 })
 
-test('images : une carte à 2 signalements → « Masquer l\'image » : masquée, compteur effacé, la ligne quitte la file', async ({ page }) => {
+test('images : une carte à 2 signalements → « Masquer l\'image » (avatars retirés, dit) : masquée, compteur effacé, la ligne quitte la file', async ({ page }) => {
   const staff = await asStaff(page, 'moderator')
   const [p, q] = [makePlayer(), makePlayer()]
   const title = `Zz image report ${randomUUID().slice(-12)} z`
@@ -235,8 +247,15 @@ test('images : une carte à 2 signalements → « Masquer l\'image » : masquée
     await expect(line).toContainText('2 signalements')
     await expect(line).toContainText('Visible')
     await expect(line.getByRole('button')).toHaveText(['Masquer l\'image', 'Marquer sensible', 'Garder l\'image'])
+    // Même texte que /admin/cards (flagsConsequence) : un drapeau qui passe à vrai retire les avatars de la carte.
+    await line.getByRole('button', { name: 'Marquer sensible' }).click()
+    await expect(dialog(page).getByText('Les avatars qui montrent cette image sont retirés ; les signalements de cette carte sont effacés.')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await line.getByRole('button', { name: 'Garder l\'image' }).click()
+    await expect(dialog(page).getByText('Les signalements de cette carte sont effacés : le compteur repart de zéro.', { exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
     await line.getByRole('button', { name: 'Masquer l\'image' }).click()
-    await expect(dialog(page).getByText('Les signalements de cette carte sont effacés : le compteur repart de zéro.')).toBeVisible()
+    await expect(dialog(page).getByText('Les avatars qui montrent cette image sont retirés ; les signalements de cette carte sont effacés.')).toBeVisible()
     await fillReason(dialog(page))
     await dialog(page).getByRole('button', { name: 'Masquer l\'image' }).click()
     await expect(line).toHaveCount(0)

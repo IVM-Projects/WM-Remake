@@ -11,8 +11,8 @@ import { createBrowserSupabase } from '@/lib/supabase/browser'
 const CONSEQUENCES = [
   'Tu perds l\'accès au compte, ta collection et tes wikibidous.',
   'Tes ventes en cours, tes mises et tes échanges en attente sont annulés.',
-  'Tes batailles en cours sont perdues.',
-  'Si tu diriges une guilde, son membre le plus ancien devient chef.',
+  'Tes batailles commencées sont perdues, celles qui n\'ont pas commencé sont annulées.',
+  'Si tu diriges une guilde, son membre le plus ancien devient chef ; si tu en es le seul membre, elle est dissoute.',
   'Tes messages restent visibles chez tes interlocuteurs, sous le nom « Joueur supprimé ».',
   'Télécharge tes données avant, si tu veux les garder.',
 ]

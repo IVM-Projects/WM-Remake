@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { ActionModal } from '@/components/admin/ActionModal'
+import { flagsConsequence } from '@/components/admin/flags'
 import type { CardDetail, RemovalRow, StaffRole } from '@/components/admin/types'
 import { Card } from '@/components/card/Card'
 import { PageHeader } from '@/components/shell/PageHeader'
@@ -186,9 +187,7 @@ export function CardsClient({ role }: { role: StaffRole }) {
       {d && c && (modal === 'hide' || modal === 'nsfw') && (
         <ActionModal
           title={modal === 'hide' ? (c.hide_image ? 'Afficher l\'image ?' : 'Masquer l\'image ?') : (c.nsfw_image ? 'Retirer « sensible » ?' : 'Marquer l\'image comme sensible ?')}
-          consequence={(modal === 'hide' ? !c.hide_image : !c.nsfw_image)
-            ? 'Les avatars qui montrent cette image sont retirés ; les signalements de cette carte sont effacés.'
-            : 'Les signalements de cette carte sont effacés : le compteur repart de zéro.'}
+          consequence={flagsConsequence(c, { hide_image: modal === 'hide' ? !c.hide_image : c.hide_image, nsfw_image: modal === 'nsfw' ? !c.nsfw_image : c.nsfw_image })}
           action={modal === 'hide' ? (c.hide_image ? 'Afficher l\'image' : 'Masquer l\'image') : (c.nsfw_image ? 'Retirer « sensible »' : 'Marquer sensible')}
           tone={modal === 'hide' && !c.hide_image ? 'danger' : 'primary'}
           onClose={() => setModal(null)}

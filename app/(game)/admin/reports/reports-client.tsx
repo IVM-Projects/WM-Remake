@@ -4,6 +4,7 @@ import { Flag } from 'lucide-react'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { ActionModal } from '@/components/admin/ActionModal'
 import { DmThreadModal } from '@/components/admin/DmThreadModal'
+import { flagsConsequence } from '@/components/admin/flags'
 import { SanctionModal } from '@/components/admin/SanctionModal'
 import type { ImageRow, ReportRow, StaffRole } from '@/components/admin/types'
 import { Card } from '@/components/card/Card'
@@ -32,6 +33,8 @@ const FLAGS = {
   keep: { title: 'Garder cette image ?', action: 'Garder l\'image' },
 } as const
 type Mode = keyof typeof FLAGS
+// Drapeaux envoyés pour une décision de la file des images (keep : l'image redevient visible, sensible inchangé).
+const nextFlags = (c: ImageRow, mode: Mode) => ({ hide_image: mode === 'hide' ? true : mode === 'keep' ? false : c.hide_image, nsfw_image: mode === 'nsfw' ? true : c.nsfw_image })
 
 type View = { tab: 'players'; rows: ReportRow[]; hasMore: boolean } | { tab: 'images'; rows: ImageRow[]; hasMore: boolean }
 type Open =
@@ -225,13 +228,13 @@ export function ReportsClient({ role }: { role: StaffRole }) {
       {open?.k === 'flags' && (
         <ActionModal
           title={FLAGS[open.mode].title}
-          consequence={`${open.mode === 'keep' && open.c.hide_image ? 'L\'image redevient visible. ' : ''}Les signalements de cette carte sont effacés : le compteur repart de zéro.`}
+          consequence={flagsConsequence(open.c, nextFlags(open.c, open.mode))}
           action={FLAGS[open.mode].action}
           tone={open.mode === 'keep' ? 'primary' : 'danger'}
           onClose={() => setOpen(null)}
           onConfirm={async (reason) => {
             const { c, mode } = open
-            const body = JSON.stringify({ hide_image: mode === 'hide' ? true : mode === 'keep' ? false : c.hide_image, nsfw_image: mode === 'nsfw' ? true : c.nsfw_image, reason })
+            const body = JSON.stringify({ ...nextFlags(c, mode), reason })
             const res = await apiOnce<{ card?: unknown } | null>(keys, `flags:${c.card_id}:${body}`, `/api/admin/cards/${c.card_id}/flags`, { method: 'POST', body })
             if (!res) throw new Error('unreadable')
             toast('Image mise à jour.')

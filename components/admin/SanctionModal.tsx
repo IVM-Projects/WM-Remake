@@ -49,7 +49,9 @@ export function SanctionModal({ user, role, reportId, keys, onDone, onClose }: {
         const body = JSON.stringify({ kind, reason, ...(dated ? { ends_at: new Date(at).toISOString() } : {}), ...(reportId ? { report_id: reportId } : {}) })
         const res = await apiOnce<Sanctioned | null>(keys, `sanction:${user.id}:${body}`, `/api/admin/users/${user.id}/sanctions`, { method: 'POST', body })
         if (!res) throw new Error('unreadable')
-        toast(res.auth_synced ? 'Sanction enregistrée.' : 'Sanction enregistrée — la synchronisation du compte est à relancer depuis la fiche du joueur.')
+        toast(res.auth_synced ? 'Sanction enregistrée.' : role === 'admin'
+          ? 'Sanction enregistrée — la synchronisation du compte est à relancer depuis la fiche du joueur.'
+          : 'Sanction enregistrée — un administrateur doit relancer la synchronisation du compte depuis la fiche du joueur.')
         onDone(res)
       }}
     >

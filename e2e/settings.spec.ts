@@ -489,6 +489,9 @@ test('suppression : confirmation par le pseudo, modale annulée sans effet, 500 
   try {
     await page.goto('/settings')
     await expect(pseudo(page)).toHaveValue(username)
+    const consequences = page.locator('section', { has: page.getByRole('heading', { name: 'Supprimer mon compte', exact: true }) }).getByRole('listitem')
+    await expect(consequences.filter({ hasText: 'Tes batailles commencées sont perdues, celles qui n\'ont pas commencé sont annulées.' })).toHaveCount(1)
+    await expect(consequences.filter({ hasText: 'si tu en es le seul membre, elle est dissoute.' })).toHaveCount(1)
     await deleteButton(page).click()
     const dialog = page.getByRole('dialog', { name: 'Supprimer ton compte ?' })
     const confirm = dialog.getByRole('button', { name: 'Supprimer définitivement' })

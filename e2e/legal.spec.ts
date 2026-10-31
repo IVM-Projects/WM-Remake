@@ -48,5 +48,8 @@ test('/privacy : responsable à compléter, CNIL, conservation et droits', async
   await expect(page.getByText('CNIL').first()).toBeVisible()
   await expect(page.getByText('dans la mesure du possible')).toBeVisible()
   await expect(page.getByText('Joueur supprimé …').first()).toBeVisible()
+  // Conséquences de la suppression, comme dans /settings : batailles et guilde dont on est le seul membre.
+  await expect(page.getByText('tes batailles en cours aussi (perdues si elles avaient commencé)', { exact: false })).toBeVisible()
+  await expect(page.getByText('si tu en es le seul membre, elle est dissoute', { exact: false })).toBeVisible()
   await expect(page.getByText('suspendu ou banni', { exact: false })).toBeVisible()
 })

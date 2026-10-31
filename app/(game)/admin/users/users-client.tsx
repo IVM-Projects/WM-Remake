@@ -182,7 +182,8 @@ export function UsersClient({ role }: { role: StaffRole }) {
           <div className="flex flex-wrap gap-3">
             {canAct && <button type="button" onClick={() => setModal('sanction')} className={ghost}>Sanctionner</button>}
             <button type="button" onClick={() => setModal('recheck')} className={ghost}>Rouvrir le check</button>
-            {admin && (d.user.auth_pending || desync) && <button type="button" onClick={() => setModal('sync')} className={ghost}>Resynchroniser la session</button>}
+            {/* Pour tout admin : un échec GoTrue signalé ailleurs (signalements, rechargement) n'est pas connu de cette page ; idempotent. */}
+            {admin && <button type="button" onClick={() => setModal('sync')} className={ghost}>Resynchroniser la session</button>}
           </div>
           {admin && (d.user.auth_pending || desync) && <p role="status" className="text-sm font-medium">La session GoTrue n&apos;a pas pu être mise à jour : resynchronise-la.</p>}
           <section aria-labelledby={`${id}-sanctions`} className="space-y-2">
