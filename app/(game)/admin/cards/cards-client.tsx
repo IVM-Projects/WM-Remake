@@ -18,8 +18,11 @@ import { api, apiOnce } from '@/lib/api'
 import { formatInt, formatShortDate } from '@/lib/format'
 
 type Modal = 'hide' | 'nsfw' | 'remove' | 'restore' | 'quiz'
+// Pluriel français : 0 et 1 au singulier.
+const count = (n: number, one: string, many: string) => `${formatInt(n)} ${n > 1 ? many : one}`
 const ENGAGEMENTS = [
-  ['active_auctions', 'ventes actives'], ['pending_trades', 'échanges en attente'], ['open_wishes', 'demandes de guilde'], ['showcase', 'vitrines'], ['avatars', 'avatars'],
+  ['active_auctions', 'vente active', 'ventes actives'], ['pending_trades', 'échange en attente', 'échanges en attente'],
+  ['open_wishes', 'demande de guilde', 'demandes de guilde'], ['showcase', 'vitrine', 'vitrines'], ['avatars', 'avatar', 'avatars'],
 ] as const
 
 const readableDetail = (d: CardDetail | null): CardDetail | null =>
@@ -128,12 +131,12 @@ export function CardsClient({ role }: { role: StaffRole }) {
                 {c.hide_image && <li className="font-medium">Image masquée</li>}
                 {c.nsfw_image && <li className="font-medium">Image sensible</li>}
                 {d.removal && <li className="font-medium wrap-anywhere">{`Retirée le ${formatShortDate(d.removal.removed_at)} : ${d.removal.reason}`}</li>}
-                <li>{`${formatInt(d.image_reports)} signalements d'image`}</li>
+                <li>{count(d.image_reports, 'signalement d\'image', 'signalements d\'image')}</li>
                 <li>{`Banque de quiz : ${d.quiz_bank ? 'oui' : 'non'}`}</li>
               </ul>
               <h3 className="pt-1 text-sm font-bold">Engagements en cours</h3>
               <ul className="space-y-1 text-sm">
-                {ENGAGEMENTS.map(([k, label]) => <li key={k}>{`${formatInt(d.engagements[k])} ${label}`}</li>)}
+                {ENGAGEMENTS.map(([k, one, many]) => <li key={k}>{count(d.engagements[k], one, many)}</li>)}
               </ul>
             </div>
           </div>
@@ -172,6 +175,7 @@ export function CardsClient({ role }: { role: StaffRole }) {
 
       {picker && (
         <CatalogPicker
+          title="Choisir une carte"
           onClose={() => setPicker(false)}
           onPick={async (pickedId) => {
             setPicker(false)
@@ -182,7 +186,9 @@ export function CardsClient({ role }: { role: StaffRole }) {
       {d && c && (modal === 'hide' || modal === 'nsfw') && (
         <ActionModal
           title={modal === 'hide' ? (c.hide_image ? 'Afficher l\'image ?' : 'Masquer l\'image ?') : (c.nsfw_image ? 'Retirer « sensible » ?' : 'Marquer l\'image comme sensible ?')}
-          consequence={`${modal === 'hide' && !c.hide_image ? 'Les avatars qui montrent cette image sont retirés ; les signalements sont effacés.' : 'Les signalements de cette carte sont effacés : le compteur repart de zéro.'}`}
+          consequence={(modal === 'hide' ? !c.hide_image : !c.nsfw_image)
+            ? 'Les avatars qui montrent cette image sont retirés ; les signalements de cette carte sont effacés.'
+            : 'Les signalements de cette carte sont effacés : le compteur repart de zéro.'}
           action={modal === 'hide' ? (c.hide_image ? 'Afficher l\'image' : 'Masquer l\'image') : (c.nsfw_image ? 'Retirer « sensible »' : 'Marquer sensible')}
           tone={modal === 'hide' && !c.hide_image ? 'danger' : 'primary'}
           onClose={() => setModal(null)}
@@ -203,13 +209,13 @@ export function CardsClient({ role }: { role: StaffRole }) {
           onClose={() => setModal(null)}
           onConfirm={async (reason) => {
             const res = await post<{ voided_auctions?: number; cancelled_trades?: number }>(`remove:${c.id}`, `${base}/removal`, 'POST', reason)
-            toast(`Carte retirée : ${formatInt(res.voided_auctions ?? 0)} ventes annulées, ${formatInt(res.cancelled_trades ?? 0)} échanges annulés.`)
+            toast(`Carte retirée : ${count(res.voided_auctions ?? 0, 'vente annulée', 'ventes annulées')}, ${count(res.cancelled_trades ?? 0, 'échange annulé', 'échanges annulés')}.`)
             done()
           }}
         >
           <ul className="space-y-1 text-sm">
-            {ENGAGEMENTS.map(([k, label]) => <li key={k}>{`${formatInt(d.engagements[k])} ${label}`}</li>)}
-            <li>{`${formatInt(d.image_reports)} signalements d'image`}</li>
+            {ENGAGEMENTS.map(([k, one, many]) => <li key={k}>{count(d.engagements[k], one, many)}</li>)}
+            <li>{count(d.image_reports, 'signalement d\'image', 'signalements d\'image')}</li>
           </ul>
         </ActionModal>
       )}
