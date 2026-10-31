@@ -1,0 +1,44 @@
+export type StaffRole = 'admin' | 'moderator'
+
+export type Health = {
+  settle_lag_s: number | null
+  overdue_s: number | null
+  push_lag_s: number | null
+  quiz: { queued: number | null; oldest_s: number | null } | null
+}
+
+export type Dashboard = {
+  open_reports: number
+  image_reports: number
+  auto_hidden_cards: number
+  active_sanctions: number
+  removed_cards: number
+  auth_pending: number
+  health: Health
+}
+
+export type AuditRow = {
+  id: number
+  staff_id: string | null
+  staff_username: string | null
+  action: string
+  target_type: string
+  target_id: string
+  reason: string
+  created_at: string
+}
+
+export type AuditPage = { actions: AuditRow[]; hasMore: boolean }
+
+export const TARGET_TYPES = [
+  ['user', 'Joueur'], ['card', 'Carte'], ['guild', 'Guilde'], ['guild_message', 'Message de guilde'], ['guild_wish', 'Souhait'],
+  ['dm', 'Message privé'], ['dm_pair', 'Paire de joueurs'], ['report', 'Signalement'], ['sanction', 'Sanction'],
+] as const
+
+export const ACTION_LABELS: Record<string, string> = {
+  sanction: 'Sanction', sanction_revoke: 'Sanction levée', auth_sync: 'Session resynchronisée', achievements_recheck: 'Check rouvert',
+  report_review: 'Signalement traité', dm_read: 'Messages lus', dm_delete: 'Message supprimé', card_flags: 'Drapeaux d\'image',
+  image_auto_hide: 'Image masquée d\'office', card_remove: 'Carte retirée', card_restore: 'Carte remise', quiz_clear: 'Banque effacée',
+  guild_dissolve: 'Guilde dissoute', guild_message_delete: 'Message de guilde supprimé', guild_wish_remove: 'Souhait retiré',
+  ban_carryover: 'Bannissement reporté',
+}

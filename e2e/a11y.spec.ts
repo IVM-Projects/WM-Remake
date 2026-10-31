@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { befriend, expect, giveCopies, imageCopy, makeGuild, makePlayer, sql, test } from './fixtures'
+import { befriend, cookieFor, expect, giveCopies, imageCopy, makeGuild, makePlayer, makeStaff, sql, test } from './fixtures'
 import { stubPush } from './push-stub'
 
 type Known = { rule: string; selector: string }
@@ -54,6 +54,9 @@ const READY: Record<string, string> = {
   '/achievements': 'main [data-ready]',
   // Classement des joueurs lu (ou l'échec).
   '/leaderboard': 'main [data-ready]',
+  // Tableau de bord et journal lus (ou l'échec).
+  '/admin': 'main [data-ready]',
+  '/admin/audit': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -71,6 +74,21 @@ for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-passwo
     if (READY[path]) await page.locator(READY[path]).waitFor()
     await settled(page)
     await expectNoSeriousViolations(page)
+  })
+}
+
+for (const path of ['/admin', '/admin/audit']) {
+  test(`axe ${path} (staff)`, async ({ page, context, baseURL }) => {
+    const u = makeStaff()
+    try {
+      await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+      await page.goto(path)
+      await page.locator(READY[path]).waitFor()
+      await settled(page)
+      await expectNoSeriousViolations(page)
+    } finally {
+      sql(`delete from auth.users where id = :'uid'`, { uid: u.uid })
+    }
   })
 }
 

@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { StaffLink } from './StaffLink'
 
 const LINK = 'inline-flex min-h-11 items-center font-medium text-accent underline hover:text-accent-light'
 const LINKS = [['/credits', 'Crédits'], ['/terms', 'Conditions'], ['/rules', 'Règles'], ['/privacy', 'Confidentialité']] as const
@@ -16,6 +17,7 @@ export function Footer() {
           </Link>
         </span>
       ))}
+      <StaffLink />
     </footer>
   )
 }
