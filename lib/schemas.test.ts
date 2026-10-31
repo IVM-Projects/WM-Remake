@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { boolParam, CollectionQuery, filterArgs, pageParam, pgText, PushEndpoint, PushSubscriptionBody, rarityList } from '@/lib/schemas'
+import { AdminSanction, boolParam, CollectionQuery, filterArgs, pageParam, pgText, PushEndpoint, PushSubscriptionBody, rarityList } from '@/lib/schemas'
 
 describe('schémas de query', () => {
   it('pgText : \\0 et demi-paire UTF-16 seule (haute ou basse) refusés, « Caractère invalide » ; paire d\'émoji acceptée', () => {
@@ -40,5 +40,11 @@ describe('schémas de query', () => {
       expect(PushSubscriptionBody.safeParse({ endpoint, keys }).error?.issues[0].message, JSON.stringify(endpoint)).toBe('Abonnement push invalide')
     }
     expect(PushSubscriptionBody.parse({ endpoint: 'https://fcm.googleapis.com/fcm/send/a', keys }).endpoint).toBe('https://fcm.googleapis.com/fcm/send/a')
+  })
+
+  it('AdminSanction.ends_at : année 0000 refusée (« Date invalide », hors de timestamptz) ; 0001 et 9999 acceptées', () => {
+    const at = (ends_at: string) => AdminSanction.safeParse({ kind: 'suspension', reason: 'motif', ends_at })
+    expect(at('0000-06-15T00:00:00Z').error?.issues[0].message).toBe('Date invalide')
+    expect([at('0001-01-01T00:00:00Z').success, at('9999-12-31T23:59:59+02:00').success]).toEqual([true, true])
   })
 })

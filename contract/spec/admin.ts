@@ -248,7 +248,7 @@ export const admin: RouteSpec[] = [
       },
     },
     {
-      name: 'modérateur qui bannit → 403 ; motif \'ab\' → 400 ; kind \'x\' → 400 zod ; même clé deux fois → corps identiques, un seul audit',
+      name: 'modérateur qui bannit → 403 ; motif \'ab\' → 400 ; kind \'x\' et ends_at en 0000 → 400 zod ; même clé deux fois → corps identiques, un seul audit',
       run: async (env) => {
         const [boss, mod] = [staffOf(env, 'admin'), staffOf(env, 'moderator')]
         const p = player(env)
@@ -256,6 +256,10 @@ export const admin: RouteSpec[] = [
         await refused(await sanction(env, boss.uid, p.uid, { kind: 'warning', reason: 'ab' }), 400,
           'Le motif est obligatoire (3 à 500 caractères)', 'invalid_request')
         await refused(await sanction(env, boss.uid, p.uid, { kind: 'x' }), 400, 'Sanction inconnue', 'invalid_request')
+        // Année 0000 : bien formée en RFC 3339, hors de timestamptz (22008) → 400 zod, jamais 500 ; aucune sanction.
+        await refused(await sanction(env, boss.uid, p.uid, { kind: 'suspension', ends_at: '0000-06-15T00:00:00Z' }), 400, 'Date invalide',
+          'invalid_request')
+        assert.equal(sql(env, `select count(*) from wm.sanctions where user_id = :'u'`, { u: p.uid }), '0')
         const key = idem()
         const first = await created(await sanction(env, boss.uid, p.uid, { kind: 'warning' }, key), Sanctioned)
         assert.deepEqual(await created(await sanction(env, boss.uid, p.uid, { kind: 'warning' }, key), Sanctioned), first)

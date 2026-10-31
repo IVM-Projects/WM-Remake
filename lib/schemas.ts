@@ -107,7 +107,8 @@ export const PushTypes = z.object({ push_types: z.array(pgText).max(20) })
 export const AdminReason = z.object({ reason: pgText })
 export const AdminSanction = z.object({
   kind: z.enum(['warning', 'restriction', 'suspension', 'ban'], { error: 'Sanction inconnue' }),
-  ends_at: z.iso.datetime({ offset: true }).nullish(),
+  // Année 0000 : valide en RFC 3339, absente de timestamptz (22008 → 500) ; la fenêtre de dates reste vérifiée en SQL.
+  ends_at: z.iso.datetime({ offset: true }).refine((v) => !v.startsWith('0000'), 'Date invalide').nullish(),
   reason: pgText,
   report_id: z.uuid().nullish(),
 })
