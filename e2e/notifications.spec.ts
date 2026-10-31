@@ -129,6 +129,19 @@ returning data ->> 'auction_id'`, { uid, t: title })
   await expect(panel(page).getByRole('link', { name: `Tu as été surenchéri sur ${title}`, exact: true })).toHaveAttribute('href', `/marketplace/${auction}`)
 })
 
+test('vente annulée par le staff : « La vente de <card_title> a été annulée », lien vers l\'enchère', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  const title = `Zz carte e2e ${randomUUID().slice(-12)}`
+  const auction = sql(`insert into public.notifications (user_id, type, data) values (:'uid', 'auction_voided', jsonb_build_object(
+  'auction_id', gen_random_uuid(), 'card_id', gen_random_uuid(), 'card_title', :'t', 'amount', 100))
+returning data ->> 'auction_id'`, { uid, t: title })
+  await page.goto('/pulls')
+  await expect(badge(page)).toHaveText('1')
+  await bell(page).click()
+  await expect(panel(page).getByRole('link', { name: `La vente de ${title} a été annulée`, exact: true })).toHaveAttribute('href', `/marketplace/${auction}`)
+})
+
 test('message privé : « Alice t\'a écrit », lien vers le fil /dms?with=<user_id>', async ({ page, login }) => {
   const { uid } = await login()
   trash.push(uid)

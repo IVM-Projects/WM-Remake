@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test'
-import { expect, hydrated, routeOnce, sql, test } from './fixtures'
+import { expect, hydrated, imageCopy, routeOnce, sql, test } from './fixtures'
 
 // 60 copies des cartes n° 0001 à 0060 du seed (L 1–6, UR 7–30, SR 31–60), la plus récente = le plus grand numéro.
 // Tri par rareté : page 1 = L 6…1, UR 30…7, SR 60…41 ; page 2 = SR 40…31, dont n° 0031 en 3 exemplaires.
@@ -530,6 +530,8 @@ test('collection vide : état vide et lien vers les paquets', async ({ page, log
 })
 
 // Page d'erreur de la plateforme (délai de la fonction dépassé) : texte brut, aucun JSON.
+// lib/api.ts UNSURE, recopié : les e2e n'importent pas le code de l'app.
+const UNSURE = 'L\'action n\'a pas été confirmée : elle a peut-être eu lieu.'
 const PLATFORM_504 = { status: 504, contentType: 'text/plain', body: 'An error occurred with your deployment\n\nFUNCTION_INVOCATION_TIMEOUT' }
 const DISCARD_UNSURE = 'La défausse n\'a pas été confirmée : la carte a peut-être été défaussée. Ton solde et ta collection se mettent à jour.'
 const BULK_UNSURE = 'La défausse n\'a pas été confirmée : une partie a peut-être eu lieu. Ton solde et ta collection se mettent à jour.'
@@ -851,4 +853,44 @@ test('lien « Voir l\'article sur Wikipédia → » de la modale : cible de 44 p
   const link = page.getByRole('dialog', { name: title(6) }).locator('a', { hasText: 'Voir l\'article sur Wikipédia →' })
   // Hauteur de mise en page : la boîte englobante suit l'entrée animée du panneau (translate), d'où un 43,99… possible.
   expect(await link.evaluate((a) => (a as HTMLElement).offsetHeight)).toBeGreaterThanOrEqual(44)
+})
+
+test('« Signaler l\'image » de la modale : au clavier, bascule, focus gardé, issue incertaine dite, cible de 44 px', async ({ page, login }) => {
+  const me = await login()
+  const copy = imageCopy(me)
+  const card = sql(`select card_id from public.user_cards where id = :'copy'`, { copy })
+  try {
+    sql(`update public.cards set image_url = image_url || '#' || id where id = :'card'`, { card })
+    const name = sql(`select wikipedia_title from public.cards where id = :'card'`, { card })
+    const reports = () => sql(`select count(*) from wm.card_image_reports where card_id = :'card' and user_id = :'uid'`, { card, uid: me.uid })
+    await page.goto('/collection')
+    await page.getByRole('button', { name, exact: true }).click()
+    const dialog = page.getByRole('dialog', { name })
+    const report = dialog.getByRole('button', { name: 'Signaler l\'image' })
+    await expect(report).toHaveAttribute('aria-pressed', 'false')
+    await expect(report).toHaveAttribute('aria-disabled', 'false')
+    expect(await report.evaluate((b) => (b as HTMLElement).offsetHeight)).toBeGreaterThanOrEqual(44)
+    await report.focus()
+    await page.keyboard.press('Enter')
+    await expect(report).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('#wm-toasts')).toContainText('Image signalée. L\'équipe va la vérifier.')
+    await expect(report).toBeFocused()
+    expect(reports()).toBe('1')
+    await page.keyboard.press('Enter')
+    await expect(report).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.locator('#wm-toasts')).toContainText('Signalement retiré.')
+    expect(reports()).toBe('0')
+    // POST exécuté puis réponse perdue : issue incertaine dite, bouton non pressé ; la relance rejoue la clé.
+    await routeOnce(page, '**/api/cards/*/image-report', async (r) => { await r.fetch(); await r.fulfill({ status: 500, body: 'x' }) }, (r) => r.request().method() === 'POST')
+    await page.keyboard.press('Enter')
+    await expect(dialog.getByRole('alert')).toHaveText(UNSURE)
+    await expect(report).toHaveAttribute('aria-pressed', 'false')
+    await expect(report).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(report).toHaveAttribute('aria-pressed', 'true')
+    await expect(dialog.getByRole('alert')).toHaveCount(0)
+  } finally {
+    sql(`delete from public.user_cards where id = :'copy'`, { copy })
+    sql(`delete from public.cards where id = :'card'`, { card })
+  }
 })
