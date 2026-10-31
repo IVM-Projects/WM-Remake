@@ -116,7 +116,7 @@ test('notificationView : texte et lien des 12 types, et d\'un type inconnu', () 
     n('trade_received', t), n('trade_countered', t), n('trade_accepted', t), n('trade_declined', t), n('trade_cancelled', t),
     n('friend_request', f), n('friend_accepted', f),
     n('auction_outbid', a), n('auction_won', a), n('auction_sold', a), n('auction_unsold', a), n('wishlist_listed', { ...a, card_title: undefined }),
-    n('guild_invite', { guild_id: 'g-1' }),
+    n('inconnu_x', { guild_id: 'g-1' }),
   ].map(notificationView)
   expect(views).toEqual([
     { text: 'Alice te propose un échange', href: '/trades/t-1' },
@@ -136,6 +136,15 @@ test('notificationView : texte et lien des 12 types, et d\'un type inconnu', () 
   ])
   // Une unité au singulier (wikibidous(1)).
   expect(notificationView(n('auction_sold', { ...a, amount: 1 })).text).toBe('Chat vendue pour 1 wikibidou')
+})
+
+test('notificationView : les trois types guild_* (data de wm.notify_guild) → leur texte, lien /guild', () => {
+  const g = { guild_id: 'g-1', guild_name: 'Les Archivistes', user_id: 'u-1', username: 'Alice' }
+  expect(['guild_invite', 'guild_kicked', 'guild_donation'].map((type) => notificationView(n(type, g)))).toEqual([
+    { text: 'Alice t\'invite dans la guilde Les Archivistes', href: '/guild' },
+    { text: 'Tu ne fais plus partie de la guilde Les Archivistes', href: '/guild' },
+    { text: 'Alice t\'a donné la carte que tu demandais', href: '/guild' },
+  ])
 })
 
 test('notificationView : chat_message → « Alice t\'a écrit », lien du fil (M4b-4)', () => {

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
-import { ghost, primary } from '@/components/ui/button'
+import { danger, ghost, primary } from '@/components/ui/button'
 import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
@@ -15,7 +15,6 @@ import { unreadStore } from '@/lib/notifications'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 
 const entry = navEntry('/friends')
-const danger = 'inline-flex min-h-11 items-center rounded-xl bg-red-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-red-800 aria-disabled:cursor-progress aria-disabled:opacity-80'
 const row = 'flex flex-wrap items-center justify-between gap-2 px-4 py-2'
 // Un pseudo de 24 caractères sans coupure passe à la ligne au lieu d'élargir la page (360 px).
 const who = 'min-w-0 font-medium wrap-anywhere'

@@ -10,7 +10,7 @@ import { Card } from '@/components/card/Card'
 import { Countdown } from '@/components/market/Countdown'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
-import { ghost, link, primary } from '@/components/ui/button'
+import { danger, ghost, link, primary } from '@/components/ui/button'
 import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
@@ -23,7 +23,6 @@ import { createBrowserSupabase } from '@/lib/supabase/browser'
 const entry = navEntry('/battle')
 // Réponse perdue ou 5xx : l'action a pu avoir lieu ; relancée, elle garde sa clé (apiOnce) et le serveur rejoue sa réponse.
 const ARENA_UNSURE = `${UNSURE} La bataille se met à jour.`
-const danger = 'inline-flex min-h-11 items-center rounded-xl bg-red-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-red-800 aria-disabled:cursor-progress aria-disabled:opacity-80'
 const hint = 'text-sm text-[var(--color-foreground)]/70'
 const stateLine = 'font-semibold outline-none wrap-anywhere'
 type Action = 'accept' | 'decline' | 'withdraw_invite' | 'forfeit' | 'submit_deck' | 'submit_attack' | 'submit_single_answer'
@@ -348,6 +347,7 @@ export function ArenaClient() {
               {b.winner_id === me ? 'Victoire !' : 'Défaite'}
             </h2>
             {reward !== null && <p className="font-semibold">{`+${formatInt(reward)} ${wikibidous(reward)}`}</p>}
+            {b.winner_id === me && (g?.guildPoints ?? 0) > 0 && <p className="font-semibold">{`+${formatInt(g!.guildPoints!)} points pour ta guilde`}</p>}
             <div className="flex flex-wrap items-center gap-3">
               <Link href="/battle" className={link}>Retour aux batailles</Link>
               <Link href="/battle" className={primary}>Nouveau défi</Link>

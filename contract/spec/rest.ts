@@ -44,6 +44,9 @@ const REPRESENTATION = { prefer: 'return=representation', 'content-profile': 'pu
 // Sélection de rest/v1/auctions lue par les clients (R§3.5).
 const AUCTION_COLUMNS = 'id,card_id,seller_id,base_amount,listing_base_amount,current_bid,current_bidder_id,final_price,status,end_at,settled_at,winner_id,created_at,snapshot_rarity,is_shiny'
 
+// Colonnes lues du R§3.8 (R§3.8 : `category` et `threshold` probables).
+const Achievement = z.strictObject({ id: z.guid(), title: z.string(), description: z.string(), wikibidous_reward: z.int().min(1),
+  sort_order: z.int(), category: z.string(), threshold: z.int().min(1) })
 const Profile = z.object({ id: z.uuid(), username: z.string() }).loose()
 const Synced = z.strictObject({
   username: z.string(), avatar_url: z.string().nullable(), is_pro: z.boolean(), is_vip: z.boolean(), pack_cap: z.int(), packs_remaining: z.int(),
@@ -395,4 +398,34 @@ where a.id = :'id'`, { id: kept }))
       },
     },
   ], 'inc.'),
+  spec('GET', 'achievements', 'R§3.8', [
+    {
+      name: 'select=* (JWT du joueur) → 51 succès, chacun Achievement ; POST → 403 42501',
+      run: async (env) => {
+        const [me] = players(env)
+        const rows = z.array(Achievement).parse(await status(await rest(env, 'achievements?select=*', { uid: me, headers: { range: '0-999' } }), 200))
+        assert.equal(rows.length, 51)
+        await pgError(await rest(env, 'achievements', { method: 'POST', uid: me, body: { title: 'x', description: 'x', wikibidous_reward: 1, category: 'x', threshold: 1 } }), 403, '42501')
+      },
+    },
+  ], 'prob.'),
+  spec('GET', 'user_achievements', 'R§3.8', [
+    {
+      name: 'select=achievement_id,claimed_at&user_id=eq.<moi> → mes lignes seules ; user_id d\'un autre → [] ; PATCH de claimed_at → 403 42501',
+      run: async (env) => {
+        const [me, other] = players(env)
+        giveCards(env.backend.databaseUrl, me, 'C')
+        giveCards(env.backend.databaseUrl, other, 'C')
+        for (const u of [me, other]) sql(env, `select wm.achievements_check(:'u')`, { u })
+        const mine = sql(env, `select string_agg(achievement_id::text, ',' order by achievement_id) from public.user_achievements where user_id = :'u'`, { u: me })
+        const rows = z.array(z.strictObject({ achievement_id: z.guid(), claimed_at: z.string().nullable() }))
+          .parse(await status(await rest(env, `user_achievements?select=achievement_id,claimed_at&user_id=eq.${me}`, { uid: me }), 200))
+        assert.ok(rows.length >= 1)
+        assert.equal(rows.map((r) => r.achievement_id).toSorted().join(','), mine)
+        assert.deepEqual(await status(await rest(env, `user_achievements?select=achievement_id,claimed_at&user_id=eq.${other}`, { uid: me }), 200), [])
+        await pgError(await rest(env, `user_achievements?user_id=eq.${me}`, { method: 'PATCH', uid: me, body: { claimed_at: new Date().toISOString() }, headers: MINIMAL }), 403, '42501')
+        assert.equal(sql(env, `select count(*) from public.user_achievements where user_id = :'u' and claimed_at is not null`, { u: me }), '0')
+      },
+    },
+  ], 'prob.'),
 ]

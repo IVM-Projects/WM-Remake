@@ -58,16 +58,19 @@ $$;
 
 do $$ begin
   assert pg_temp.battle_config() -> 'battle' = '{"questions":3,"pool":6,"quota_free":3,"quota_pro":10,"invite_ttl_h":24,"idle_loss_h":48,
-    "reward_win":50,"reward_loss":10}'::jsonb, pg_temp.battle_config()::text;
+    "reward_win":50,"reward_loss":10,"guild_points_win":500}'::jsonb, pg_temp.battle_config()::text;
   assert pg_temp.battle_config() #> '{list_caps,battles_closed}' = '50', 'list_caps.battles_closed';
   assert (select coalesce(note, '') <> '' from wm.config where key = 'battle'), 'note manquante';
 end $$;
 
--- Rejeu de 1900 : mêmes valeurs, et une valeur déjà posée garde la sienne.
+-- Rejeu de 1900, suivi de 2000 qui redéfinit check_invariants (M5b-18), puis de 2040 qui redéfinit battle_finish : mêmes valeurs, et une
+-- valeur déjà posée garde la sienne.
 create temp table battle_config as select pg_temp.battle_config() v;
 update wm.config set value = value || '{"quota_free": 5}' where key = 'battle';
 update wm.config set value = value || '{"battles_closed": 7}' where key = 'list_caps';
 \ir ../migrations/1900_wm_battle_core.sql
+\ir ../migrations/2000_wm_progress_core.sql
+\ir ../migrations/2040_wm_score_hooks.sql
 do $$ begin
   assert pg_temp.battle_config() = jsonb_set(jsonb_set((select v from battle_config), '{battle,quota_free}', '5'), '{list_caps,battles_closed}', '7'),
     pg_temp.battle_config()::text;
@@ -199,7 +202,7 @@ do $$ declare a uuid; b uuid; c uuid; x uuid; r jsonb; d jsonb;
     d := wm.battles_list(a, 'Europe/Paris');
     assert d -> 'challenge_quota' = jsonb_build_object('used', 1, 'limit', 3, 'resets_at', reset), d::text;
     assert d -> 'rules' = '{"questions":3,"pool":6,"quota_free":3,"quota_pro":10,"invite_ttl_h":24,"idle_loss_h":48,"reward_win":50,
-      "reward_loss":10}', d::text;
+      "reward_loss":10,"guild_points_win":500}', d::text;
     -- Détail d'un pending (C5, C6) : les 8 colonnes, les deux joueurs, expires_at, idle_at nul, game_state nul ; ni deck ni récompense.
     d := wm.battle_detail(b, x);
     assert d = jsonb_build_object('battle', jsonb_build_object('id', x, 'challenger_id', a, 'opponent_id', b, 'winner_id', null,
@@ -1001,7 +1004,9 @@ do $$ declare a uuid; b uuid; c uuid[]; x uuid; r jsonb; g jsonb; m text; v json
         and game_state #> array['players', b::text, 'currentHp'] = '0' and game_state #> '{turnHistory,0,damageDealt}' = '1000'
       from public.battles where id = x), (select game_state::text from public.battles where id = x);
     assert (select array_agg(kk order by kk) from public.battles, jsonb_object_keys(game_state) kk where id = x) = array['currentTurnUserId',
-      'pendingAttack', 'phase', 'players', 'turnHistory', 'turnNumber', 'winnerId'], (select game_state::text from public.battles where id = x);
+      'guildPoints', 'pendingAttack', 'phase', 'players', 'turnHistory', 'turnNumber', 'winnerId'],
+      (select game_state::text from public.battles where id = x);
+    assert (select game_state -> 'guildPoints' = '0' from public.battles where id = x), 'guildPoints sans guilde';
     foreach v in array array[wm.battle_detail(a, x), wm.battle_detail(b, x)] loop
       foreach k in array array['correct_option_id', 'evidence', 'answer', 'q_index', 'correct'] loop
         assert not jsonb_path_exists(v, ('lax $.**.' || k)::jsonpath), 'fin : clé ' || k;
@@ -1136,6 +1141,60 @@ do $$ declare a uuid; b uuid; c uuid[]; x uuid; q3 uuid; o text; g jsonb; m text
     r := pg_temp.ans(b, x, q3, o);
     assert r ->> 'status' = 'completed' and pg_temp.rewards(x) = jsonb_build_object(a, 50, b, 10), r::text;
     perform pg_temp.inv('erreur injectée');
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+end $$;
+
+-- Score de guilde (2040, M5b-2, M5b-3, G5, R3) : +500 à la guilde du gagnant de toute bataille finie, game_state.guildPoints = 500, ou 0
+-- sans guilde. A (chef de G) gagne par l'abandon de B (sans guilde) ; B gagne contre C (0, aucune ligne de plus) ; A gagne contre M, membre
+-- de G (+500) ; C perd A par inactivité (+500) ; D, seul membre de G2, quitte (dissolution) avant de gagner → 0, sans erreur.
+do $$ declare a uuid; b uuid; c uuid; d uuid; m uuid; k uuid[]; g uuid; g2 uuid; x uuid; r jsonb; w date := wm.week_start(now());
+  rows jsonb; begin
+  begin
+    a := pg_temp.player('BatGuiA'); b := pg_temp.player('BatGuiB'); c := pg_temp.player('BatGuiC'); d := pg_temp.player('BatGuiD');
+    m := pg_temp.player('BatGuiM');
+    k := pg_temp.bcards('BatGui', array[1000, 400, 400, 400, 400, 400], array[500, 500, 500, 500, 500, 500]);
+    perform pg_temp.fill();
+    perform pg_temp.own(u, k) from unnest(array[a, b, c, d, m]) u;
+    g := (wm.guild_create(a, 'Guilde BatGuiA') -> 'guild' ->> 'id')::uuid;
+    perform pg_temp.friends(a, m);
+    perform wm.guild_invite(a, m);
+    perform wm.guild_join(m, g);
+    g2 := (wm.guild_create(d, 'Guilde BatGuiD') -> 'guild' ->> 'id')::uuid;
+    rows := (select jsonb_agg(to_jsonb(s) order by s.guild_id) from public.guild_weekly_scores s);
+    -- A gagne par l'abandon de B.
+    x := pg_temp.active(b, a, k[4:6], k[1:3]);
+    r := wm.battle_action(b, x, 'forfeit');
+    assert r #> '{battle,game_state,guildPoints}' = '500', r::text;
+    assert (select score_battles = 500 and score_wb = 0 from public.guild_weekly_scores where week_start = w and guild_id = g), 'abandon : score';
+    -- B, sans guilde, gagne contre C : 0, et seule la ligne de G a changé.
+    x := pg_temp.active(c, b, k[1:3], k[4:6]);
+    r := wm.battle_action(c, x, 'forfeit');
+    assert r #> '{battle,game_state,guildPoints}' = '0' and (select game_state -> 'guildPoints' = '0' from public.battles where id = x), r::text;
+    assert (select jsonb_agg(to_jsonb(s) order by s.guild_id) from public.guild_weekly_scores s where guild_id <> g)
+      is not distinct from (select jsonb_agg(e order by e ->> 'guild_id') from jsonb_array_elements(rows) e where e ->> 'guild_id' <> g::text),
+      'ligne d''une guilde de B';
+    -- Deux membres de G : +500 (M5b-3).
+    x := pg_temp.active(m, a, k[4:6], k[1:3]);
+    r := wm.battle_action(m, x, 'forfeit');
+    assert r #> '{battle,game_state,guildPoints}' = '500', r::text;
+    assert (select score_battles from public.guild_weekly_scores where week_start = w and guild_id = g) = 1000, 'membres de G';
+    -- Inactivité : au tour de C, inactif depuis 49 h → A gagne.
+    x := pg_temp.active(c, a, k[4:6], k[1:3]);
+    update public.battles set updated_at = updated_at - interval '49 hours' where id = x;
+    perform wm.expire_battles(5000);
+    assert (select winner_id = a and game_state -> 'guildPoints' = '500' from public.battles where id = x), 'inactivité : vainqueur';
+    assert (select score_battles from public.guild_weekly_scores where week_start = w and guild_id = g) = 1500, 'inactivité : score';
+    -- G2 dissoute avant la fin : 0, sans erreur.
+    x := pg_temp.active(b, d, k[4:6], k[1:3]);
+    perform wm.guild_leave(d);
+    assert not exists (select from public.guilds where id = g2), 'G2 non dissoute';
+    r := wm.battle_action(b, x, 'forfeit');
+    assert r #>> '{battle,winner_id}' = d::text and r #> '{battle,game_state,guildPoints}' = '0', r::text;
+    assert not exists (select from public.guild_weekly_scores where guild_id = g2), 'ligne de G2';
+    assert (select score_battles from public.guild_weekly_scores where week_start = w and guild_id = g) = 1500, 'G après G2';
+    perform pg_temp.inv('score de guilde');
     raise exception using errcode = 'WMT00';
   exception when sqlstate 'WMT00' then null;
   end;

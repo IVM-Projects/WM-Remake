@@ -8,7 +8,7 @@ type Auction = { card_id: string }
 
 // Lecture partagée (P10, P14 du M2) : une erreur levée perdrait code et details en traversant le cache, donc un P0001 (déterministe) et un
 // code occupé sont rendus ; route() en fait le statut du détail ou un 503 BUSY avec Retry-After.
-async function sharedRpc(fn: string, args: Record<string, unknown>): Promise<RpcResult> {
+export async function sharedRpc(fn: string, args: Record<string, unknown>): Promise<RpcResult> {
   const { data, error } = await createAdminClient().schema('wm').rpc(fn, args)
   if (!error) return { data, error: null }
   if (error.code === 'P0001' || BUSY_CODES.has(error.code)) return { data: null, error: { code: error.code, message: error.message, details: error.details } }
@@ -19,7 +19,7 @@ async function sharedRpc(fn: string, args: Record<string, unknown>): Promise<Rpc
 
 // Un code occupé n'est gardé qu'une seconde (profil auction), quel que soit le profil de la donnée ; un seul cacheLife par appel, chaque
 // branche le sien (cacheLife.md, « Conditional cache lifetimes » : les surcharges typées refusent une union).
-const busy = (r: RpcResult) => r.error !== null && r.error.code !== 'P0001'
+export const busy = (r: RpcResult) => r.error !== null && r.error.code !== 'P0001'
 
 // Liste sans joueur, la même pour tous (M3-19) : les arguments forment la clé, normalisée par marketCall (P24).
 export async function sharedMarketList(page: number, limit: number, sort: string, q: string | null, rarity: string[] | null,

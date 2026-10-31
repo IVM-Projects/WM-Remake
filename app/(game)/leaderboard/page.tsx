@@ -1,10 +1,14 @@
 import type { Metadata } from 'next'
 import { navEntry } from '@/components/shell/nav'
-import { ComingSoon } from '@/components/shell/PageHeader'
+import { LeaderboardClient } from './leaderboard-client'
 
-const entry = navEntry('/leaderboard')
-export const metadata: Metadata = { title: entry.title }
+export const metadata: Metadata = { title: navEntry('/leaderboard').title }
 
+// Coquille statique ; les classements se lisent au client.
 export default function LeaderboardPage() {
-  return <ComingSoon entry={entry} />
+  return (
+    <div className="flex-1 p-4 md:p-6 space-y-6">
+      <LeaderboardClient />
+    </div>
+  )
 }

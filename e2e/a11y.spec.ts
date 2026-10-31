@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { befriend, expect, giveCopies, imageCopy, makePlayer, sql, test } from './fixtures'
+import { befriend, expect, giveCopies, imageCopy, makeGuild, makePlayer, sql, test } from './fixtures'
 import { stubPush } from './push-stub'
 
 type Known = { rule: string; selector: string }
@@ -48,6 +48,12 @@ const READY: Record<string, string> = {
   '/battle': 'main [data-ready]',
   // Bataille lue (ou introuvable, ou en échec), session connue.
   '/battle/[id]': 'main [data-ready]',
+  // État de la guilde lu (ou l'échec) ; l'identité du joueur vient de son adhésion, pas d'une lecture de session.
+  '/guild': 'main [data-ready]',
+  // Les deux lectures REST des succès faites (ou l'échec).
+  '/achievements': 'main [data-ready]',
+  // Classement des joueurs lu (ou l'échec).
+  '/leaderboard': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -56,9 +62,9 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .map((a) => a.finished.catch(() => null))))
 
 for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
-  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle']) {
+  'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements', '/leaderboard']) {
   test(`axe ${path}`, async ({ page, login }) => {
-    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle'].includes(path)) await login()
+    if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements', '/leaderboard'].includes(path)) await login()
     // Adresse posée par /login (compte non confirmé) dans sessionStorage, jamais dans l'URL.
     if (path === '/verify-email') await page.addInitScript(() => sessionStorage.setItem('wm.verifyEmail', 'a11y@test.local'))
     await page.goto(path)
@@ -479,5 +485,100 @@ test('axe /settings : erreurs affichées (pseudo pris, mots de passe différents
   await page.getByRole('button', { name: 'Changer le mot de passe' }).click()
   await expect(page.getByText('Les deux mots de passe ne correspondent pas.', { exact: true })).toBeVisible()
   await expect(page.locator('input[name="sounds"]')).toBeVisible()
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /guild : sans guilde (une invitation), membre (onglet Membres, chef), modale « Quitter » ouverte', async ({ page, login }) => {
+  const me = await login()
+  const [leader, mate] = [makePlayer(), makePlayer()]
+  let guild: string | undefined
+  try {
+    guild = makeGuild(leader, [mate])
+    befriend(leader, me)
+    sql(`select wm.guild_invite(:'l', :'m')`, { l: leader.uid, m: me.uid })
+    await page.goto('/guild')
+    await page.locator(READY['/guild']).waitFor()
+    await expect(page.getByRole('button', { name: 'Rejoindre' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Rejoindre' }).click()
+    await page.getByRole('tab', { name: 'Membres' }).click()
+    await expect(page.getByRole('tabpanel').getByRole('listitem')).toHaveCount(3)
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Quitter la guilde' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    if (guild) sql(`delete from public.guilds where id = :'g'`, { g: guild })
+    sql(`delete from auth.users where id in (:'me', :'l', :'m')`, { me: me.uid, l: leader.uid, m: mate.uid })
+  }
+})
+
+test('axe /guild : Chat (deux messages), Entraide (un souhait, modale « Donner », puis le choix d\'une carte à demander), Classement', async ({ page, login }) => {
+  const me = await login()
+  const mate = makePlayer()
+  let guild: string | undefined
+  try {
+    guild = makeGuild(mate, [me])
+    sql(`insert into public.guild_chat_messages (guild_id, user_id, content) values (:'g', :'a', 'Salut'), (:'g', :'b', 'Bonjour')`, { g: guild, a: mate.uid, b: me.uid })
+    const [copy] = giveCopies(me, 'R', 1)
+    sql(`select wm.guild_wish_set(:'u', (select card_id from public.user_cards where id = :'c'))`, { u: mate.uid, c: copy })
+    // Classement posé : le réel est partagé en cache entre les tests.
+    await page.route('**/api/guilds/leaderboard', (r) => r.fulfill({ json: {
+      entries: [{ rank: 1, guild_id: guild, guild_name: 'Notre guilde', member_count: 2, score_battles: 500, score_wb: 7, total_score: 507 }],
+      week_start: '2026-10-26T00:00:00.000Z', week_end: '2026-11-02T00:00:00.000Z', season: 'S53', reset_in_ms: 3_600_000, user_guild_id: guild } }))
+    await page.goto('/guild')
+    await page.locator(READY['/guild']).waitFor()
+    // Deux messages et le séparateur du jour.
+    await expect(page.getByRole('log', { name: 'Chat de la guilde' }).getByRole('listitem')).toHaveCount(3)
+    await expectNoSeriousViolations(page)
+    await page.getByRole('tab', { name: 'Entraide' }).click()
+    await expect(page.getByRole('button', { name: 'Donner' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Donner' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Annuler' }).click()
+    await page.getByRole('button', { name: 'Demander une carte' }).click()
+    await expect(page.getByRole('dialog', { name: 'Choisir une carte à demander' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Annuler' }).click()
+    await page.getByRole('tab', { name: 'Classement' }).click()
+    await expect(page.getByRole('table')).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    if (guild) sql(`delete from public.guilds where id = :'g'`, { g: guild })
+    sql(`delete from auth.users where id in (:'me', :'m')`, { me: me.uid, m: mate.uid })
+  }
+})
+
+test('axe /achievements : un succès verrouillé, un à réclamer, un réclamé', async ({ page, login }) => {
+  const me = await login()
+  giveCopies(me, 'C', 50)
+  sql(`select wm.achievements_check(:'u')`, { u: me.uid })
+  sql(`select wm.achievements_claim(:'u', md5('wm-ach:first_c')::uuid)`, { u: me.uid })
+  await page.goto('/achievements')
+  await page.locator(READY['/achievements']).waitFor()
+  await expect(page.getByRole('button', { name: 'Réclamer' }).first()).toBeVisible()
+  await expect(page.getByText(/^Réclamé le /).first()).toBeVisible()
+  await expect(page.getByText('Verrouillé').first()).toBeVisible()
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /leaderboard : Joueurs (corps posé, ligne du lecteur), Guildes', async ({ page, login }) => {
+  const me = await login()
+  // Corps posé : le classement réel est partagé en cache entre les tests.
+  await page.route('**/api/leaderboard*', (r) => r.fulfill({ json: { board: 'battles', period: 'week', week_start: '2026-10-26T00:00:00.000Z', me: { rank: 2, value: 3 }, entries: [
+    { rank: 1, user_id: '00000000-0000-4000-8000-000000000001', username: 'Alice', avatar_url: null, value: 5 },
+    { rank: 2, user_id: me.uid, username: me.username, avatar_url: null, value: 3 }] } }))
+  await page.route('**/api/guilds/leaderboard', (r) => r.fulfill({ json: {
+    entries: [{ rank: 1, guild_id: '00000000-0000-4000-8000-000000000002', guild_name: 'Les Sages', member_count: 2, score_battles: 500, score_wb: 7, total_score: 507 }],
+    week_start: '2026-10-26T00:00:00.000Z', week_end: '2026-11-02T00:00:00.000Z', season: 'S53', reset_in_ms: 3_600_000, user_guild_id: null } }))
+  await page.goto('/leaderboard')
+  await page.locator(READY['/leaderboard']).waitFor()
+  await expect(page.getByRole('table')).toBeVisible()
+  await settled(page)
+  await expectNoSeriousViolations(page)
+  await page.getByRole('tab', { name: 'Guildes' }).click()
+  await expect(page.getByRole('cell', { name: 'Les Sages' })).toBeVisible()
   await expectNoSeriousViolations(page)
 })

@@ -122,7 +122,7 @@ export function DmsClient() {
           {peerId ? (
             <>
               <Link href="/dms" className={`${link} md:hidden`}>← Conversations</Link>
-              {me && <Thread key={peerId} peerId={peerId} me={me} onSent={() => void read(true)} onSettled={() => setSettled(peerId)} />}
+              {me && <Thread key={peerId} channel={{ kind: 'dm', peerId }} me={me} onSent={() => void read(true)} onSettled={() => setSettled(peerId)} />}
             </>
           ) : (
             <p className="card-frame p-6 text-center text-sm text-[var(--color-foreground)]/70">Choisis une conversation.</p>

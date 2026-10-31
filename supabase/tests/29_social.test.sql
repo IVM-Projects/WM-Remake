@@ -64,15 +64,17 @@ do $$ begin
       "trade_accepted","trade_cancelled","trade_countered","trade_declined","trade_received","wishlist_listed"],
     "push_wake_url":null}'::jsonb, pg_temp.social_config()::text;
   assert pg_temp.social_config() -> 'list_caps'
-    = '{"battles_closed":50,"conversations":50,"friend_owners":3,"friend_search":20,"messages":100,"notifications":50,"trades_closed":200}', 'list_caps';
+    = '{"battles_closed":50,"conversations":50,"friend_owners":3,"friend_search":20,"guild_members":50,"guild_messages":100,"karma_donors":10,"leaderboard":100,"messages":100,"notifications":50,"trades_closed":200}', 'list_caps';
   assert not exists (select from wm.config where key in ('chat_burst', 'push_origins', 'push_max_subscriptions', 'push_types', 'push_wake_url',
     'list_caps') and coalesce(note, '') = ''), 'note manquante';
 end $$;
 
--- Rejeu de 1800 (B3) : mêmes valeurs, et un plafond déjà posé garde sa valeur.
+-- Rejeu de 1800 (B3) : mêmes valeurs, et un plafond déjà posé garde sa valeur. Suivi de 2020, qui redéfinit trade_move
+-- (M5b-18).
 create temp table social_config as select pg_temp.social_config() v;
 update wm.config set value = value || '{"messages": 7}' where key = 'list_caps';
 \ir ../migrations/1800_wm_social_core.sql
+\ir ../migrations/2020_wm_guild_help.sql
 do $$ begin
   assert pg_temp.social_config() = jsonb_set((select v from social_config), '{list_caps,messages}', '7'), pg_temp.social_config()::text;
 end $$;

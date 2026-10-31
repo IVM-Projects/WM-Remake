@@ -4,7 +4,7 @@ import { z } from 'zod'
 export const Rarity = z.enum(['C', 'PC', 'R', 'SR', 'UR', 'L'])
 export const rarityList = z.union([z.array(Rarity), Rarity.transform((r) => [r])])
 // Borné à l'int de PG : au-delà, un 22003 deviendrait un 500.
-const intParam = z.coerce.number().int().min(0).max(2_147_483_647)
+export const intParam = z.coerce.number().int().min(0).max(2_147_483_647)
 export const pageParam = intParam.default(0)
 export const CollectionSort = z.enum(['rarity', 'obtained_at', 'added', 'name', 'atk', 'def', 'starred'])
 export const boolParam = z.enum(['1', 'true', '0', 'false']).optional().transform((v) => v === '1' || v === 'true')
@@ -70,6 +70,22 @@ export const ShowcasePosition = z.object({ position: z.int32() })
 export const ReportBody = z.object({ reportedUserId: z.uuid(), reason: pgText, details: pgText.optional() })
 // Message privé : vide, blancs seuls et plus de 2 000 caractères (points de code) refusés en SQL ; le contenu part tel quel, sans rognage.
 export const ChatBody = z.object({ content: pgText })
+// Guildes (R§3.10) : longueurs et bornes en SQL (P11).
+export const GuildParams = z.object({ guildId: z.uuid() })
+export const GuildCreate = z.object({ name: pgText, description: pgText.nullish() })
+export const GuildJoin = z.object({ guild_id: z.uuid() })
+export const GuildTarget = z.object({ user_id: z.uuid() })
+export const GuildWish = z.object({ card_id: z.uuid() })
+export const GuildDonate = z.object({ wishlist_id: z.uuid(), user_card_id: z.uuid() })
+export const GuildMembersQuery = z.object({ limit: intParam.optional(), offset: intParam.default(0) })
+
+// Succès (R§3.8) et classements (D:613) : board et period validés ici, avant la clé du cache (G11).
+export const AchievementCheck = z.object({ event: z.literal('achievements_sync', { error: 'Événement inconnu' }) })
+export const AchievementClaim = z.object({ achievement_id: z.guid({ error: 'UUID invalide' }) }) // guid : les ids du catalogue sont des md5 sans nibble de version, z.uuid() les refuserait
+export const LeaderboardQuery = z.object({
+  board: z.enum(['battles', 'collection', 'legendary'], { error: 'Classement inconnu' }).default('battles'),
+  period: z.enum(['week', 'all'], { error: 'Période inconnue' }).default('week'),
+})
 
 // Abonnement push (M4b-12) : la forme seulement, chaque refus en « Abonnement push invalide » ; l'origine est contrôlée en SQL (B9), le
 // point sur la courbe dans la route (node:crypto). Tailles sans Buffer, ce fichier partant au navigateur : 65 octets en base64url sans

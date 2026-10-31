@@ -1,6 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode, Ref } from 'react'
-import type { NavEntry } from './nav'
 
 // En-tête de page d'origine (R§6.3) : classes du contrat, ne pas renommer. `children` : les actions, à droite.
 // ref : le h1, que la page focalise (tabIndex -1) quand le contrôle focalisé disparaît.
@@ -14,16 +13,6 @@ export function PageHeader({ title, icon: Icon, children, ref }: { title: string
         {title}
       </h1>
       {children}
-    </div>
-  )
-}
-
-// Page d'attente d'une section, remplacée à son jalon.
-export function ComingSoon({ entry }: { entry: NavEntry }) {
-  return (
-    <div className="flex-1 p-4 md:p-6 space-y-6">
-      <PageHeader title={entry.title} icon={entry.icon} />
-      <p className="text-sm text-[var(--color-foreground)]/60">Cette section arrive bientôt.</p>
     </div>
   )
 }

@@ -5,3 +5,5 @@ export const ghost = 'inline-flex min-h-11 items-center rounded-xl border border
 export const primary = 'inline-flex min-h-11 items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-foreground)] transition-colors hover:bg-[var(--color-accent-light)] aria-disabled:cursor-progress aria-disabled:opacity-80'
 // Lien d'action en accent clair, souligné au survol ; cible de 44 px.
 export const link = 'inline-flex min-h-11 items-center text-sm font-medium text-[var(--color-accent-light)] underline-offset-2 hover:underline'
+// Bouton destructif (rouge) ; inactif en aria-disabled pendant sa requête : curseur d'attente, opacité 80 %.
+export const danger = 'inline-flex min-h-11 items-center rounded-xl bg-red-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-red-800 aria-disabled:cursor-progress aria-disabled:opacity-80'

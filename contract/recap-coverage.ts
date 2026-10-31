@@ -9,4 +9,4 @@ const missing = recap.filter((r) => !covered.has(routeKey(r.method, r.path)))
 
 console.log(`Recap : ${recap.length} routes · couvertes : ${recap.length - missing.length} · manquantes :`)
 for (const r of missing) console.log(`  ${r.section.padEnd(6)} ${routeKey(r.method, r.path)}`)
-// shortcut: rapport non bloquant jusqu'au M6 ; au M7, `process.exitCode = missing.length ? 1 : 0`.
+process.exitCode = missing.length ? 1 : 0 // bloquant dès 90/90 (G12)

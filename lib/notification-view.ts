@@ -35,6 +35,10 @@ export function notificationView({ type, data }: Pick<Notification, 'type' | 'da
     case 'battle_attacked': return { text: `${u} t'attaque : à toi de répondre`, href: battle }
     case 'battle_won': return { text: `Victoire contre ${u}`, href: battle }
     case 'battle_lost': return { text: `Défaite contre ${u}`, href: battle }
+    // Cloche seulement (D-C17) : aucun type guild_* n'est dans push_types.
+    case 'guild_invite': return { text: `${u} t'invite dans la guilde ${data.guild_name}`, href: '/guild' }
+    case 'guild_kicked': return { text: `Tu ne fais plus partie de la guilde ${data.guild_name}`, href: '/guild' }
+    case 'guild_donation': return { text: `${u} t'a donné la carte que tu demandais`, href: '/guild' }
     default: return { text: 'Nouvelle notification', href: null }
   }
 }

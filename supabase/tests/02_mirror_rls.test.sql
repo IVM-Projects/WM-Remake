@@ -1,12 +1,13 @@
 -- RLS et droits de la surface PostgREST d'origine (0002_mirror_rls.sql, 0004_mirror_market.sql, 0005_mirror_trades.sql,
--- 0006_mirror_social.sql, 0007_mirror_battles.sql).
+-- 0006_mirror_social.sql, 0007_mirror_battles.sql, 0008_mirror_progress.sql).
 -- Fixtures communes posées en superutilisateur : Alice et Bob ont chacun une copie, une étiquette, une liaison, un souhait ;
 -- Alice vend « Paris », Bob y a misé, chacun a une notification ; Alice et Bob sont amis, Alice propose à Bob
 -- un échange de leurs deux copies ; Carol, authentifiée, n'a rien. Alice écrit « Salut » à Bob (non lu), met sa copie
 -- en vitrine (emplacement 0), signale Bob pour spam et a un abonnement push. Alice défie Bob (bataille en attente)
--- et y a déjà un deck, trois fois « Paris ».
+-- et y a déjà un deck, trois fois « Paris ». Alice fonde une guilde dont Bob est membre ; Bob y a un souhait, qu'Alice a
+-- honoré (un don), et Alice un message ; la guilde a une ligne de score. Un succès « X fixture » est débloqué par Alice et par Bob.
 
-do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob'); c uuid; t uuid; bt uuid; begin
+do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob'); c uuid; t uuid; bt uuid; g uuid; w uuid; x uuid; begin
   insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def)
   values ('Paris', 'https://fr.wikipedia.org/wiki/Paris', 'R', 10, 10) returning id into c;
   insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_atk, snapshot_def)
@@ -32,18 +33,28 @@ do $$ declare a uuid := tests.make_user('Alice'); b uuid := tests.make_user('Bob
   values (a, 'https://fcm.googleapis.com/fcm/send/fixture', 'k', 'a');
   insert into public.battles (challenger_id, opponent_id, status) values (a, b, 'pending') returning id into bt;
   insert into public.battle_decks (battle_id, user_id, card_ids) values (bt, a, array[c, c, c]);
+  insert into public.guilds (name, leader_id) values ('Fixture', a) returning id into g;
+  insert into public.guild_members (guild_id, user_id, role) values (g, a, 'leader'), (g, b, 'member');
+  insert into public.guild_wishlists (guild_id, user_id, card_id) values (g, b, c) returning id into w;
+  insert into public.guild_donations (guild_id, wishlist_id, donor_id, recipient_id, user_card_id)
+  select g, w, a, b, id from public.user_cards where user_id = a;
+  insert into public.guild_chat_messages (guild_id, user_id, content) values (g, a, 'Bienvenue');
+  insert into public.guild_weekly_scores (week_start, guild_id, score_battles, score_wb) values ('2026-10-26', g, 500, 7);
+  insert into public.achievements (id, title, description, wikibidous_reward, sort_order, category, threshold)
+  values (gen_random_uuid(), 'X fixture', 'Un succès de test', 10, 1, 'collection', 1) returning id into x;
+  insert into public.user_achievements (user_id, achievement_id) values (a, x), (b, x);
 end $$;
 
 do $$ begin
   assert (select array[count(*), count(*) filter (where not c.relrowsecurity)] from pg_class c
-          where c.relnamespace = 'public'::regnamespace and c.relkind = 'r') = '{18, 0}',
-    'tables de public : 18 attendues, toutes sous RLS';
+          where c.relnamespace = 'public'::regnamespace and c.relkind = 'r') = '{26, 0}',
+    'tables de public : 26 attendues, toutes sous RLS';
 end $$;
 
 -- Droits exacts sur toutes les tables de public : anon lit le catalogue seul (0003), rien pour PUBLIC (grantee 0) ;
 -- en écriture, seuls starred, tags.name/color, chat_messages.read et les insert/delete listés ; le marché (0004), les échanges
 -- et amitiés (0005) en lecture seule ; ni vitrine, ni signalements, ni abonnements push (0006, M4b-28) ; ni batailles,
--- ni decks (0007, M5a-11).
+-- ni decks (0007, M5a-11) ; ni les six tables de guilde, mais les succès et les succès débloqués sont lisibles (0008, R:267).
 do $$ declare got text; begin
   select string_agg(g, ', ' order by g collate "C") into got from (
     select format('%s %s %s', coalesce(nullif(a.grantee, 0)::regrole::text, 'public'), c.relname, a.privilege_type) g
@@ -56,13 +67,13 @@ do $$ declare got text; begin
     where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
       and a.grantee in ('anon'::regrole::oid, 'authenticated'::regrole::oid, 0)
   ) s;
-  assert got = 'anon cards SELECT, authenticated auction_bids SELECT, authenticated auctions SELECT, '
+  assert got = 'anon cards SELECT, authenticated achievements SELECT, authenticated auction_bids SELECT, authenticated auctions SELECT, '
     'authenticated cards SELECT, authenticated chat_messages SELECT, authenticated chat_messages.read UPDATE, '
     'authenticated friendships SELECT, authenticated notifications SELECT, '
     'authenticated profiles SELECT, authenticated tags DELETE, '
     'authenticated tags INSERT, authenticated tags SELECT, authenticated tags.color UPDATE, '
     'authenticated tags.name UPDATE, authenticated trade_items SELECT, authenticated trades SELECT, '
-    'authenticated user_card_tags DELETE, authenticated user_card_tags INSERT, '
+    'authenticated user_achievements SELECT, authenticated user_card_tags DELETE, authenticated user_card_tags INSERT, '
     'authenticated user_card_tags SELECT, authenticated user_cards SELECT, authenticated user_cards.starred UPDATE, '
     'authenticated wishlist_items DELETE, authenticated wishlist_items INSERT, authenticated wishlist_items SELECT',
     format('droits inattendus : %s', got);
@@ -114,6 +125,19 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
   perform tests.reset_role();
 end $$;
 
+-- Succès : tout joueur lit le catalogue des succès (autant de lignes que le superutilisateur), et ses seuls succès débloqués.
+do $$ declare a uuid := (select id from public.profiles where username = 'Alice');
+              b uuid := (select id from public.profiles where username = 'Bob');
+              x uuid := (select id from public.achievements where title = 'X fixture');
+              total int := (select count(*) from public.achievements); begin
+  perform tests.login(b);
+  assert (select count(*) from public.achievements where id = x) = 1, 'Bob ne voit pas le succès X';
+  assert (select count(*) from public.achievements) = total, 'Bob ne voit pas tout le catalogue des succès';
+  assert (select array_agg(user_id) from public.user_achievements) = array[b], 'succès débloqués d''autrui visibles';
+  assert (select count(*) from public.user_achievements where user_id = a) = 0, 'succès d''Alice visibles';
+  perform tests.reset_role();
+end $$;
+
 -- Échanges et amitiés : Bob et Alice lisent l'échange, ses deux éléments et l'amitié ; Carol, étrangère, rien (M4-14) ;
 -- aucune écriture client ; anon ne lit pas les échanges. Vitrine, signalements et abonnements push : aucun droit client (M4b-28) ;
 -- batailles et decks non plus, même pour le défié (M5a-11).
@@ -162,7 +186,39 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
     'insert into public.battle_decks (battle_id, user_id, card_ids)'
       ' values (gen_random_uuid(), $1, array[gen_random_uuid(), gen_random_uuid(), gen_random_uuid()])',
     'update public.battle_decks set created_at = now() where user_id = $3',
-    'delete from public.battle_decks where user_id = $3'] loop
+    'delete from public.battle_decks where user_id = $3',
+    'select count(*) from public.guilds',
+    'insert into public.guilds (name) values (''x'')',
+    'update public.guilds set name = ''x'' where leader_id = $3',
+    'delete from public.guilds where leader_id = $3',
+    'select count(*) from public.guild_members',
+    'insert into public.guild_members (guild_id, user_id) values (gen_random_uuid(), $1)',
+    'update public.guild_members set role = ''leader'' where user_id = $1',
+    'delete from public.guild_members where user_id = $1',
+    'select count(*) from public.guild_wishlists',
+    'insert into public.guild_wishlists (guild_id, user_id, card_id) values (gen_random_uuid(), $1, gen_random_uuid())',
+    'update public.guild_wishlists set fulfilled_at = now() where user_id = $1',
+    'delete from public.guild_wishlists where user_id = $1',
+    'select count(*) from public.guild_donations',
+    'insert into public.guild_donations (guild_id, wishlist_id, donor_id, recipient_id, user_card_id)'
+      ' values (gen_random_uuid(), gen_random_uuid(), $1, $3, gen_random_uuid())',
+    'update public.guild_donations set created_at = now() where donor_id = $3',
+    'delete from public.guild_donations where donor_id = $3',
+    'select count(*) from public.guild_chat_messages',
+    'insert into public.guild_chat_messages (guild_id, user_id, content) values (gen_random_uuid(), $1, ''x'')',
+    'update public.guild_chat_messages set content = ''x'' where user_id = $3',
+    'delete from public.guild_chat_messages where user_id = $3',
+    'select count(*) from public.guild_weekly_scores',
+    'insert into public.guild_weekly_scores (week_start, guild_id) values (now(), gen_random_uuid())',
+    'update public.guild_weekly_scores set score_wb = 1 where week_start > ''2000-01-01''',
+    'delete from public.guild_weekly_scores where week_start > ''2000-01-01''',
+    'insert into public.achievements (id, title, description, wikibidous_reward, sort_order, category, threshold)'
+      ' values (gen_random_uuid(), ''x'', ''x'', 1, 1, ''x'', 1)',
+    'update public.achievements set wikibidous_reward = 999 where title = ''X fixture''',
+    'delete from public.achievements where title = ''X fixture''',
+    'insert into public.user_achievements (user_id, achievement_id) values ($1, gen_random_uuid())',
+    'update public.user_achievements set claimed_at = now() where user_id = $1',
+    'delete from public.user_achievements where user_id = $1'] loop
     begin execute s using b, tr, a; assert false, format('écriture client permise : %s', s);
     exception when insufficient_privilege then null; end;
   end loop;
@@ -298,6 +354,8 @@ do $$ begin
   assert (select count(*) from public.trades) = 1, 'service_role ne voit pas les échanges';
   assert (select count(*) from public.trade_items) = 2, 'service_role ne voit pas les éléments d''échange';
   assert (select count(*) from public.friendships) = 1, 'service_role ne voit pas les amitiés';
+  assert (select count(*) from public.guilds) = 1, 'service_role ne voit pas la guilde';
+  assert (select count(*) from public.guild_members) = 2, 'service_role ne voit pas les membres';
   perform tests.reset_role();
 end $$;
 
@@ -341,4 +399,61 @@ do $$ declare a uuid := (select id from public.profiles where username = 'Alice'
   delete from public.profiles where id = b;
   assert not exists (select from public.battles) and not exists (select from public.battle_decks),
     'bataille ou deck d''un profil supprimé';
+end $$;
+
+-- Contraintes de guilde et de succès (0008), en superutilisateur. Bob est déjà supprimé : la guilde des fixtures n'a plus
+-- qu'Alice, qu'on supprime à son tour en dernier.
+do $$ declare a uuid := (select id from public.profiles where username = 'Alice');
+              g uuid := (select id from public.guilds);
+              g2 uuid; ts bigint; begin
+  assert (select count(*) from public.guild_members where guild_id = g) = 1, 'Bob membre après la suppression de son profil';
+  assert not exists (select from public.guild_wishlists) and not exists (select from public.guild_donations),
+    'souhait ou don d''un profil supprimé';
+  begin insert into public.guilds (name) values (repeat('é', 41)); assert false, 'nom de 41 caractères';
+  exception when check_violation then null; end;
+  insert into public.guilds (name) values (repeat('é', 40)) returning id into g2;
+  delete from public.guilds where id = g2;
+  begin insert into public.guilds (name) values (''); assert false, 'nom vide';
+  exception when check_violation then null; end;
+  begin insert into public.guilds (name, description) values ('x', repeat('é', 281)); assert false, 'description de 281 caractères';
+  exception when check_violation then null; end;
+  begin insert into public.guild_chat_messages (guild_id, user_id, content) values (g, a, repeat('é', 1001));
+    assert false, 'message de 1001 caractères';
+  exception when check_violation then null; end;
+  begin insert into public.guild_members (guild_id, user_id) values (g, a); assert false, 'Alice deux fois membre';
+  exception when unique_violation then null; end;
+  begin insert into public.guild_members (guild_id, user_id, role) values (g, a, 'x'); assert false, 'rôle inconnu';
+  exception when invalid_text_representation then null; end;
+  update public.guild_weekly_scores set score_battles = 1000, score_wb = 20 where guild_id = g;
+  select total_score into ts from public.guild_weekly_scores where guild_id = g;
+  assert ts = 1020, format('total_score = %s au lieu de 1020', ts);
+  begin insert into public.achievements (id, title, description, wikibidous_reward, sort_order, category, threshold)
+    values (gen_random_uuid(), 'x', 'x', 0, 1, 'x', 1);
+    assert false, 'récompense nulle';
+  exception when check_violation then null; end;
+  -- Le chef supprimé, la guilde reste sans chef et son message disparaît.
+  delete from public.profiles where id = a;
+  assert (select leader_id from public.guilds where id = g) is null, 'chef supprimé : leader_id non nul';
+  assert not exists (select from public.guild_chat_messages where guild_id = g), 'message d''un profil supprimé';
+  assert not exists (select from public.user_achievements), 'succès débloqué d''un profil supprimé';
+  assert exists (select from public.achievements where title = 'X fixture'), 'succès supprimé avec un profil';
+end $$;
+
+-- Cascade de la suppression d'une guilde : membres, souhaits, dons, messages et scores. Fixtures dédiées, profils intacts.
+do $$ declare u uuid := tests.make_user('Dora'); v uuid := tests.make_user('Eve'); c uuid; g uuid; w uuid; begin
+  insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def)
+  values ('Lyon', 'https://fr.wikipedia.org/wiki/Lyon', 'R', 10, 10) returning id into c;
+  insert into public.guilds (name, leader_id) values ('Cascade', u) returning id into g;
+  insert into public.guild_members (guild_id, user_id, role) values (g, u, 'leader'), (g, v, 'member');
+  insert into public.guild_wishlists (guild_id, user_id, card_id) values (g, v, c) returning id into w;
+  insert into public.guild_donations (guild_id, wishlist_id, donor_id, recipient_id, user_card_id)
+  values (g, w, u, v, gen_random_uuid());
+  insert into public.guild_chat_messages (guild_id, user_id, content) values (g, u, 'Salut');
+  insert into public.guild_weekly_scores (week_start, guild_id) values ('2026-10-26', g);
+  delete from public.guilds where id = g;
+  assert not exists (select from public.guild_members where guild_id = g), 'membres d''une guilde supprimée';
+  assert not exists (select from public.guild_wishlists where guild_id = g), 'souhaits d''une guilde supprimée';
+  assert not exists (select from public.guild_donations where guild_id = g), 'dons d''une guilde supprimée';
+  assert not exists (select from public.guild_chat_messages where guild_id = g), 'messages d''une guilde supprimée';
+  assert not exists (select from public.guild_weekly_scores where guild_id = g), 'scores d''une guilde supprimée';
 end $$;
