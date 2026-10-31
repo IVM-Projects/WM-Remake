@@ -154,7 +154,7 @@ begin
   from (select * from public.chat_messages
     where (sender_id = p_user_a and recipient_id = p_user_b) or (sender_id = p_user_b and recipient_id = p_user_a)
     order by created_at desc, id desc
-    limit (select (value ->> 'dm_messages')::int from wm.config where key = 'admin')) m;
+    limit coalesce((select (value ->> 'dm_messages')::int from wm.config where key = 'admin'), 100)) m;
   perform wm.staff_log(p_uid, 'dm_read', 'dm_pair', least(p_user_a, p_user_b)::text || ':' || greatest(p_user_a, p_user_b)::text,
     v_reason, jsonb_build_object('count', jsonb_array_length(v_msgs)));
   return jsonb_build_object('messages', v_msgs);
@@ -203,7 +203,7 @@ begin
   end if;
   select coalesce(jsonb_agg(x.j order by x.created_at desc, x.id desc) filter (where x.rn <= v_size), '[]'), coalesce(bool_or(x.rn > v_size), false)
   into v_rows, v_more
-  from (select r.id, r.created_at, row_number() over (order by r.created_at desc, r.id desc) rn,
+  from (select z.*, row_number() over (order by z.created_at desc, z.id desc) rn from (select r.id, r.created_at,
       jsonb_build_object('id', r.id, 'reason', r.reason, 'details', r.details, 'created_at', r.created_at,
         'reporter', jsonb_build_object('id', r.reporter_id, 'username', (select username from public.profiles where id = r.reporter_id)),
         'reported', jsonb_build_object('id', r.reported_user_id, 'username', (select username from public.profiles where id = r.reported_user_id)),
@@ -215,7 +215,7 @@ begin
     from public.reports r
     where (p_status = 'reviewed') = exists (select from wm.report_reviews v where v.report_id = r.id)
     order by r.created_at desc, r.id desc
-    limit v_size + 1 offset greatest(coalesce(p_page, 0), 0) * v_size) x;
+    limit v_size + 1 offset greatest(coalesce(p_page, 0), 0)::bigint * v_size) z) x;
   return jsonb_build_object('reports', v_rows, 'hasMore', v_more);
 end $$;
 
@@ -230,13 +230,13 @@ begin
   perform wm.staff_actor(p_uid);
   select coalesce(jsonb_agg(x.j order by x.rn) filter (where x.rn <= v_size), '[]'), coalesce(bool_or(x.rn > v_size), false)
   into v_rows, v_more
-  from (select row_number() over (order by q.reports desc, q.last_reported_at desc, q.card_id) rn,
-      jsonb_build_object('card_id', c.id, 'wikipedia_title', c.wikipedia_title, 'image_url', c.image_url, 'hide_image', c.hide_image,
+  from (select z.*, row_number() over (order by z.reports desc, z.last_reported_at desc, z.card_id) rn from (select q.reports,
+      q.last_reported_at, q.card_id, jsonb_build_object('card_id', c.id, 'wikipedia_title', c.wikipedia_title, 'image_url', c.image_url, 'hide_image', c.hide_image,
         'nsfw_image', c.nsfw_image, 'reports', q.reports, 'last_reported_at', q.last_reported_at) j
     from (select card_id, count(*) reports, max(created_at) last_reported_at from wm.card_image_reports group by card_id) q
     join public.cards c on c.id = q.card_id
     order by q.reports desc, q.last_reported_at desc, q.card_id
-    limit v_size + 1 offset greatest(coalesce(p_page, 0), 0) * v_size) x;
+    limit v_size + 1 offset greatest(coalesce(p_page, 0), 0)::bigint * v_size) z) x;
   return jsonb_build_object('cards', v_rows, 'hasMore', v_more);
 end $$;
 

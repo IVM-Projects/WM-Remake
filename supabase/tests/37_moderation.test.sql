@@ -614,11 +614,11 @@ do $$ declare m uuid := pg_temp.staff('moderator'); p uuid := pg_temp.player('Fl
     assert (wm.card_image_report_set(u, x, true) ->> 'hidden')::boolean = false, 'pas de boucle avant 10';
   end loop;
   assert (wm.card_image_report_set(tests.make_user('FlagNew10'), x, true) ->> 'hidden')::boolean, 're-masquée au 10e';
-  r := wm.admin_card_flags(m, x, false, true, 'Image sensible');
-  assert r -> 'cleared_avatars' = '0' and r -> 'cleared_reports' = '10' and (select nsfw_image from public.cards where id = x), r::text;
+  -- nsfw seul (faux -> vrai, hide_image inchangé à vrai) vide l'avatar d'une copie.
   update public.profiles set avatar_user_card_id = ca where id = a;
-  r := wm.admin_card_flags(m, x, true, true, 'Retiré');
-  assert r -> 'cleared_avatars' = '1' and (select avatar_user_card_id is null and avatar_url is null from public.profiles where id = a), r::text;
+  r := wm.admin_card_flags(m, x, true, true, 'Image sensible');
+  assert r -> 'cleared_avatars' = '1' and r -> 'cleared_reports' = '10' and (select nsfw_image and hide_image from public.cards where id = x)
+    and (select avatar_user_card_id is null and avatar_url is null from public.profiles where id = a), r::text;
 end $$;
 
 -- Revue d'un signalement.
@@ -717,6 +717,10 @@ do $$ declare m uuid := pg_temp.staff('moderator'); p uuid := pg_temp.player('Ls
   r := wm.staff_reports(m, 'open');
   assert jsonb_array_length(r -> 'reports') = 50 and (r ->> 'hasMore')::boolean, 'page de 50';
   assert (wm.staff_reports(m, 'open', -3) -> 'reports') = r -> 'reports', 'page bornée à 0';
+  r := wm.staff_reports(m, 'open', 1);
+  assert jsonb_array_length(r -> 'reports') = (select count(*) - 50 from public.reports r2 where not exists (select from wm.report_reviews v where v.report_id = r2.id))
+    and not (r ->> 'hasMore')::boolean and jsonb_array_length(r -> 'reports') >= 1, 'page 1 : le reste, hasMore faux';
+  assert jsonb_array_length(wm.staff_reports(m, 'open', 2147483647) -> 'reports') = 0, 'page énorme : vide';
   d := pg_temp.err(format('select wm.staff_reports(%L, %L)', m, 'x'));
   assert d = pg_temp.e(400, 'invalid_request', 'Statut inconnu'), d::text;
   d := pg_temp.err(format('select wm.staff_reports(%L)', p));
@@ -734,6 +738,16 @@ do $$ declare m uuid := pg_temp.staff('moderator'); p uuid := pg_temp.player('Ls
     = array['card_id', 'hide_image', 'image_url', 'last_reported_at', 'nsfw_image', 'reports', 'wikipedia_title'], 'clés';
   assert (select e -> 'reports' from jsonb_array_elements(r -> 'cards') e where e ->> 'card_id' = x::text) = '10'
     and (select e -> 'reports' from jsonb_array_elements(r -> 'cards') e where e ->> 'card_id' = y::text) = '2', 'comptes';
+  -- Page 1 : 51 cartes de plus que celles déjà signalées donnent un reste non vide, hasMore faux ; page 0 pleine, hasMore vrai.
+  insert into public.cards (wikipedia_title, wikipedia_url, rarity, atk, def)
+  select 'LstPg ' || g, 'https://fr.wikipedia.org/wiki/LstPg_' || g, 'R', 1, 1 from generate_series(1, 51) g;
+  insert into wm.card_image_reports (card_id, user_id) select c.id, a from public.cards c where c.wikipedia_title like 'LstPg %';
+  r := wm.staff_image_reports(m, 0);
+  assert jsonb_array_length(r -> 'cards') = 50 and (r ->> 'hasMore')::boolean, 'images page 0';
+  r := wm.staff_image_reports(m, 1);
+  assert jsonb_array_length(r -> 'cards') = (select count(distinct card_id) - 50 from wm.card_image_reports) and not (r ->> 'hasMore')::boolean
+    and jsonb_array_length(r -> 'cards') >= 1, 'images page 1';
+  assert jsonb_array_length(wm.staff_image_reports(m, 2147483647) -> 'cards') = 0, 'images page énorme';
   d := pg_temp.err(format('select wm.staff_image_reports(%L)', p));
   assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
 end $$;
