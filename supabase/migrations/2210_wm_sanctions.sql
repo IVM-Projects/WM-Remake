@@ -69,6 +69,7 @@ declare
   v_role text;
   v_reason text;
   s wm.sanctions;
+  v_hashes int := 0;
 begin
   v_resp := wm.idem_claim(p_uid, p_idem);
   if v_resp is not null then
@@ -90,8 +91,16 @@ begin
   end if;
   perform wm.lock_user(s.user_id);
   update wm.sanctions set revoked_at = now() where id = s.id returning * into s;
+  -- G1 : plus aucun bannissement actif → l'empreinte d'e-mail s'efface, par l'id (pierre tombale, e-mail déjà effacé par GoTrue) et par
+  -- l'e-mail (ban reporté sur un nouveau compte : l'empreinte porte l'id de l'ancien). Condition de ban actif : celle de wm.auth_state.
+  if s.kind = 'ban' and not exists (select from wm.sanctions x where x.user_id = s.user_id and x.kind = 'ban' and x.revoked_at is null
+    and x.starts_at <= now() and (x.ends_at is null or x.ends_at > now())) then
+    delete from wm.banned_emails
+    where user_id = s.user_id or email_hash = (select wm.email_hash(u.email) from auth.users u where u.id = s.user_id and u.email is not null);
+    get diagnostics v_hashes = row_count;
+  end if;
   perform wm.staff_log(p_uid, 'sanction_revoke', 'sanction', s.id::text, v_reason,
-    jsonb_build_object('user_id', s.user_id, 'kind', s.kind));
+    jsonb_build_object('user_id', s.user_id, 'kind', s.kind, 'hashes_removed', v_hashes));
   return wm.idem_store(p_uid, p_idem, jsonb_build_object('sanction', wm.sanction_json(s), 'auth', wm.auth_state(s.user_id)));
 end $$;
 

@@ -1,6 +1,7 @@
 -- ADDITIVE : socle de la modération du M6a (D§7.12, G1 à G10 du M6a) — config image_reports, account_export et admin, user_state.export_at,
 -- audit staff_actions, signalements d'image, revues de signalements, comptes supprimés, empreintes d'e-mail bannies, index ; actor (même
--- signature, même corps et même réponse qu'en 1000 (déployée, non retouchée), plus le refus d'un compte supprimé), email_hash, staff_actor,
+-- signature, même corps et même réponse qu'en 1000 (déployée, non retouchée), plus le refus d'un compte supprimé et l'acteur noté dans
+-- wm.actor_uid pour wm.lock_user et wm.lock_users, 2250), email_hash, staff_actor,
 -- admin_reason, staff_log, auth_state, access_check, staff_me, sanction_json. Idempotente.
 -- Compatible pg-safeupdate (préchargé par le PostgREST hébergé, même dans les fonctions) : aucun DELETE/UPDATE ici.
 
@@ -102,6 +103,8 @@ begin
       jsonb_build_object('packs_blocked_until', p.packs_blocked_until));
   end if;
   select role into v_role from wm.staff where user_id = p_uid;
+  -- Acteur de la transaction : wm.lock_user et wm.lock_users (2250) relisent sous son verrou qu'il n'a pas été supprimé entre-temps.
+  perform set_config('wm.actor_uid', p_uid::text, true);
   return jsonb_build_object('is_pro', p.is_pro, 'is_vip', p.is_vip, 'is_staff', v_role is not null, 'staff_role', v_role);
 end $$;
 
@@ -120,6 +123,8 @@ declare
   v_role text;
   v_ends timestamptz;
 begin
+  -- Chemin staff : aucun acteur joueur (une levée sur une pierre tombale prend son profil par wm.lock_user, 2250).
+  perform set_config('wm.actor_uid', '', true);
   select * into p from public.profiles where id = p_uid;
   if not found or exists (select from wm.deleted_accounts where user_id = p_uid) then
     perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');

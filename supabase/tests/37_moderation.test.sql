@@ -342,7 +342,7 @@ do $$ declare a uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderat
   assert wm.actor(b) ->> 'is_staff' = 'false', 'actor passe';
   select * into x from wm.staff_actions where action = 'sanction_revoke' and target_id = i::text;
   assert x.staff_id = a and x.target_type = 'sanction' and x.reason = 'Erreur de cible'
-    and x.payload = jsonb_build_object('user_id', b, 'kind', 'ban'), to_jsonb(x)::text;
+    and x.payload = jsonb_build_object('user_id', b, 'kind', 'ban', 'hashes_removed', 0), to_jsonb(x)::text;
   d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', a, i, 'Encore une fois'));
   assert d = pg_temp.e(409, null, 'Cette sanction est déjà levée'), d::text;
   j := pg_temp.sanction(a, b2, 'ban');
@@ -755,7 +755,10 @@ end $$;
 -- lock_timeout, ordre des verrous, lectures stables, aides sous les verrous de l'appelant.
 do $$ declare bad text; begin
   assert tests.lock_timeout_violations(array['card_image_report_set', 'admin_card_flags', 'admin_report_review', 'admin_dm_delete'],
-    array['for update', 'wm.lock_user(']) is null, 'lock_timeout';
+    array['for update', 'for no key update', 'wm.lock_user(']) is null, 'lock_timeout';
+  -- Ligne de carte : seules des colonnes hors clé changent, d'où for no key update (le for key share des copies neuves passe).
+  assert (select bool_and(strpos(prosrc, 'from public.cards where id = p_card_id for no key update') > 0) and count(*) = 2 from pg_proc
+    where oid in (to_regproc('wm.card_image_report_set'), to_regproc('wm.admin_card_flags'))), 'cartes for no key update';
   assert strpos((select prosrc from pg_proc where oid = to_regproc('wm.card_avatar_clear')), 'lock_timeout') = 0, 'card_avatar_clear sans lock_timeout';
   select string_agg(f, ', ') into bad from unnest(array['card_image_report_get(uuid, uuid)', 'staff_reports(uuid, text, integer)',
     'staff_image_reports(uuid, integer)']) f where (select provolatile from pg_proc where oid = ('wm.' || f)::regprocedure) <> 's';

@@ -3,7 +3,8 @@
 -- e-mail banni (anti-évasion, G1) ; tombstone_guard et son trigger profiles_tombstone_guard (plan B de G1) ; check_invariants : même
 -- signature, même corps et même réponse qu'en 2000 (déployée, non retouchée), plus pool_removed et deleted_account ; friend_request et
 -- friend_search : mêmes signatures, mêmes corps et mêmes réponses qu'en 1710 (déployée, non retouchée), plus le refus et l'exclusion
--- d'un compte supprimé (Task 6b). Idempotente.
+-- d'un compte supprimé (Task 6b) ; lock_user et lock_users : mêmes signatures, mêmes corps et mêmes réponses qu'en 1100 et 1600
+-- (déployées, non retouchées), plus le refus de l'acteur supprimé entre wm.actor et son verrou (revue finale). Idempotente.
 -- Compatible pg-safeupdate (préchargé par le PostgREST hébergé, même dans les fonctions) : tout DELETE/UPDATE garde un WHERE.
 -- Aucune des fonctions redéfinies ici ne porte de réglage dans proconfig (leçon de 1960).
 
@@ -28,7 +29,8 @@ begin
 end $$;
 
 -- Inscription GoTrue (D§7.1) : un refus lève P0001, que GoTrue relaie en 500 avec message et detail.
--- 2250 : un e-mail dont l'empreinte est dans wm.banned_emails (compte supprimé sous bannissement, G1) repart banni, audit système.
+-- 2250 : un e-mail dont l'empreinte est dans wm.banned_emails (compte supprimé sous bannissement, G1) repart banni, audit système, et
+-- banned_until GoTrue posé au mieux.
 create or replace function wm.handle_new_user()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare m jsonb := coalesce(new.raw_user_meta_data, '{}');
@@ -50,6 +52,13 @@ begin
   if exists (select from wm.banned_emails where email_hash = wm.email_hash(new.email)) then
     insert into wm.sanctions (user_id, kind, reason) values (new.id, 'ban', 'Compte lié à un compte banni supprimé');
     perform wm.staff_log(null, 'ban_carryover', 'user', new.id::text, 'Compte lié à un compte banni supprimé', '{}');
+    -- Ban GoTrue posé tout de suite (G4 : connexion et renouvellement refusés), la valeur de banDuration ('876000h', lib/admin-auth.ts).
+    -- Au mieux : un privilège refusé (hébergé) ne fait jamais échouer l'inscription ; « Resynchroniser la session » rattrape.
+    begin
+      update auth.users set banned_until = now() + interval '876000 hours' where id = new.id;
+    exception when insufficient_privilege then
+      raise warning 'ban GoTrue reporté non posé (%)', sqlstate;
+    end;
   end if;
   return null;
 end $$;
@@ -195,6 +204,47 @@ returns jsonb language sql security definer set search_path = '' as $$
   ) x
 $$;
 
+-- Pseudo d'un compte supprimé recopié dans les notifications d'autrui (account_delete) ; sert aussi aux lectures de 1860 par expéditeur.
+-- Option A : CONCURRENTLY par le runbook.
+create index if not exists notifications_actor_idx on public.notifications ((data ->> 'user_id'));
+
+-- Redéfinie de 1100 : même signature, même corps et même réponse qu'en 1100 (déployée, non retouchée), plus le refus de l'acteur
+-- (wm.actor_uid, posé par wm.actor) supprimé pendant qu'il attendait ce verrou : wm.actor l'a laissé passer avant que la suppression
+-- valide (open_pack, guild_create…). Le staff (staff_actor vide wm.actor_uid) et les contreparties ne sont pas visés.
+-- Étapes 2 et 3 de C4 pour un joueur ; les lignes wm manquantes (profil migré, sans trigger) sont créées au passage.
+create or replace function wm.lock_user(p_uid uuid)
+returns public.profiles language plpgsql security definer set search_path = '' as $$
+declare p public.profiles;
+begin
+  select * into p from public.profiles where id = p_uid for update;
+  if not found then
+    perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
+  end if;
+  if p_uid::text = current_setting('wm.actor_uid', true) and exists (select from wm.deleted_accounts where user_id = p_uid) then
+    perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
+  end if;
+  insert into wm.user_state (user_id) values (p_uid) on conflict do nothing;
+  insert into wm.user_stats (user_id) values (p_uid) on conflict do nothing;
+  insert into wm.user_prefs (user_id) values (p_uid) on conflict do nothing;
+  perform from wm.user_state where user_id = p_uid for update;
+  return p;
+end $$;
+
+-- Redéfinie de 1600 : même signature, même corps et même réponse qu'en 1600 (déployée, non retouchée), plus le même refus de l'acteur
+-- supprimé que wm.lock_user (place_bid, create_trade…).
+-- Étapes 2 et 3 de C4 pour plusieurs joueurs (M3-12). `= any` ignore null et doublons ; LockRows passe après le tri, donc verrous dans l'ordre
+-- des id. Un id inconnu est ignoré.
+create or replace function wm.lock_users(p_uids uuid[])
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  perform from public.profiles where id = any (p_uids) order by id for update;
+  if exists (select from wm.deleted_accounts where user_id = any (p_uids) and user_id::text = current_setting('wm.actor_uid', true)) then
+    perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
+  end if;
+  insert into wm.user_state (user_id) select id from public.profiles where id = any (p_uids) order by id on conflict do nothing;
+  perform from wm.user_state where user_id = any (p_uids) order by user_id for update;
+end $$;
+
 -- Suppression de compte immédiate (A3, M6a-3), une transaction. Politique d'effacement (G1) :
 --   gardé (données partagées, preuves, argent) : la ligne profiles et son id, messages privés et de guilde, échanges clos, batailles
 --   finies, dons de guilde, signalements déposés et reçus, sanctions, grand livre, solde inerte, succès, statistiques, audit ; aussi
@@ -207,7 +257,9 @@ $$;
 --   (annulées, ou finies au profit de l'adversaire si active), guilde (départ, transmission au plus ancien membre relu sous le verrou de
 --   la guilde, dissolution s'il n'en reste aucun) ;
 --   relu sous les verrous : un engagement (souhait de guilde ouvert compris) absent du premier relevé → 503 BUSY, tout est annulé ;
---   anti-évasion : empreinte de l'e-mail seulement sous bannissement actif.
+--   anti-évasion : empreinte de l'e-mail seulement sous bannissement actif ;
+--   pseudo recopié dans les notifications des autres joueurs (data.username des notify_*, battle_won écrit ici compris) : remplacé par
+--   le pseudo de la pierre tombale.
 -- Sans wm.actor : un banni exerce ce droit tant que sa session vit.
 -- M6b : la résiliation de l'abonnement Stripe se branche dans la route, avant la suppression GoTrue (A3).
 -- shortcut: collection effacée en une transaction ; au-delà d'environ 488 000 copies (N mesuré par la Task 6b sur un banc local sans
@@ -247,7 +299,11 @@ begin
     perform wm.raise_err(400, 'invalid_request', 'Tape ton pseudo exactement pour confirmer');
   end if;
   perform set_config('lock_timeout', '2s', true);
-  -- Ordre C4, le même que wm.admin_card_remove : souhait ouvert, échanges, enchères, batailles, amitiés, puis les profils, puis la guilde.
+  -- Ordre C4 : amitiés d'abord (wm.friend_remove tient l'amitié puis annule les échanges en attente de la paire : prises après les
+  -- échanges, elles fermeraient un cycle, 40P01), puis souhait ouvert, échanges, enchères, batailles (l'ordre de wm.admin_card_remove,
+  -- qui ne prend aucune amitié), puis les profils, puis la guilde.
+  select coalesce(array_agg(x.id order by x.id), '{}') into v_friends
+  from (select id from public.friendships where p_uid in (requester_id, addressee_id) order by id for update) x;
   select coalesce(array_agg(x.id order by x.id), '{}') into v_wishes
   from (select id from public.guild_wishlists where user_id = p_uid and fulfilled_at is null order by id for update) x;
   select coalesce(array_agg(x.id order by x.id), '{}') into v_trades
@@ -257,8 +313,6 @@ begin
   select coalesce(array_agg(x.id order by x.id), '{}') into v_battles
   from (select id from public.battles where status in ('pending', 'deck_selection', 'generating_quizzes', 'active')
     and p_uid in (challenger_id, opponent_id) order by id for update) x;
-  select coalesce(array_agg(x.id order by x.id), '{}') into v_friends
-  from (select id from public.friendships where p_uid in (requester_id, addressee_id) order by id for update) x;
   -- Contreparties, plus les autres membres de sa guilde s'il en est chef (le successeur doit être tenu) ; lock_users ignore null.
   v_users := array(select p_uid
     union select unnest(array[seller_id, current_bidder_id]) from public.auctions where id = any (v_auctions)
@@ -350,6 +404,10 @@ begin
       avatar_url = null, is_public = false
     where id = p_uid;
   end;
+  -- Après le renommage (le battle_won écrit plus haut par battle_finish compris), relu de la ligne : 8 ou 16 hex. Lignes d'autrui, jsonb
+  -- seul : aucun verrou de profil (index notifications_actor_idx).
+  update public.notifications set data = jsonb_set(data, '{username}', to_jsonb((select username from public.profiles where id = p_uid)))
+  where data ->> 'user_id' = p_uid::text and data ? 'username';
   insert into wm.deleted_accounts (user_id) values (p_uid);
   return wm.idem_store(p_uid, p_idem, jsonb_build_object('ok', true, 'voided_auctions', cardinality(v_auctions),
     'cancelled_trades', cardinality(v_trades), 'finished_battles', v_finished, 'cancelled_battles', v_cancelled, 'guild', v_guild));

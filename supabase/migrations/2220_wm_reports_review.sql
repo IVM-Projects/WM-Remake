@@ -43,7 +43,7 @@ begin
   end if;
   perform wm.actor(p_uid);
   perform set_config('lock_timeout', '2s', true);
-  select * into c from public.cards where id = p_card_id for update;
+  select * into c from public.cards where id = p_card_id for no key update;
   if not found then
     perform wm.raise_err(404, null, 'Carte introuvable');
   end if;
@@ -84,7 +84,7 @@ begin
     perform wm.raise_err(400, 'invalid_request', 'Drapeaux invalides');
   end if;
   perform set_config('lock_timeout', '2s', true);
-  select * into c from public.cards where id = p_card_id for update;
+  select * into c from public.cards where id = p_card_id for no key update;
   if not found then
     perform wm.raise_err(404, null, 'Carte introuvable');
   end if;

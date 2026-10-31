@@ -36,8 +36,11 @@ do $$ declare old uuid := gen_random_uuid(); u uuid; v uuid; s wm.sanctions; a w
   select * into a from wm.staff_actions where target_type = 'user' and target_id = u::text;
   assert a.staff_id is null and a.action = 'ban_carryover' and a.reason = 'Compte lié à un compte banni supprimé' and a.payload = '{}',
     to_jsonb(a)::text;
+  -- Ban GoTrue posé par le trigger (banDuration '876000h' de lib/admin-auth.ts).
+  assert (select banned_until from auth.users where id = u) = now() + interval '876000 hours', 'banned_until du report';
   v := pg_temp.signup('AccClean', 'autre@test.local');
   assert exists (select from public.profiles where id = v), 'profil propre';
+  assert (select banned_until from auth.users where id = v) is null, 'aucun ban GoTrue';
   assert not exists (select from wm.sanctions where user_id = v), 'aucune sanction';
   assert not exists (select from wm.staff_actions where target_id = v::text), 'aucun audit';
 end $$;
@@ -273,6 +276,14 @@ do $$ declare
   assert (select count(*) from public.reports where d in (reporter_id, reported_user_id)) = 2, 'signalements';
   assert exists (select from wm.sanctions where user_id = d and kind = 'warning'), 'sanction';
   assert (select count(*) from wm.wb_ledger where id = any (led)) = cardinality(led), 'grand livre gardé';
+  -- Pseudo recopié chez les autres (revue finale) : trade_received et battle_invite de E, battle_won de F écrit par la suppression.
+  assert not exists (select from public.notifications where data ->> 'username' = 'd_user'), 'ancien pseudo dans une notification';
+  assert (select data ->> 'username' from public.notifications where user_id = e and type = 'trade_received' and data ->> 'trade_id' = tr::text)
+    = pg_temp.tomb(d), 'trade_received de E';
+  assert (select data ->> 'username' from public.notifications where user_id = e and type = 'battle_invite'
+    and data ->> 'battle_id' = be::text) = pg_temp.tomb(d), 'battle_invite de E';
+  assert (select data ->> 'username' from public.notifications where user_id = f and type = 'battle_won' and data ->> 'battle_id' = bf::text)
+    = pg_temp.tomb(d), 'battle_won de F';
   assert pr.wikibidous_balance = (select balance_after from wm.wb_ledger where user_id = d order by id desc limit 1), 'solde';
   -- Dénoué.
   assert (select status from public.auctions where id = au1) = 'cancelled', 'enchère de D';
@@ -372,6 +383,52 @@ do $$ declare b uuid := pg_temp.player('AccBan'); s uuid := pg_temp.player('AccS
   perform pg_temp.inv('anti-évasion');
 end $$;
 
+-- Levée du bannissement (G1, /privacy) : plus aucun ban actif → l'empreinte s'efface, sur la pierre tombale (par l'id : GoTrue a effacé
+-- l'e-mail) comme sur un ban reporté (par l'e-mail : l'empreinte porte l'id de l'ancien compte) ; une réinscription repart sans ban.
+do $$ declare adm uuid := pg_temp.player('AccLiftAdm'); b uuid := pg_temp.player('AccLift'); em text; i bigint; j bigint; k bigint;
+  u uuid; v uuid; w uuid; begin
+  insert into wm.staff (user_id, role) values (adm, 'admin');
+  select email into em from auth.users where id = b;
+  insert into wm.sanctions (user_id, kind, reason) values (b, 'ban', 'Bannissement d''essai') returning id into i;
+  insert into wm.sanctions (user_id, kind, reason) values (b, 'ban', 'Second bannissement') returning id into j;
+  perform wm.account_delete(b, 'AccLift');
+  update auth.users set email = null where id = b;  -- suppression douce GoTrue
+  assert exists (select from wm.banned_emails where user_id = b), 'empreinte posée';
+  perform wm.admin_sanction_revoke(adm, i, 'Premier levé');
+  assert exists (select from wm.banned_emails where user_id = b), 'un autre ban actif : empreinte gardée';
+  assert (select payload ->> 'hashes_removed' from wm.staff_actions where action = 'sanction_revoke' and target_id = i::text) = '0', 'audit 0';
+  perform wm.admin_sanction_revoke(adm, j, 'Levée sur la pierre tombale');
+  assert not exists (select from wm.banned_emails where user_id = b or email_hash = wm.email_hash(em)), 'empreinte effacée';
+  assert (select payload ->> 'hashes_removed' from wm.staff_actions where action = 'sanction_revoke' and target_id = j::text) = '1', 'audit 1';
+  u := pg_temp.signup('AccLiftNew', em);
+  assert not exists (select from wm.sanctions where user_id = u) and (select banned_until from auth.users where id = u) is null,
+    'réinscription sans ban';
+  -- Ban reporté levé sur le nouveau compte.
+  insert into wm.banned_emails (email_hash, user_id) values (wm.email_hash('acc-carry@test.local'), gen_random_uuid());
+  v := pg_temp.signup('AccCarry', 'acc-carry@test.local');
+  select id into k from wm.sanctions where user_id = v and kind = 'ban';
+  perform wm.admin_sanction_revoke(adm, k, 'Ban reporté levé');
+  assert not exists (select from wm.banned_emails where email_hash = wm.email_hash('acc-carry@test.local')), 'empreinte du report effacée';
+  w := pg_temp.signup('AccCarry2', ' ACC-carry@test.local ');
+  assert not exists (select from wm.sanctions where user_id = w), 'seconde réinscription sans ban';
+  perform pg_temp.inv('levée');
+end $$;
+
+-- Requête en vol du compte supprimé (revue finale) : sous wm.actor_uid = le compte, lock_user et lock_users refusent la pierre tombale
+-- (401) ; contrepartie (un autre acteur) et staff (wm.actor_uid vide) passent.
+do $$ declare d uuid := pg_temp.player('AccFlight'); o uuid := pg_temp.player('AccFlightO'); begin
+  perform wm.account_delete(d, 'AccFlight');
+  perform set_config('wm.actor_uid', d::text, true);
+  assert pg_temp.err(format('select wm.lock_user(%L)', d)) = pg_temp.e(401, 'unauthorized', 'Session expirée, reconnecte-toi.'), 'lock_user';
+  assert pg_temp.err(format('select wm.lock_users(array[%L, %L]::uuid[])', o, d))
+    = pg_temp.e(401, 'unauthorized', 'Session expirée, reconnecte-toi.'), 'lock_users';
+  perform set_config('wm.actor_uid', o::text, true);
+  perform wm.lock_users(array[o, d]);
+  perform wm.lock_user(d);
+  perform set_config('wm.actor_uid', '', true);
+  perform wm.lock_user(d);
+end $$;
+
 -- Refus : pseudo différent (rien d'écrit), maintenance, déjà supprimé sans clé.
 do $$ declare d uuid := pg_temp.player('AccRef'); n text; q text; begin
   q := format('select wm.account_delete(%L, %L, %L)', d, 'AccRefX', 'acc-ref-1');
@@ -410,14 +467,15 @@ do $$ declare d uuid := pg_temp.player('AccVol'); c uuid := tests.image_card('Ac
   perform pg_temp.inv('volume');
 end $$;
 
--- lock_timeout avant le premier verrou ; ordre C4 d'account_delete (celui d'admin_card_remove).
+-- lock_timeout avant le premier verrou ; ordre C4 d'account_delete : amitiés d'abord (celui de friend_remove), puis celui
+-- d'admin_card_remove.
 do $$ declare s text := (select prosrc from pg_proc where oid = to_regproc('wm.account_delete')); begin
   assert tests.lock_timeout_violations(array['account_delete', 'friend_request'], array['for update', 'wm.lock_users(']) is null,
     tests.lock_timeout_violations(array['account_delete', 'friend_request'], array['for update', 'wm.lock_users(']);
-  assert 0 < strpos(s, 'from public.guild_wishlists') and strpos(s, 'from public.guild_wishlists') < strpos(s, 'from public.trades')
+  assert 0 < strpos(s, 'from public.friendships') and strpos(s, 'from public.friendships') < strpos(s, 'from public.guild_wishlists')
+    and strpos(s, 'from public.guild_wishlists') < strpos(s, 'from public.trades')
     and strpos(s, 'from public.trades') < strpos(s, 'from public.auctions') and strpos(s, 'from public.auctions') < strpos(s, 'from public.battles')
-    and strpos(s, 'from public.battles') < strpos(s, 'from public.friendships') and strpos(s, 'from public.friendships') < strpos(s, 'wm.lock_users(')
-    and strpos(s, 'wm.lock_users(') < strpos(s, 'from public.guilds'), 'ordre C4';
+    and strpos(s, 'from public.battles') < strpos(s, 'wm.lock_users(') and strpos(s, 'wm.lock_users(') < strpos(s, 'from public.guilds'), 'ordre C4';
 end $$;
 
 -- Invariant deleted_account, branches auction, trade, battle et push (fuite d'un engagement, sous-transaction annulée).

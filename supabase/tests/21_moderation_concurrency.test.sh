@@ -32,6 +32,10 @@
 # 17. Successeur tardif : D chef seul ; la guilde tenue, guild_join(J) d'abord, puis la suppression → 503 BUSY, puis relancée : J chef.
 # 18. Sanction contre suppression : D tenu, la suppression puis le bannissement → 404 « Joueur introuvable » sous le verrou, sans
 #     empreinte ; l'inverse → le bannissement posé, puis l'empreinte d'e-mail écrite par la suppression.
+# 19. Retrait d'ami contre suppression : A ↔ B amis, échange A → B en attente ; l'amitié tenue, friend_remove(B) d'abord, puis
+#     account_delete(A) → servis, aucun 40P01 (la suppression prend l'amitié avant l'échange, comme friend_remove) ; l'échange annulé.
+# 20. Requêtes en vol du compte supprimé : la suppression de D tenue 2 s avant son commit, open_pack(D), place_bid(D) (D n'est pas meneur)
+#     et guild_create(D) d'abord → 401 « Session expirée » relu sous le verrou du profil ; aucune copie, mise ni guilde pour la pierre tombale.
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 tmp="$(mktemp -d)"
@@ -394,7 +398,7 @@ $(q -c "select count(*) from public.guilds k where exists (select from public.gu
   [[ $got == "dissoute 0 0 1 []" ]] || fail "suppression contre départ ($pass) : guilde, H membre, guildes sans chef, supprimé, invariants : $got"
 done
 
-# 11. Seuil d'image : chaque signalement prend la carte for update, puis compte ; un seul franchit le seuil à hide_image faux.
+# 11. Seuil d'image : chaque signalement prend la carte for no key update, puis compte ; un seul franchit le seuil à hide_image faux.
 q -c "update wm.config set value = value || '{\"hide_threshold\": 5}' where key = 'image_reports'" >/dev/null
 c="$(q -c "select tests.image_card('$tag i11')")"
 ps=(); for i in $(seq 10); do ps+=("$(player "11p$i")"); done
@@ -576,3 +580,42 @@ $(q -c "select count(*) from wm.staff_actions where action = 'sanction' and targ
   if [[ $pass == suppression ]]; then want="1 0 0 0 1 []"; else want="0 1 1 1 1 []"; fi
   [[ $got == "$want" ]] || fail "sanction contre suppression ($pass) : refus, bannissements, empreintes, audit, supprimé, invariants : $got ($want attendu)"
 done
+
+# 19. Retrait d'ami contre suppression : friend_remove tient l'amitié, puis annule l'échange de la paire. La suppression prend les amitiés
+# avant ses échanges : elle attend derrière friend_remove sans tenir l'échange, puis relit l'amitié supprimée et l'échange annulé. Échanges
+# avant amitiés, elle tiendrait l'échange en attendant l'amitié, que friend_remove tient en attendant l'échange (40P01).
+a1="$(player 19a)"; b1="$(player 19b)"
+friends "$a1" "$b1"
+x="$(card x19)"
+t="$(trade "$a1" "$b1" "$(grant "$a1" "$x")")"
+fr="$(q -c "select id from public.friendships where requester_id = '$a1' and addressee_id = '$b1'")"
+hold s19 "perform from public.friendships where id = '$fr' for update" 2
+first 19f "select wm.friend_remove('$b1', '$fr')"
+bg 19d "$(del "$a1")"
+released s19 2
+waitall
+refusals . "$tmp/19f" "$tmp/19d"
+quiet "$tmp/19f" "$tmp/19d"
+got="$(tstatus "$t") $(q -c "select count(*) from public.friendships where id = '$fr'") $(owns "$a1" "$x") $(deleted "$a1") $(inv)"
+[[ $got == "cancelled 0 0 1 []" ]] || fail "retrait d'ami contre suppression : échange, amitié, copie de A, supprimé, invariants : $got"
+
+# 20. Requêtes en vol : wm.actor laisse passer D (la suppression n'a pas validé), puis chaque appel attend le profil de D ; après le commit,
+# wm.lock_user et wm.lock_users relisent deleted_accounts pour l'acteur et refusent (401), rien n'est écrit pour la pierre tombale.
+d="$(trader 20d 100)"; s2="$(trader 20s)"; m="$(trader 20m 100)"
+x="$(card x20)"
+a="$(auction "$s2" "$x")"
+bid "$m" "$a" 10
+q -c "update public.profiles set packs_remaining = 5 where id = '$d'" >/dev/null
+held 20h "$(del "$d")" 2
+first 20p "select wm.open_pack('$d', 'Europe/Paris')" 1
+first 20b "select wm.place_bid('$d', '$a', 20)" 2
+first 20g "select wm.guild_create('$d', '${tag}g20')" 3
+wait "$blocker" || fail "requêtes en vol : suppression en erreur" "$tmp/20h"
+waitall
+refusals 'Session expirée' "$tmp/20p" "$tmp/20b" "$tmp/20g"
+quiet "$tmp/20h"
+got="$(cat "$tmp/20p" "$tmp/20b" "$tmp/20g" | grep -c '^ERROR:  P0001: Session expirée, reconnecte-toi\.$') \
+$(cat "$tmp/20p" "$tmp/20b" "$tmp/20g" | grep -c '"status": 401') $(q -c "select count(*) from public.user_cards where user_id = '$d'") \
+$(q -c "select current_bidder_id = '$m' from public.auctions where id = '$a'") $(bal "$m") $(bal "$d") \
+$(q -c "select count(*) from public.guild_members where user_id = '$d'") $(deleted "$d") $(inv)"
+[[ $got == "3 3 0 t 90 100 0 1 []" ]] || fail "requêtes en vol : refus 401, codes, copies de D, M meneur, soldes de M et D, guilde, supprimé, invariants : $got"

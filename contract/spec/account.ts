@@ -47,9 +47,9 @@ const login = (env: ContractEnv, email: string, password: string) =>
   })
 
 // Joueur inscrit par l'API admin de GoTrue (identité et métadonnées comme une vraie inscription), vérifié humain comme makeUser.
-async function gotrueUser(env: ContractEnv, created: string[]): Promise<{ uid: string; username: string; email: string; password: string }> {
+async function gotrueUser(env: ContractEnv, created: string[], email = `${randomUUID()}@test.local`):
+  Promise<{ uid: string; username: string; email: string; password: string }> {
   const username = `d_${randomUUID().slice(-12)}`
-  const email = `${randomUUID()}@test.local`
   const password = 'mot-de-passe-de-test'
   const res = await fetch(`${env.backend.supabaseUrl}/auth/v1/admin/users`, {
     method: 'POST', headers: { apikey: SECRET_KEY, 'content-type': 'application/json' },
@@ -129,7 +129,7 @@ export const account: RouteSpec[] = [
           try {
             const d = await gotrueUser(env, created)
             const x = await gotrueUser(env, created) // témoin : son journal GoTrue ne bouge pas
-            const [m, e, h] = [makeUser(db(env), { balance: 1000, humanVerified: true }), makeUser(db(env)), makeUser(db(env))]
+            const [m, e, h, f] = [makeUser(db(env), { balance: 1000, humanVerified: true }), makeUser(db(env)), makeUser(db(env)), makeUser(db(env))]
             const [sold, offered] = giveCards(db(env), d.uid, 'C', 2)
             const eCopy = giveCards(db(env), e.uid, 'C')[0]
             const auction = listed(env, d.uid, sold)
@@ -139,6 +139,15 @@ export const account: RouteSpec[] = [
               'offered_by', user_id) order by id) from public.user_cards where id in (:'o', :'c'))) ->> 'id'`, { d: d.uid, e: e.uid, o: offered, c: eCopy })
             const guild = guildWith(env, d.uid, [h.uid])
             sql(env, `insert into public.chat_messages (sender_id, recipient_id, content) values (:'d', :'e', 'bonjour')`, { d: d.uid, e: e.uid })
+            // Bataille active de F contre D : la suppression la finit au profit de F (battle_won écrit avant le renommage).
+            befriend(env, f.uid, d.uid)
+            const battle = sql(env, `select wm.battle_create(:'f', :'d') ->> 'id'`, { f: f.uid, d: d.uid })
+            sql(env, `select wm.battle_action(:'d', :'b', 'accept')`, { d: d.uid, b: battle })
+            for (const u of [f.uid, d.uid]) {
+              sql(env, `select wm.battle_action(:'u', :'b', 'submit_deck', jsonb_build_object('card_ids', string_to_array(:'cards', ',')))`,
+                { u, b: battle, cards: giveCards(db(env), u, 'C', 3).join(',') })
+            }
+            assert.equal(sql(env, `select status from public.battles where id = :'b'`, { b: battle }), 'active')
             assert.equal((await login(env, x.email, x.password)).status, 200)
             const audit = (u: { uid: string; email: string }) => sql(env, `select count(*) from auth.audit_log_entries a
               where a::text like '%' || :'e' || '%' or a::text like '%' || :'u' || '%'`, { e: u.email, u: u.uid })
@@ -157,7 +166,7 @@ export const account: RouteSpec[] = [
             const key = idem()
             const first = await ok(await send(env, 'POST', DELETE, d.uid, { username: d.username }, key), Deleted)
             assert.deepEqual(first, {
-              ok: true, voided_auctions: 1, cancelled_trades: 1, finished_battles: 0, cancelled_battles: 0, guild: 'transferred', auth_pending: false,
+              ok: true, voided_auctions: 1, cancelled_trades: 1, finished_battles: 1, cancelled_battles: 0, guild: 'transferred', auth_pending: false,
             })
 
             // Observé sur GoTrue v2.197.0 : la suppression douce garde la ligne, pose deleted_at, efface l'e-mail de la ligne, de ses
@@ -186,6 +195,13 @@ export const account: RouteSpec[] = [
             assert.equal(sql(env, `select status from public.trades where id = :'t'`, { t: trade }), 'cancelled')
             assert.equal(sql(env, `select leader_id from public.guilds where id = :'g'`, { g: guild }), h.uid)
             assert.equal(sql(env, `select count(*) from public.chat_messages where sender_id = :'d' and recipient_id = :'e'`, { d: d.uid, e: e.uid }), '1')
+            // Pseudo effacé jusque dans les notifications des autres (trade_received de E, battle_won de F écrit par la suppression).
+            const tomb = sql(env, `select username from public.profiles where id = :'d'`, { d: d.uid })
+            assert.equal(sql(env, `select data ->> 'username' from public.notifications where user_id = :'e' and type = 'trade_received'
+              and data ->> 'trade_id' = :'t'`, { e: e.uid, t: trade }), tomb)
+            assert.equal(sql(env, `select data ->> 'username' from public.notifications where user_id = :'f' and type = 'battle_won'
+              and data ->> 'battle_id' = :'b'`, { f: f.uid, b: battle }), tomb)
+            assert.equal(sql(env, `select count(*) from public.notifications where data ->> 'username' = :'n'`, { n: d.username }), '0')
 
             await refused(await api(env, '/api/my-collection', { uid: d.uid }), 401, UNAUTHORIZED, 'unauthorized')
             await refused(await send(env, 'POST', '/api/packs/open', d.uid, {}, idem()), 401, UNAUTHORIZED, 'unauthorized')
@@ -194,6 +210,29 @@ export const account: RouteSpec[] = [
           } finally {
             // Garde des pierres tombales levée pour cette session psql seulement (Task 6a) ; la ligne GoTrue survit à la suppression douce.
             sql(env, `select set_config('wm.allow_tombstone_delete', 'on', false);
+delete from auth.users where id = any (string_to_array(:'ids', ',')::uuid[])`, { ids: created.join(',') })
+          }
+        },
+      },
+      {
+        name: 'G1 : un banni supprime son compte, la même adresse se réinscrit → bannie d\'office, ban posé dans GoTrue (connexion user_banned)',
+        timeout: 60_000,
+        run: async (env) => {
+          const created: string[] = []
+          try {
+            const d = await gotrueUser(env, created)
+            sql(env, `insert into wm.sanctions (user_id, kind, reason) values (:'d', 'ban', 'Bannissement de test')`, { d: d.uid })
+            await ok(await send(env, 'POST', DELETE, d.uid, { username: d.username }, idem()), Deleted)
+            assert.equal(sql(env, `select count(*) from wm.banned_emails where user_id = :'d'`, { d: d.uid }), '1')
+            const again = await gotrueUser(env, created, d.email)
+            assert.equal(sql(env, `select count(*) from wm.sanctions where user_id = :'u' and kind = 'ban' and revoked_at is null`, { u: again.uid }), '1')
+            const denied = await login(env, again.email, again.password)
+            const body = (await denied.json()) as { error_code?: string }
+            assert.equal(denied.status, 400, JSON.stringify(body))
+            assert.equal(body.error_code, 'user_banned')
+          } finally {
+            sql(env, `select set_config('wm.allow_tombstone_delete', 'on', false);
+delete from wm.banned_emails where user_id = any (string_to_array(:'ids', ',')::uuid[]);
 delete from auth.users where id = any (string_to_array(:'ids', ',')::uuid[])`, { ids: created.join(',') })
           }
         },
