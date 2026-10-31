@@ -7,6 +7,7 @@ import { DmThreadModal } from '@/components/admin/DmThreadModal'
 import { SanctionModal } from '@/components/admin/SanctionModal'
 import type { ImageRow, ReportRow, StaffRole } from '@/components/admin/types'
 import { Card } from '@/components/card/Card'
+import { REASONS } from '@/components/profile/ReportModal'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { ghost } from '@/components/ui/button'
 import { LoadError } from '@/components/ui/LoadError'
@@ -21,7 +22,6 @@ const TABS = ['players', 'images'] as const
 type Tab = (typeof TABS)[number]
 const LABELS: Record<Tab, string> = { players: 'Joueurs', images: 'Images' }
 type Status = 'open' | 'reviewed'
-const REASONS: Record<string, string> = { cheating: 'Triche', inappropriate_content: 'Contenu inapproprié', spam: 'Spam' }
 const EMPTY: Record<Tab, Record<Status, string>> = {
   players: { open: 'Aucun signalement à traiter.', reviewed: 'Aucun signalement traité.' },
   images: { open: 'Aucune image signalée.', reviewed: '' },
@@ -145,7 +145,7 @@ export function ReportsClient({ role }: { role: StaffRole }) {
               <ul ref={list} className="space-y-3">
                 {rows.tab === 'players' ? rows.rows.map((r, i) => (
                   <li key={r.id} className={sized}>
-                    <p className="font-semibold">{REASONS[r.reason] ?? r.reason}</p>
+                    <p className="font-semibold">{REASONS.find(([v]) => v === r.reason)?.[1] ?? r.reason}</p>
                     {r.details && <p className="text-sm whitespace-pre-wrap wrap-anywhere">{r.details}</p>}
                     <p className="text-sm wrap-anywhere">{`${who(r.reporter)} a signalé ${who(r.reported)}`}</p>
                     <p className="text-sm text-[var(--color-foreground)]/70">
@@ -159,6 +159,7 @@ export function ReportsClient({ role }: { role: StaffRole }) {
                     )}
                     <div className="flex flex-wrap gap-3">
                       <button type="button" data-first-action={status === 'reviewed' ? '' : undefined} onClick={() => setOpen({ k: 'dm', r })} className={ghost}>Lire les messages</button>
+                      {/* Sur un signalement déjà traité, la revue est réécrite (resolved, ce membre, cette action) : la dernière décision fait foi. */}
                       <button type="button" onClick={() => setOpen({ k: 'sanction', r, idx: i })} className={ghost}>Sanctionner</button>
                       {status === 'open' && (
                         <>
@@ -199,7 +200,9 @@ export function ReportsClient({ role }: { role: StaffRole }) {
           role={role}
           reportId={open.r.id}
           keys={keys}
-          onDone={() => done(status === 'open' ? open.idx : null)}
+          onDone={() => {
+            done(status === 'open' ? open.idx : null)
+          }}
           onClose={() => setOpen(null)}
         />
       )}
@@ -222,7 +225,7 @@ export function ReportsClient({ role }: { role: StaffRole }) {
       {open?.k === 'flags' && (
         <ActionModal
           title={FLAGS[open.mode].title}
-          consequence="Les signalements de cette carte sont effacés : le compteur repart de zéro."
+          consequence={`${open.mode === 'keep' && open.c.hide_image ? 'L\'image redevient visible. ' : ''}Les signalements de cette carte sont effacés : le compteur repart de zéro.`}
           action={FLAGS[open.mode].action}
           tone={open.mode === 'keep' ? 'primary' : 'danger'}
           onClose={() => setOpen(null)}

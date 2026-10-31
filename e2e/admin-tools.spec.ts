@@ -242,7 +242,11 @@ test('images : une carte à 2 signalements → « Masquer l\'image » : masquée
     await expect(line).toHaveCount(0)
     expect(sql(`select hide_image from public.cards where id = :'c'`, { c: card })).toBe('t')
     expect(sql(`select count(*) from wm.card_image_reports where card_id = :'c'`, { c: card })).toBe('0')
-    await expect(page.locator(':focus')).not.toHaveJSProperty('tagName', 'BODY')
+    // Focus : le texte du vide si la file est vide, sinon l'action de la ligne suivante (la base du banc est partagée).
+    await expect.poll(() => page.evaluate(() => {
+      const f = document.activeElement
+      return f?.textContent === 'Aucune image signalée.' || (f?.tagName === 'BUTTON' && !!f.closest('li'))
+    })).toBe(true)
   } finally {
     if (card) sql(`delete from public.cards where id = :'c'`, { c: card })
     wipe(staff.uid, p.uid, q.uid)

@@ -48,7 +48,8 @@ export function Modal({ onClose, labelledBy, label, className, children }: Props
     if (mine) open.push(mine)
     document.addEventListener('keydown', onKeyDown)
     return () => {
-      if (mine) open.splice(open.indexOf(mine), 1)
+      const i = mine ? open.indexOf(mine) : -1
+      if (i >= 0) open.splice(i, 1)
       document.removeEventListener('keydown', onKeyDown)
       opener.current?.focus()
     }
