@@ -71,6 +71,23 @@ do $$ declare u uuid := tests.make_user('AccAuth'); t timestamptz; begin
   assert (select auth_done_at from wm.deleted_accounts where user_id = u) = now() - interval '1 minute', 'inchangé';
 end $$;
 
+-- account_auth_done purge le journal GoTrue du compte supprimé (G1) : actor_id (login) et traits.user_id (user_signedup, user_deleted) ;
+-- les lignes d'un autre joueur, et celles d'un compte non supprimé, restent ; rejouée → sans effet.
+do $$ declare u uuid := tests.make_user('AccAudit1'); v uuid := tests.make_user('AccAudit2'); begin
+  insert into auth.audit_log_entries (id, payload) select gen_random_uuid(), p from (values
+    (json_build_object('action', 'login', 'actor_id', u, 'actor_username', 'u@x.test')),
+    (json_build_object('action', 'user_deleted', 'actor_id', '00000000-0000-0000-0000-000000000000', 'traits', json_build_object('user_id', u, 'user_email', 'u@x.test'))),
+    (json_build_object('action', 'login', 'actor_id', v, 'actor_username', 'v@x.test')),
+    (json_build_object('action', 'user_signedup', 'actor_id', '00000000-0000-0000-0000-000000000000', 'traits', json_build_object('user_id', v, 'user_email', 'v@x.test')))) x(p);
+  perform wm.account_auth_done(u);  -- u pas encore supprimé : rien n'est purgé
+  assert (select count(*) from auth.audit_log_entries where payload::text like '%' || u || '%') = 2, 'compte vivant intact';
+  insert into wm.deleted_accounts (user_id) values (u);
+  assert wm.account_auth_done(u) = '{"ok": true}'::jsonb, 'réponse';
+  assert (select count(*) from auth.audit_log_entries where payload::text like '%' || u || '%') = 0, 'journal de u purgé';
+  assert (select count(*) from auth.audit_log_entries where payload::text like '%' || v || '%') = 2, 'journal de v intact';
+  assert wm.account_auth_done(u) = '{"ok": true}'::jsonb, 'rejouée';
+end $$;
+
 -- Invariants neufs : pool_removed, deleted_account 'cards', 'friend', 'guild' (sous-transaction annulée).
 do $$ declare c uuid := tests.image_card('Acc Pool'); u uuid := tests.make_user('AccInv1'); w uuid := tests.make_user('AccInv2');
   g uuid; d jsonb; begin

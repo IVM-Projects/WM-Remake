@@ -125,6 +125,7 @@ export const account: RouteSpec[] = [
         timeout: 60_000,
         run: async (env) => {
           const d = await gotrueUser(env)
+          const x = await gotrueUser(env) // témoin : son journal GoTrue ne bouge pas
           const [m, e, h] = [makeUser(db(env), { balance: 1000, humanVerified: true }), makeUser(db(env)), makeUser(db(env))]
           try {
             const [sold, offered] = giveCards(db(env), d.uid, 'C', 2)
@@ -136,6 +137,11 @@ export const account: RouteSpec[] = [
               'offered_by', user_id) order by id) from public.user_cards where id in (:'o', :'c'))) ->> 'id'`, { d: d.uid, e: e.uid, o: offered, c: eCopy })
             const guild = guildWith(env, d.uid, [h.uid])
             sql(env, `insert into public.chat_messages (sender_id, recipient_id, content) values (:'d', :'e', 'bonjour')`, { d: d.uid, e: e.uid })
+            assert.equal((await login(env, x.email, x.password)).status, 200)
+            const audit = (u: { uid: string; email: string }) => sql(env, `select count(*) from auth.audit_log_entries a
+              where a::text like '%' || :'e' || '%' or a::text like '%' || :'u' || '%'`, { e: u.email, u: u.uid })
+            const xAudit = audit(x)
+            assert.ok(Number(xAudit) >= 2, xAudit) // user_signedup et login
             const session = await login(env, d.email, d.password)
             assert.equal(session.status, 200)
             const { refresh_token: refreshToken } = (await session.json()) as { refresh_token: string }
@@ -153,13 +159,16 @@ export const account: RouteSpec[] = [
             })
 
             // Observé sur GoTrue v2.197.0 : la suppression douce garde la ligne, pose deleted_at, efface l'e-mail de la ligne, de ses
-            // métadonnées et des identités, et coupe connexion et renouvellement. (Le journal auth.audit_log_entries le garde : voir le rapport.)
+            // métadonnées et des identités, et coupe connexion et renouvellement.
             assert.equal(sql(env, `select count(*) || '|' || bool_and(deleted_at is not null) || '|' || bool_and(email is distinct from :'e')
               || '|' || bool_and(u::text not like '%' || :'e' || '%')
               || '|' || bool_and(coalesce(raw_user_meta_data::text, '') || coalesce(raw_app_meta_data::text, '') not like '%' || :'e' || '%')
               from auth.users u where id = :'d'`, { d: d.uid, e: d.email }), '1|true|true|true|true')
             assert.equal(sql(env, `select count(*) from auth.identities where user_id = :'d'
               and (email is not null or identity_data::text like '%' || :'e' || '%')`, { d: d.uid, e: d.email }), '0')
+            // G1 : le journal GoTrue de D (user_signedup, login, user_deleted) purgé par account_auth_done, celui de X intact.
+            assert.equal(audit(d), '0') // ni l'e-mail d'origine ni l'id de D
+            assert.equal(audit(x), xAudit)
             const denied = await login(env, d.email, d.password)
             assert.equal(denied.status, 400)
             assert.equal(((await denied.json()) as { error_code: string }).error_code, 'invalid_credentials')
@@ -183,7 +192,7 @@ export const account: RouteSpec[] = [
           } finally {
             // Garde des pierres tombales levée pour cette session psql seulement (Task 6a) ; la ligne GoTrue survit à la suppression douce.
             sql(env, `select set_config('wm.allow_tombstone_delete', 'on', false);
-delete from auth.users where id = :'d'`, { d: d.uid })
+delete from auth.users where id in (:'d', :'x')`, { d: d.uid, x: x.uid })
           }
         },
       },

@@ -13,6 +13,16 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 begin
   perform set_config('lock_timeout', '2s', true);
   update wm.deleted_accounts set auth_done_at = coalesce(auth_done_at, now()) where user_id = p_uid;
+  -- G1 : le journal GoTrue garde l'e-mail d'origine (traits.user_email de user_signedup et user_deleted, actor_username de login),
+  -- que la suppression douce n'efface pas ; l'e-mail est déjà remplacé, donc ses lignes se retrouvent par l'id : actor_id (actions du
+  -- joueur) ou traits.user_id (actions admin sur lui). Au mieux seulement : un privilège ou un schéma auth différent n'échoue pas (G12).
+  begin
+    delete from auth.audit_log_entries
+    where exists (select from wm.deleted_accounts where user_id = p_uid)
+      and (payload ->> 'actor_id' = p_uid::text or payload -> 'traits' ->> 'user_id' = p_uid::text);
+  exception when insufficient_privilege or undefined_table then
+    null;
+  end;
   return '{"ok": true}'::jsonb;
 end $$;
 
