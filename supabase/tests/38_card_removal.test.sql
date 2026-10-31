@@ -170,7 +170,7 @@ do $$ declare ad uuid := pg_temp.staff('admin'); mo uuid := pg_temp.staff('moder
   d := pg_temp.refused(format('select wm.admin_card_restore(%L, %L, %L)', mo, x, 'Motif de test'));
   assert d = pg_temp.e(403, 'FORBIDDEN', 'Action réservée aux administrateurs'), d::text;
   d := pg_temp.refused(format('select wm.admin_card_restore(%L, %L, %L)', ad, x, ''));
-  assert d ->> 'status' = '400', d::text;
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
   r := wm.admin_card_restore(ad, x, 'Erreur de retrait', 'rs-1');
   assert r = '{"ok": true}' and wm.admin_card_restore(ad, x, 'Erreur de retrait', 'rs-1') = r, r::text;
   assert (select count(*) from wm.staff_actions where action = 'card_restore' and target_id = x::text and staff_id = ad
@@ -186,7 +186,7 @@ do $$ declare ad uuid := pg_temp.staff('admin'); mo uuid := pg_temp.staff('moder
   d := pg_temp.refused(format('select wm.admin_quiz_bank_clear(%L, %L, %L)', mo, x, 'Motif de test'));
   assert d = pg_temp.e(403, 'FORBIDDEN', 'Action réservée aux administrateurs'), d::text;
   d := pg_temp.refused(format('select wm.admin_quiz_bank_clear(%L, %L, %L)', ad, x, 'x'));
-  assert d ->> 'status' = '400', d::text;
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
   d := pg_temp.refused(format('select wm.admin_quiz_bank_clear(%L, %L, %L)', ad, gen_random_uuid(), 'Motif de test'));
   assert d = pg_temp.e(404, null, 'Carte introuvable'), d::text;
   r := wm.admin_quiz_bank_clear(ad, x, 'Banque fautive', 'qc-1');
@@ -196,6 +196,44 @@ do $$ declare ad uuid := pg_temp.staff('admin'); mo uuid := pg_temp.staff('moder
   assert (select array_agg(payload order by id) from wm.staff_actions where action = 'quiz_clear' and target_id = x::text)
     = array['{"deleted": true}', '{"deleted": false}']::jsonb[], 'audits quiz_clear';
   perform pg_temp.inv('fin des effets');
+end $$;
+
+-- Meneur qui a misé deux fois (surenchéri puis de nouveau en tête) : remboursé de sa seconde mise sous refund:<seconde mise>, la
+-- première déjà remboursée sous sa propre référence.
+do $$ declare ad uuid := pg_temp.staff('admin'); x uuid := pg_temp.icard('Retrait deux mises'); s uuid := pg_temp.player('Ret2S');
+  m uuid := pg_temp.player('Ret2M', 1000); n uuid := pg_temp.player('Ret2N', 1000); au uuid; b1 uuid; b2 uuid; begin
+  au := (wm.create_auction(s, pg_temp.copy_of(s, x), 50, 60) ->> 'id')::uuid;
+  perform wm.place_bid(m, au, 100);
+  perform wm.place_bid(n, au, 200);
+  perform wm.place_bid(m, au, 300);
+  select id into b1 from public.auction_bids where auction_id = au and bidder_id = m and amount = 100;
+  select id into b2 from public.auction_bids where auction_id = au and bidder_id = m and amount = 300;
+  perform wm.admin_card_remove(ad, x, 'Motif de test');
+  assert (select jsonb_agg(jsonb_build_array(ref, delta) order by delta) from wm.wb_ledger where user_id = m and reason = 'refund')
+    = jsonb_build_array(jsonb_build_array('refund:' || b1, 100), jsonb_build_array('refund:' || b2, 300)), 'refunds de M';
+  assert (select wikibidous_balance from public.profiles where id = m) = 1000 and (select wikibidous_balance from public.profiles where id = n) = 1000,
+    'soldes rétablis';
+  perform pg_temp.inv('deux mises');
+end $$;
+
+-- Condition d'avatar : même ensemble de profils pour staff_card, card_avatar_clear (via admin_card_remove) et le lock_users d'admin_card_remove
+-- (texte identique dans les trois corps) ; avatar par copie, avatar migré par URL, avatar d'une autre carte.
+do $$ declare ad uuid := pg_temp.staff('admin'); x uuid := pg_temp.icard('Retrait avatars'); y uuid := pg_temp.icard('Retrait autre');
+  pc uuid := pg_temp.player('RetAvC'); pu uuid := pg_temp.player('RetAvU'); po uuid := pg_temp.player('RetAvO');
+  pred text := 'p.avatar_user_card_id in (select uc.id from public.user_cards uc where uc.card_id = p_card_id) or (p.avatar_user_card_id is null '
+    || 'and p.avatar_url is not null and p.avatar_url = (select c.image_url from public.cards c where c.id = p_card_id))';
+  bad text; r jsonb; begin
+  update public.profiles set avatar_user_card_id = pg_temp.copy_of(pc, x) where id = pc;
+  update public.profiles set avatar_url = (select image_url from public.cards where id = x) where id = pu;
+  update public.profiles set avatar_user_card_id = pg_temp.copy_of(po, y), avatar_url = (select image_url from public.cards where id = y) where id = po;
+  assert wm.staff_card(ad, x) #> '{engagements,avatars}' = '2', 'staff_card avatars';
+  r := wm.admin_card_remove(ad, x, 'Motif de test');
+  assert r -> 'cleared_avatars' = '2', r::text;
+  assert (select count(*) from public.profiles where id in (pc, pu) and avatar_user_card_id is null and avatar_url is null) = 2
+    and (select avatar_user_card_id is not null and avatar_url is not null from public.profiles where id = po), 'profils vidés';
+  select string_agg(f, ', ') into bad from unnest(array['card_avatar_clear', 'admin_card_remove', 'staff_card']) f
+  where strpos(regexp_replace((select prosrc from pg_proc where oid = to_regproc('wm.' || f)), '\s+', ' ', 'g'), pred) = 0;
+  assert bad is null, 'condition d''avatar divergente : ' || bad;
 end $$;
 
 -- Retrait sans aucun engagement : compteurs nuls, banque absente.

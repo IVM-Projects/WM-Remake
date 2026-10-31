@@ -51,6 +51,7 @@ declare
   v_id uuid;
   v_n jsonb;
   v_showcase int;
+  v_avatars int;
   v_quiz int;
 begin
   v_resp := wm.idem_claim(p_uid, p_idem);
@@ -82,7 +83,7 @@ begin
     union select current_bidder_id from public.auctions where id = any (v_auctions) and current_bidder_id is not null
     union select unnest(array[initiator_id, recipient_id]) from public.trades where id = any (v_trades)
     union select s.user_id from public.showcase s join public.user_cards uc on uc.id = s.user_card_id where uc.card_id = p_card_id
-    -- Prédicat de wm.card_avatar_clear : ses profils sont ainsi déjà tenus, dans l'ordre.
+    -- Doit rester identique à la condition de profil de wm.card_avatar_clear (ordre C4 : ses profils sont ainsi déjà tenus).
     union select p.id from public.profiles p
     where p.avatar_user_card_id in (select uc.id from public.user_cards uc where uc.card_id = p_card_id)
       or (p.avatar_user_card_id is null and p.avatar_url is not null
@@ -96,8 +97,9 @@ begin
   delete from public.guild_wishlists where id = any (v_wishes) and fulfilled_at is null;
   delete from public.showcase where user_card_id in (select id from public.user_cards where card_id = p_card_id);
   get diagnostics v_showcase = row_count;
+  v_avatars := wm.card_avatar_clear(p_card_id);
   v_n := jsonb_build_object('voided_auctions', cardinality(v_auctions), 'cancelled_trades', cardinality(v_trades),
-    'removed_wishes', cardinality(v_wishes), 'cleared_showcase', v_showcase, 'cleared_avatars', wm.card_avatar_clear(p_card_id));
+    'removed_wishes', cardinality(v_wishes), 'cleared_showcase', v_showcase, 'cleared_avatars', v_avatars);
   perform wm.pool_remove(p_card_id);
   delete from wm.card_quizzes where card_id = p_card_id;
   get diagnostics v_quiz = row_count;
@@ -157,31 +159,33 @@ end $$;
 create or replace function wm.staff_card(p_uid uuid, p_card_id uuid)
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare
-  c public.cards;
-  v_copies uuid[];
+  k public.cards;
 begin
   perform wm.staff_actor(p_uid);
-  select * into c from public.cards where id = p_card_id;
+  select * into k from public.cards where id = p_card_id;
   if not found then
     perform wm.raise_err(404, null, 'Carte introuvable');
   end if;
-  v_copies := array(select id from public.user_cards where card_id = c.id);
   return jsonb_build_object(
-    'card', jsonb_build_object('id', c.id, 'wikipedia_title', c.wikipedia_title, 'rarity', c.rarity, 'image_url', c.image_url,
-      'hide_image', c.hide_image, 'nsfw_image', c.nsfw_image, 'in_pool', exists (select from wm.draw_pool where card_id = c.id)),
-    'removal', (select jsonb_build_object('reason', k.reason, 'removed_at', k.removed_at,
-      'removed_by_username', (select p.username from public.profiles p where p.id = k.removed_by))
-      from wm.card_removals k where k.card_id = c.id),
-    'image_reports', (select count(*) from wm.card_image_reports where card_id = c.id),
-    'quiz_bank', exists (select from wm.card_quizzes where card_id = c.id),
+    'card', jsonb_build_object('id', k.id, 'wikipedia_title', k.wikipedia_title, 'rarity', k.rarity, 'image_url', k.image_url,
+      'hide_image', k.hide_image, 'nsfw_image', k.nsfw_image, 'in_pool', exists (select from wm.draw_pool where card_id = k.id)),
+    'removal', (select jsonb_build_object('reason', r.reason, 'removed_at', r.removed_at,
+      'removed_by_username', (select p.username from public.profiles p where p.id = r.removed_by))
+      from wm.card_removals r where r.card_id = k.id),
+    -- Tous les signalements d'image de la carte, revus ou non (admin_card_flags les efface à la revue).
+    'image_reports', (select count(*) from wm.card_image_reports where card_id = k.id),
+    'quiz_bank', exists (select from wm.card_quizzes where card_id = k.id),
     'engagements', jsonb_build_object(
-      'active_auctions', (select count(*) from public.auctions where card_id = c.id and status = 'active'),
+      'active_auctions', (select count(*) from public.auctions where card_id = k.id and status = 'active'),
       'pending_trades', (select count(*) from public.trades where status = 'pending'
-        and id in (select trade_id from public.trade_items where card_id = c.id)),
-      'open_wishes', (select count(*) from public.guild_wishlists where card_id = c.id and fulfilled_at is null),
-      'showcase', (select count(*) from public.showcase where user_card_id = any (v_copies)),
-      'avatars', (select count(*) from public.profiles p where p.avatar_user_card_id = any (v_copies)
-        or (p.avatar_user_card_id is null and p.avatar_url is not null and p.avatar_url = c.image_url))));
+        and id in (select trade_id from public.trade_items where card_id = k.id)),
+      'open_wishes', (select count(*) from public.guild_wishlists where card_id = k.id and fulfilled_at is null),
+      'showcase', (select count(*) from public.showcase where user_card_id in (select id from public.user_cards where card_id = k.id)),
+      -- Doit rester identique à la condition de profil de wm.card_avatar_clear.
+      'avatars', (select count(*) from public.profiles p
+    where p.avatar_user_card_id in (select uc.id from public.user_cards uc where uc.card_id = p_card_id)
+      or (p.avatar_user_card_id is null and p.avatar_url is not null
+        and p.avatar_url = (select c.image_url from public.cards c where c.id = p_card_id)))));
 end $$;
 
 create or replace function wm.staff_card_removals(p_uid uuid)

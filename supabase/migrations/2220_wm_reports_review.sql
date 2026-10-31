@@ -4,6 +4,7 @@
 
 -- Vide les avatars d'une carte (S:89, M4b-6) : profils dont l'avatar est une copie de la carte (le trigger vide avatar_url), et profils
 -- migrés sans copie dont avatar_url est l'image de la carte. Sans lock_timeout : posé par l'appelant, qui tient déjà la carte.
+-- Condition de profil recopiée telle quelle dans wm.admin_card_remove (lock_users, ordre C4) et wm.staff_card : les trois restent identiques.
 create or replace function wm.card_avatar_clear(p_card_id uuid)
 returns int language plpgsql security definer set search_path = '' as $$
 declare
