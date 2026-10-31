@@ -1,3 +1,5 @@
+import type { RarityCode } from '@/lib/rarity'
+
 export type StaffRole = 'admin' | 'moderator'
 
 export type Health = {
@@ -84,3 +86,20 @@ export type ImageRow = {
   reports: number
 }
 export type DmMessage = { id: string; sender_username: string | null; content: string; created_at: string }
+
+export type CardDetail = {
+  card: { id: string; wikipedia_title: string; rarity: RarityCode; image_url: string | null; hide_image: boolean; nsfw_image: boolean; in_pool: boolean }
+  removal: { reason: string; removed_at: string; removed_by_username: string | null } | null
+  image_reports: number
+  quiz_bank: boolean
+  engagements: { active_auctions: number; pending_trades: number; open_wishes: number; showcase: number; avatars: number }
+}
+export type RemovalRow = { card_id: string; wikipedia_title: string; reason: string; removed_at: string; removed_by_username: string | null }
+
+export type GuildHit = { id: string; name: string; member_count: number; leader_username: string | null }
+export type GuildDetail = {
+  guild: { id: string; name: string; description: string | null; leader_id: string | null; created_at: string }
+  members: { user_id: string; username: string; role: string; joined_at: string }[]
+  messages: { id: string; user_id: string; username: string; content: string; created_at: string }[]
+  wishes: { id: string; user_id: string; username: string; card_id: string; wikipedia_title: string; created_at: string }[]
+}

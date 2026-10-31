@@ -145,6 +145,44 @@ test('axe /admin/reports (staff) : files Joueurs et Images, DmThreadModal ouvert
   }
 })
 
+test('axe /admin/cards (staff) : fiche ouverte, puis ActionModal de retrait ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const title = `Zz a11y carte ${randomUUID().slice(-12)} z`
+  let card = ''
+  try {
+    card = sql(`select tests.image_card(:'t')`, { t: title })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto(`/admin/cards?card=${card}`)
+    await expect(page.getByRole('heading', { name: title, level: 2 })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Retirer la carte' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('dialog').getByLabel('Motif (obligatoire)').fill('Motif de test')
+    await expectNoSeriousViolations(page)
+  } finally {
+    if (card) sql(`delete from wm.staff_actions where target_id = :'k'; delete from public.cards where id = :'k'`, { k: card })
+    sql(`delete from wm.staff_actions where staff_id = :'u'`, { u: u.uid })
+    sql(`delete from auth.users where id = :'u'`, { u: u.uid })
+  }
+})
+
+test('axe /admin/guilds (staff) : fiche ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const lead = makePlayer()
+  let gid = ''
+  try {
+    gid = makeGuild(lead, [], `Zq${randomUUID().replaceAll('-', '').slice(0, 14)}`)
+    sql(`insert into public.guild_chat_messages (guild_id, user_id, content) values (:'g', :'u', 'bonjour la guilde')`, { g: gid, u: lead.uid })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto(`/admin/guilds?guild=${gid}`)
+    await expect(page.getByRole('log', { name: 'Messages de la guilde' })).toContainText('bonjour la guilde')
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from public.guilds where leader_id = :'l'`, { l: lead.uid })
+    sql(`delete from auth.users where id = any(array[:'u', :'l']::uuid[])`, { u: u.uid, l: lead.uid })
+  }
+})
+
 test('axe /pulls mobile, feuille « Plus » ouverte', async ({ page, login }) => {
   await login(); await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/pulls')
