@@ -1,7 +1,9 @@
--- ADDITIVE : suppression de compte (A3, G1, M6a-3) — account_auth_done (G12) ; handle_new_user : même signature, même corps et même
--- réponse qu'en 1870 (déployée, non retouchée), plus le report d'un bannissement à l'inscription d'un e-mail banni (anti-évasion, G1) ;
--- tombstone_guard et son trigger profiles_tombstone_guard (plan B de G1) ; check_invariants : même signature, même corps et même
--- réponse qu'en 2000 (déployée, non retouchée), plus pool_removed et deleted_account. Idempotente.
+-- ADDITIVE : suppression de compte (A3, G1, M6a-3) — account_delete (Task 6b), account_auth_done (G12) ; handle_new_user : même
+-- signature, même corps et même réponse qu'en 1870 (déployée, non retouchée), plus le report d'un bannissement à l'inscription d'un
+-- e-mail banni (anti-évasion, G1) ; tombstone_guard et son trigger profiles_tombstone_guard (plan B de G1) ; check_invariants : même
+-- signature, même corps et même réponse qu'en 2000 (déployée, non retouchée), plus pool_removed et deleted_account ; friend_request et
+-- friend_search : mêmes signatures, mêmes corps et mêmes réponses qu'en 1710 (déployée, non retouchée), plus le refus et l'exclusion
+-- d'un compte supprimé (Task 6b). Idempotente.
 -- Compatible pg-safeupdate (préchargé par le PostgREST hébergé, même dans les fonctions) : tout DELETE/UPDATE garde un WHERE.
 -- Aucune des fonctions redéfinies ici ne porte de réglage dans proconfig (leçon de 1960).
 
@@ -42,7 +44,8 @@ begin
 end $$;
 
 -- Plan B de G1 : si GoTrue supprimait la ligne auth.users (suppression « dure »), la cascade emporterait la pierre tombale et
--- l'historique d'autrui ; elle échoue donc, sauf sous wm.allow_tombstone_delete = 'on' (nettoyages des tests seulement).
+-- l'historique d'autrui ; elle échoue donc, sauf sous wm.allow_tombstone_delete = 'on' (nettoyages des tests seulement ; un nettoyage
+-- hors bloc de transaction le pose par set_config(..., false), sinon le réglage local tombe avant le delete).
 create or replace function wm.tombstone_guard()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
@@ -180,6 +183,220 @@ returns jsonb language sql security definer set search_path = '' as $$
     ) k
   ) x
 $$;
+
+-- Suppression de compte immédiate (A3, M6a-3), une transaction. Politique d'effacement (G1) :
+--   gardé (données partagées, preuves, argent) : la ligne profiles et son id, messages privés et de guilde, échanges clos, batailles
+--   finies, dons de guilde, signalements déposés et reçus, sanctions, grand livre, solde inerte, succès, statistiques, audit ;
+--   effacé (données propres) : pseudo « Joueur supprimé <8 hex> » (16 hex en cas de collision), bio, avatar, profil privé, collection
+--   (vitrine et étiquettes de copie en cascade), étiquettes, liste de souhaits, notifications, abonnements push, amitiés, invitations de
+--   guilde reçues et envoyées, souhait de guilde ouvert, rôle staff ;
+--   dénoué d'abord : enchères actives dont il est vendeur ou meneur (auction_void), échanges en attente (trade_void), batailles ouvertes
+--   (annulées, ou finies au profit de l'adversaire si active), guilde (départ, transmission au plus ancien membre relu sous le verrou de
+--   la guilde, dissolution s'il n'en reste aucun) ;
+--   relu sous les verrous : un engagement absent du premier relevé → 503 BUSY, tout est annulé ;
+--   anti-évasion : empreinte de l'e-mail seulement sous bannissement actif.
+-- Sans wm.actor : un banni exerce ce droit tant que sa session vit.
+-- M6b : la résiliation de l'abonnement Stripe se branche dans la route, avant la suppression GoTrue (A3).
+-- shortcut: collection effacée en une transaction ; au-delà d'environ 488 000 copies (N mesuré au banc par la Task 6b : 20 000 copies
+-- en 328 ms), 503 : effacement par lots au M8.
+create or replace function wm.account_delete(p_uid uuid, p_username text, p_idem text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_resp jsonb;
+  v_name text;
+  v_trades uuid[];
+  v_auctions uuid[];
+  v_battles uuid[];
+  v_friends uuid[];
+  v_users uuid[];
+  v_id uuid;
+  b public.battles;
+  v_finished int := 0;
+  v_cancelled int := 0;
+  g uuid;
+  v_role public.guild_role;
+  v_heir uuid;
+  v_guild text;
+begin
+  v_resp := wm.idem_claim(p_uid, p_idem);
+  if v_resp is not null then
+    return v_resp;
+  end if;
+  if (select value from wm.config where key = 'maintenance') = 'true'::jsonb then
+    perform wm.raise_err(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.');
+  end if;
+  select username into v_name from public.profiles where id = p_uid;
+  if not found or exists (select from wm.deleted_accounts where user_id = p_uid) then
+    perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
+  end if;
+  if lower(btrim(p_username)) is distinct from lower(v_name) then
+    perform wm.raise_err(400, 'invalid_request', 'Tape ton pseudo exactement pour confirmer');
+  end if;
+  perform set_config('lock_timeout', '2s', true);
+  -- Ordre C4, le même que wm.admin_card_remove : souhait ouvert, échanges, enchères, batailles, amitiés, puis les profils, puis la guilde.
+  perform from public.guild_wishlists where user_id = p_uid and fulfilled_at is null order by id for update;
+  select coalesce(array_agg(x.id order by x.id), '{}') into v_trades
+  from (select id from public.trades where status = 'pending' and p_uid in (initiator_id, recipient_id) order by id for update) x;
+  select coalesce(array_agg(x.id order by x.id), '{}') into v_auctions
+  from (select id from public.auctions where status = 'active' and p_uid in (seller_id, current_bidder_id) order by id for update) x;
+  select coalesce(array_agg(x.id order by x.id), '{}') into v_battles
+  from (select id from public.battles where status in ('pending', 'deck_selection', 'generating_quizzes', 'active')
+    and p_uid in (challenger_id, opponent_id) order by id for update) x;
+  select coalesce(array_agg(x.id order by x.id), '{}') into v_friends
+  from (select id from public.friendships where p_uid in (requester_id, addressee_id) order by id for update) x;
+  -- Contreparties, plus les autres membres de sa guilde s'il en est chef (le successeur doit être tenu) ; lock_users ignore null.
+  v_users := array(select p_uid
+    union select unnest(array[seller_id, current_bidder_id]) from public.auctions where id = any (v_auctions)
+    union select unnest(array[initiator_id, recipient_id]) from public.trades where id = any (v_trades)
+    union select unnest(array[challenger_id, opponent_id]) from public.battles where id = any (v_battles)
+    union select o.user_id from public.guild_members m join public.guild_members o on o.guild_id = m.guild_id
+      where m.user_id = p_uid and m.role = 'leader');
+  perform wm.lock_users(v_users);
+  -- Relu sous le verrou (G1) : une suppression concurrente, ou un engagement créé entre le relevé et le verrou du profil.
+  if exists (select from wm.deleted_accounts where user_id = p_uid) then
+    perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
+  end if;
+  if exists (select from public.trades where status = 'pending' and p_uid in (initiator_id, recipient_id) and id <> all (v_trades))
+    or exists (select from public.auctions where status = 'active' and p_uid in (seller_id, current_bidder_id) and id <> all (v_auctions))
+    or exists (select from public.battles where status in ('pending', 'deck_selection', 'generating_quizzes', 'active')
+      and p_uid in (challenger_id, opponent_id) and id <> all (v_battles))
+    or exists (select from public.friendships where p_uid in (requester_id, addressee_id) and id <> all (v_friends)) then
+    perform wm.raise_err(503, 'BUSY', 'Le site est très sollicité, réessaie dans un instant.');
+  end if;
+  select guild_id into g from public.guild_members where user_id = p_uid;
+  if g is not null then
+    perform from public.guilds where id = g for no key update;
+    select role into v_role from public.guild_members where user_id = p_uid and guild_id = g;
+    if v_role = 'leader' then
+      select user_id into v_heir from public.guild_members where guild_id = g and user_id <> p_uid order by joined_at, user_id limit 1;
+      if v_heir is null then
+        v_guild := 'dissolved';
+      elsif v_heir = any (v_users) then
+        v_guild := 'transferred';
+      else
+        -- Arrivé après le relevé des membres : son profil n'est pas tenu, et le prendre maintenant romprait l'ordre C4.
+        perform wm.raise_err(503, 'BUSY', 'Le site est très sollicité, réessaie dans un instant.');
+      end if;
+    elsif v_role is not null then
+      v_guild := 'left';
+    end if;
+  end if;
+  -- Écritures.
+  insert into wm.banned_emails (email_hash, user_id)
+  select wm.email_hash(u.email), p_uid from auth.users u
+  where u.id = p_uid and u.email is not null and exists (select from wm.sanctions s where s.user_id = p_uid and s.kind = 'ban'
+    and s.revoked_at is null and s.starts_at <= now() and (s.ends_at is null or s.ends_at > now()))
+  on conflict do nothing;
+  foreach v_id in array v_auctions loop
+    perform wm.auction_void(v_id);
+  end loop;
+  foreach v_id in array v_trades loop
+    perform wm.trade_void(v_id, p_uid);
+  end loop;
+  foreach v_id in array v_battles loop
+    select * into b from public.battles where id = v_id;
+    if b.status = 'active' then
+      perform wm.battle_finish(b.id, case when b.challenger_id = p_uid then b.opponent_id else b.challenger_id end);
+      v_finished := v_finished + 1;
+    else
+      update public.battles set status = 'cancelled', updated_at = clock_timestamp() where id = b.id;
+      v_cancelled := v_cancelled + 1;
+    end if;
+  end loop;
+  if v_guild = 'dissolved' then
+    perform from public.guilds where id = g for update;
+    delete from public.guilds where id = g;
+  elsif v_guild = 'transferred' then
+    -- L'ancien chef passe member avant le successeur (index unique guild_members_leader_key).
+    update public.guild_members set role = 'member' where user_id = p_uid and guild_id = g;
+    update public.guild_members set role = 'leader' where user_id = v_heir and guild_id = g;
+    update public.guilds set leader_id = v_heir where id = g;
+  end if;
+  delete from public.guild_members where user_id = p_uid;
+  delete from public.guild_wishlists where user_id = p_uid and fulfilled_at is null;
+  delete from wm.guild_invites where p_uid in (user_id, inviter_id);
+  delete from public.friendships where id = any (v_friends);
+  delete from public.notifications where user_id = p_uid;
+  delete from public.push_subscriptions where user_id = p_uid;
+  delete from public.wishlist_items where user_id = p_uid;
+  delete from public.tags where user_id = p_uid;
+  delete from public.user_cards where user_id = p_uid;
+  delete from wm.staff where user_id = p_uid;
+  begin
+    update public.profiles set username = 'Joueur supprimé ' || substr(md5(p_uid::text), 1, 8), bio = null, avatar_user_card_id = null,
+      avatar_url = null, is_public = false
+    where id = p_uid;
+  exception when unique_violation then
+    update public.profiles set username = 'Joueur supprimé ' || substr(md5(p_uid::text), 1, 16), bio = null, avatar_user_card_id = null,
+      avatar_url = null, is_public = false
+    where id = p_uid;
+  end;
+  insert into wm.deleted_accounts (user_id) values (p_uid);
+  return wm.idem_store(p_uid, p_idem, jsonb_build_object('ok', true, 'voided_auctions', cardinality(v_auctions),
+    'cancelled_trades', cardinality(v_trades), 'finished_battles', v_finished, 'cancelled_battles', v_cancelled, 'guild', v_guild));
+end $$;
+
+-- Redéfinie de 1710 : même signature, même corps et même réponse qu'en 1710 (déployée, non retouchée), plus le refus d'un compte supprimé
+-- relu après lock_users (G1 : une demande en attente sur le profil pendant une suppression ne crée rien après coup).
+-- Demande (M4-11) : les deux profils tenus (P4) sérialisent deux demandes croisées, qui sinon finiraient en 23505 sur l'index de paire.
+-- Une demande vers qui m'a déjà demandé reste un 409 : pas d'acceptation implicite.
+create or replace function wm.friend_request(p_uid uuid, p_addressee_id uuid, p_idem text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_resp jsonb;
+  f public.friendships;
+begin
+  v_resp := wm.idem_claim(p_uid, p_idem);
+  if v_resp is not null then
+    return v_resp;
+  end if;
+  perform wm.actor(p_uid);
+  if p_addressee_id = p_uid then
+    perform wm.raise_err(400, 'invalid_request', 'Tu ne peux pas t''ajouter toi-même en ami');
+  end if;
+  if not exists (select from public.profiles where id = p_addressee_id) then
+    perform wm.raise_err(404, null, 'Joueur introuvable');
+  end if;
+  perform set_config('lock_timeout', '2s', true);
+  perform wm.lock_users(array[p_uid, p_addressee_id]);
+  if exists (select from wm.deleted_accounts where user_id in (p_uid, p_addressee_id)) then
+    perform wm.raise_err(404, null, 'Joueur introuvable');
+  end if;
+  select * into f from public.friendships where least(requester_id, addressee_id) = least(p_uid, p_addressee_id)
+    and greatest(requester_id, addressee_id) = greatest(p_uid, p_addressee_id);
+  if f.status = 'accepted' then
+    perform wm.raise_err(409, 'ALREADY_FRIENDS', 'Vous êtes déjà amis');
+  elsif found then
+    perform wm.raise_err(409, 'REQUEST_PENDING', 'Une demande d''ami est déjà en attente');
+  end if;
+  perform wm.friend_limit_check(array[p_uid]);
+  insert into public.friendships (requester_id, addressee_id) values (p_uid, p_addressee_id) returning * into f;
+  perform wm.notify_friend(array[f.id], 'friend_request', p_uid);
+  return wm.idem_store(p_uid, p_idem, jsonb_build_object('friendship', wm.friendship_json(f)));
+end $$;
+
+-- Redéfinie de 1710 : même signature, même corps et même réponse qu'en 1710 (déployée, non retouchée), plus l'exclusion des comptes
+-- supprimés (G1).
+-- Préfixe de lower(btrim(q)), \ % _ échappés (échappement par défaut de LIKE), soi-même exclu (P12). Motif en littéral, comme
+-- collection_filter : un paramètre d'un plan générique ne se sert pas de l'index de préfixe.
+create or replace function wm.friend_search(p_uid uuid, p_q text)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  v_q text := lower(btrim(p_q));
+  r jsonb;
+begin
+  if coalesce(char_length(v_q), 0) < 2 then
+    perform wm.raise_err(400, 'invalid_request', 'La recherche demande au moins 2 caractères');
+  end if;
+  execute format('select coalesce(jsonb_agg(jsonb_build_object(''id'', id, ''username'', username, ''avatar_url'', avatar_url)
+      order by lower(username), id), ''[]'') from (select id, username, avatar_url from public.profiles
+      where lower(username) like %L and id <> %L and not exists (select from wm.deleted_accounts d where d.user_id = id)
+      order by lower(username), id limit %s) x',
+    replace(replace(replace(v_q, '\', '\\'), '%', '\%'), '_', '\_') || '%', p_uid,
+    (select (value ->> 'friend_search')::int from wm.config where key = 'list_caps'))
+  into r;
+  return jsonb_build_object('users', r);
+end $$;
 
 revoke all on schema wm from public, anon, authenticated;
 grant usage on schema wm to service_role;
