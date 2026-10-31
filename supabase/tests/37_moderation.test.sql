@@ -762,6 +762,222 @@ do $$ declare bad text; begin
   assert bad is null, 'non stable : ' || bad;
 end $$;
 
+-- ===== 2240 : outils de guilde (dissolution, message, souhait), recherche et détail d'une guilde, tableau de bord, journal =====
+-- Rejeu de 2240 : la migration passe une seconde fois sur la base déjà migrée.
+\ir ../migrations/2240_wm_guild_moderation.sql
+
+create function pg_temp.friends(p_a uuid, p_b uuid) returns void language sql as $$
+  insert into public.friendships (requester_id, addressee_id, status) values (p_a, p_b, 'accepted')
+$$;
+
+-- Guilde de p_leader (chef) et de ses membres, par invitation entre amis (aides de 34_guilds.test.sql).
+create function pg_temp.guild(p_name text, p_leader uuid, p_members uuid[] default '{}') returns uuid language plpgsql as $$
+declare g uuid := (wm.guild_create(p_leader, p_name) -> 'guild' ->> 'id')::uuid; u uuid; begin
+  foreach u in array p_members loop
+    perform pg_temp.friends(p_leader, u);
+    perform wm.guild_invite(p_leader, u);
+    perform wm.guild_join(u, g);
+  end loop;
+  return g;
+end $$;
+
+-- Dissolution : membres, souhaits, messages et scores partis ; trois guild_kicked à acteur nul ; audit sans le nom ; refus.
+do $$ declare a uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderator'); la uuid := pg_temp.player('GdA');
+  lb uuid := pg_temp.player('GdB'); lc uuid := pg_temp.player('GdC'); x uuid := pg_temp.icard('Gd X'); g uuid; r jsonb; d jsonb;
+  s wm.staff_actions; begin
+  g := pg_temp.guild('Dissoute', la, array[lb, lc]);
+  perform wm.guild_wish_set(lb, x);
+  perform wm.guild_chat_send(lc, 'bonjour');
+  insert into public.guild_weekly_scores (week_start, guild_id, score_battles) values (wm.week_start(now()), g, 5);
+  d := pg_temp.refused(format('select wm.admin_guild_dissolve(%L, %L, %L)', m, g, 'Nom injurieux'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Action réservée aux administrateurs'), d::text;
+  d := pg_temp.refused(format('select wm.admin_guild_dissolve(%L, %L, %L)', a, g, '  '));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  d := pg_temp.refused(format('select wm.admin_guild_dissolve(%L, %L, %L)', a, gen_random_uuid(), 'Nom injurieux'));
+  assert d = pg_temp.e(404, null, 'Guilde introuvable'), d::text;
+  r := wm.admin_guild_dissolve(a, g, ' Nom injurieux ');
+  assert r = '{"ok": true, "members": 3}', r::text;
+  assert not exists (select from public.guilds where id = g) and not exists (select from public.guild_members where guild_id = g)
+    and not exists (select from public.guild_wishlists where guild_id = g) and not exists (select from public.guild_chat_messages where guild_id = g)
+    and not exists (select from public.guild_weekly_scores where guild_id = g), 'cascade';
+  assert (select array_agg(user_id order by user_id) from public.notifications where type = 'guild_kicked' and user_id in (la, lb, lc))
+    = (select array_agg(u order by u) from unnest(array[la, lb, lc]) u), 'trois guild_kicked';
+  assert not exists (select from public.notifications where type = 'guild_kicked' and user_id in (la, lb, lc)
+    and data <> jsonb_build_object('guild_id', g, 'guild_name', 'Dissoute', 'user_id', null, 'username', null)), 'data';
+  select * into s from wm.staff_actions where action = 'guild_dissolve' and target_id = g::text;
+  assert s.staff_id = a and s.target_type = 'guild' and s.reason = 'Nom injurieux' and s.payload = '{"members": 3}', to_jsonb(s)::text;
+  assert strpos(to_jsonb(s)::text, 'Dissoute') = 0, 'nom dans l''audit';
+  -- Idempotence : même corps, une seule ligne d'audit.
+  g := pg_temp.guild('Dissoute 2', lb);
+  r := wm.admin_guild_dissolve(a, g, 'Clé rejouée', 'k-dissolve');
+  assert wm.admin_guild_dissolve(a, g, 'Clé rejouée', 'k-dissolve') = r and r = '{"ok": true, "members": 1}'
+    and (select count(*) from wm.staff_actions where action = 'guild_dissolve' and target_id = g::text) = 1, 'idem dissolve';
+  assert (select count(*) from public.notifications where type = 'guild_kicked' and user_id = lb) = 2, 'un seul effet';
+end $$;
+
+-- Message de guilde : supprimé, audit exact ; de nouveau 404 ; joueur 403 ; motif vide 400 ; idempotence.
+do $$ declare m uuid := pg_temp.staff('moderator'); la uuid := pg_temp.player('GmA'); g uuid := pg_temp.guild('Bavarde', la);
+  mid uuid; mid2 uuid; ts timestamptz; r jsonb; d jsonb; s wm.staff_actions; begin
+  mid := (wm.guild_chat_send(la, 'insulte') -> 'message' ->> 'id')::uuid;
+  mid2 := (wm.guild_chat_send(la, 'autre') -> 'message' ->> 'id')::uuid;
+  select created_at into ts from public.guild_chat_messages where id = mid;
+  d := pg_temp.refused(format('select wm.admin_guild_message_delete(%L, %L, %L)', la, mid, 'Insultes'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.refused(format('select wm.admin_guild_message_delete(%L, %L, %L)', m, mid, ''));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  r := wm.admin_guild_message_delete(m, mid, 'Insultes');
+  assert r = '{"ok": true}' and not exists (select from public.guild_chat_messages where id = mid), r::text;
+  select * into s from wm.staff_actions where action = 'guild_message_delete' and target_id = mid::text;
+  assert s.staff_id = m and s.target_type = 'guild_message' and s.reason = 'Insultes'
+    and s.payload = jsonb_build_object('guild_id', g, 'user_id', la, 'created_at', ts), to_jsonb(s)::text;
+  d := pg_temp.refused(format('select wm.admin_guild_message_delete(%L, %L, %L)', m, mid, 'Insultes'));
+  assert d = pg_temp.e(404, null, 'Message introuvable'), d::text;
+  r := wm.admin_guild_message_delete(m, mid2, 'Clé rejouée', 'k-gmsg');
+  assert wm.admin_guild_message_delete(m, mid2, 'Clé rejouée', 'k-gmsg') = r
+    and (select count(*) from wm.staff_actions where action = 'guild_message_delete' and target_id = mid2::text) = 1, 'idem message';
+end $$;
+
+-- Souhait : retiré, audit exact ; un souhait clos → 404 ; joueur 403 ; motif vide 400 ; idempotence.
+do $$ declare m uuid := pg_temp.staff('moderator'); la uuid := pg_temp.player('GwA'); lb uuid := pg_temp.player('GwB');
+  x uuid := pg_temp.icard('Gw X'); g uuid := pg_temp.guild('Souhaits', la, array[lb]); w uuid; r jsonb; d jsonb; s wm.staff_actions; begin
+  w := (wm.guild_wish_set(lb, x) -> 'wishlist' ->> 'id')::uuid;
+  d := pg_temp.refused(format('select wm.admin_guild_wish_remove(%L, %L, %L)', lb, w, 'Carte interdite'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.refused(format('select wm.admin_guild_wish_remove(%L, %L, %L)', m, w, 'x'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  r := wm.admin_guild_wish_remove(m, w, 'Carte interdite', 'k-gwish');
+  assert r = '{"ok": true}' and not exists (select from public.guild_wishlists where id = w), r::text;
+  assert wm.admin_guild_wish_remove(m, w, 'Carte interdite', 'k-gwish') = r
+    and (select count(*) from wm.staff_actions where action = 'guild_wish_remove' and target_id = w::text) = 1, 'idem souhait';
+  select * into s from wm.staff_actions where action = 'guild_wish_remove' and target_id = w::text;
+  assert s.staff_id = m and s.target_type = 'guild_wish' and s.reason = 'Carte interdite'
+    and s.payload = jsonb_build_object('guild_id', g, 'user_id', lb, 'card_id', x), to_jsonb(s)::text;
+  w := (wm.guild_wish_set(lb, x) -> 'wishlist' ->> 'id')::uuid;
+  update public.guild_wishlists set fulfilled_at = now() where id = w;
+  d := pg_temp.refused(format('select wm.admin_guild_wish_remove(%L, %L, %L)', m, w, 'Carte interdite'));
+  assert d = pg_temp.e(404, null, 'Ce souhait n''existe plus') and exists (select from public.guild_wishlists where id = w), d::text;
+end $$;
+
+-- Recherche : fragment insensible à la casse, % littéral, 2 caractères au moins.
+do $$ declare m uuid := pg_temp.staff('moderator'); la uuid := pg_temp.player('GsA'); lb uuid := pg_temp.player('GsB');
+  g uuid := pg_temp.guild('Les Archivistes', la, array[lb]); r jsonb; d jsonb; begin
+  r := wm.staff_guild_search(m, 'arch');
+  assert r -> 'guilds' @> jsonb_build_array(jsonb_build_object('id', g, 'name', 'Les Archivistes', 'member_count', 2, 'leader_username', 'GsA')), r::text;
+  assert (select array_agg(k order by k) from jsonb_object_keys(r -> 'guilds' -> 0) k) = array['id', 'leader_username', 'member_count', 'name'], 'clés';
+  assert not (wm.staff_guild_search(m, '%%') -> 'guilds' @> jsonb_build_array(jsonb_build_object('id', g))), '% littéral';
+  assert not (wm.staff_guild_search(m, 'L_s') -> 'guilds' @> jsonb_build_array(jsonb_build_object('id', g))), '_ littéral';
+  d := pg_temp.err(format('select wm.staff_guild_search(%L, %L)', m, 'a'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Tape au moins 2 caractères'), d::text;
+  d := pg_temp.err(format('select wm.staff_guild_search(%L, %L)', la, 'arch'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+end $$;
+
+-- Détail : clés exactes, chef d'abord, 101 messages → les 100 derniers, du plus ancien au plus récent ; souhaits ouverts ; 404.
+do $$ declare m uuid := pg_temp.staff('moderator'); la uuid := pg_temp.player('GtA'); lb uuid := pg_temp.player('GtB');
+  lc uuid := pg_temp.player('GtC'); x uuid := pg_temp.icard('Gt X'); g uuid := pg_temp.guild('Detaillee', la, array[lb, lc]);
+  w uuid; r jsonb; d jsonb; begin
+  perform wm.guild_transfer(la, lb);
+  -- now() figé : sans écart, A et C seraient départagés par leur id.
+  update public.guild_members set joined_at = now() + interval '1 second' where user_id = lc;
+  w :=(wm.guild_wish_set(lc, x) -> 'wishlist' ->> 'id')::uuid;
+  insert into public.guild_chat_messages (guild_id, user_id, content, created_at)
+  select g, la, 'msg ' || i, now() + make_interval(secs => i) from generate_series(1, 101) i;
+  r := wm.staff_guild_detail(m, g);
+  assert (select array_agg(k order by k) from jsonb_object_keys(r) k) = array['guild', 'members', 'messages', 'wishes'], 'clés';
+  assert r -> 'guild' = (select jsonb_build_object('id', id, 'name', name, 'description', description, 'leader_id', leader_id, 'created_at', created_at)
+    from public.guilds where id = g), r -> 'guild' ->> 'id';
+  assert (select array_agg(e ->> 'user_id') from jsonb_array_elements(r -> 'members') e) = array[lb::text, la::text, lc::text], 'chef d''abord';
+  assert (select array_agg(k order by k) from jsonb_object_keys(r -> 'members' -> 0) k) = array['joined_at', 'role', 'user_id', 'username']
+    and r -> 'members' -> 0 ->> 'role' = 'leader' and r -> 'members' -> 0 ->> 'username' = 'GtB', 'membre';
+  assert jsonb_array_length(r -> 'messages') = 100 and r -> 'messages' -> 0 ->> 'content' = 'msg 2'
+    and r -> 'messages' -> 99 ->> 'content' = 'msg 101', 'messages';
+  assert (select array_agg(k order by k) from jsonb_object_keys(r -> 'messages' -> 0) k) = array['content', 'created_at', 'id', 'user_id', 'username'], 'clés message';
+  assert r -> 'wishes' = (select jsonb_build_array(jsonb_build_object('id', w, 'user_id', lc, 'username', 'GtC', 'card_id', x,
+    'wikipedia_title', 'Gt X', 'created_at', created_at)) from public.guild_wishlists where id = w), r -> 'wishes' ->> 0;
+  d := pg_temp.err(format('select wm.staff_guild_detail(%L, %L)', m, gen_random_uuid()));
+  assert d = pg_temp.e(404, null, 'Guilde introuvable'), d::text;
+  d := pg_temp.err(format('select wm.staff_guild_detail(%L, %L)', la, g));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+end $$;
+
+-- Tableau de bord : écarts exacts sur un jeu construit (les compteurs sont globaux).
+do $$ declare a uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderator'); pa uuid := pg_temp.player('DbA');
+  pb uuid := pg_temp.player('DbB'); dl uuid := pg_temp.player('DbDel'); rep uuid := pg_temp.icard('Db Rep');
+  hid uuid := pg_temp.icard('Db Hid'); kept uuid := pg_temp.icard('Db Kept'); rem uuid := pg_temp.icard('Db Rem');
+  r0 jsonb := wm.staff_dashboard(m); r jsonb; rv uuid; d jsonb; begin
+  insert into public.reports (reporter_id, reported_user_id, reason) values (pa, pb, 'spam');
+  insert into public.reports (reporter_id, reported_user_id, reason) values (pb, pa, 'spam') returning id into rv;
+  perform wm.admin_report_review(m, rv, 'dismissed', 'Rien à signaler');
+  insert into wm.card_image_reports (card_id, user_id) values (rep, pa), (rep, pb);
+  update public.cards set hide_image = true where id in (hid, kept);
+  perform wm.staff_log(null, 'image_auto_hide', 'card', hid::text, 'Seuil de signalements atteint');
+  perform wm.staff_log(null, 'image_auto_hide', 'card', kept::text, 'Seuil de signalements atteint');
+  perform wm.admin_card_flags(m, kept, true, false, 'Image gardée masquée');
+  perform pg_temp.sanction(a, pa, 'warning');
+  perform wm.admin_sanction_revoke(a, pg_temp.sanction(a, pb, 'warning'), 'Levée');
+  insert into wm.card_removals (card_id, reason, removed_by) values (rem, 'Retrait de test', a);
+  insert into wm.deleted_accounts (user_id) values (dl);
+  r := wm.staff_dashboard(m);
+  assert (select array_agg(k order by k) from jsonb_object_keys(r) k)
+    = array['active_sanctions', 'auth_pending', 'auto_hidden_cards', 'health', 'image_reports', 'open_reports', 'removed_cards'], 'clés';
+  assert jsonb_build_object('open_reports', (r ->> 'open_reports')::int - (r0 ->> 'open_reports')::int,
+    'image_reports', (r ->> 'image_reports')::int - (r0 ->> 'image_reports')::int,
+    'auto_hidden_cards', (r ->> 'auto_hidden_cards')::int - (r0 ->> 'auto_hidden_cards')::int,
+    'active_sanctions', (r ->> 'active_sanctions')::int - (r0 ->> 'active_sanctions')::int,
+    'removed_cards', (r ->> 'removed_cards')::int - (r0 ->> 'removed_cards')::int,
+    'auth_pending', (r ->> 'auth_pending')::int - (r0 ->> 'auth_pending')::int)
+    = '{"open_reports": 1, "image_reports": 1, "auto_hidden_cards": 1, "active_sanctions": 1, "removed_cards": 1, "auth_pending": 1}', r::text;
+  assert r -> 'health' = wm.health(), 'health';
+  d := pg_temp.err(format('select wm.staff_dashboard(%L)', pa));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+end $$;
+
+-- Journal : trois actions de deux staffs, tri exact, filtres cumulés, page de 50 et hasMore ; lisible par un modérateur.
+do $$ declare s1 uuid := pg_temp.staff('admin'); s2 uuid := pg_temp.staff('moderator'); s3 uuid := pg_temp.staff('moderator');
+  pl uuid := pg_temp.player('AudPl'); i1 bigint; i2 bigint; i3 bigint; r jsonb; d jsonb; i int; begin
+  i1 := wm.staff_log(s1, 'sanction', 'user', pl::text, 'Motif un', '{"k": 1}');
+  i2 := wm.staff_log(s2, 'guild_dissolve', 'guild', 'g-aud', 'Motif deux');
+  i3 := wm.staff_log(s1, 'guild_message_delete', 'guild_message', 'm-aud', 'Motif trois');
+  r := wm.staff_audit(s2);
+  assert (select array_agg((e ->> 'id')::bigint) from jsonb_array_elements(r -> 'actions') e where (e ->> 'id')::bigint in (i1, i2, i3))
+    = array[i3, i2, i1] and r -> 'actions' -> 0 ->> 'id' = i3::text, 'tri du journal';
+  assert r -> 'actions' -> 2 = (select jsonb_build_object('id', i1, 'staff_id', s1, 'staff_username', p.username, 'action', 'sanction',
+    'target_type', 'user', 'target_id', pl::text, 'reason', 'Motif un', 'payload', '{"k": 1}'::jsonb, 'created_at', now())
+    from public.profiles p where p.id = s1), r -> 'actions' ->> 2;
+  r := wm.staff_audit(s2, 0, s1);
+  assert (select array_agg((e ->> 'id')::bigint) from jsonb_array_elements(r -> 'actions') e) = array[i3, i1]
+    and not (r ->> 'hasMore')::boolean, 'filtre staff';
+  r := wm.staff_audit(s2, 0, null, 'guild');
+  assert r -> 'actions' -> 0 ->> 'id' = i2::text and not exists (select from jsonb_array_elements(r -> 'actions') e
+    where e ->> 'target_type' <> 'guild'), 'filtre type';
+  r := wm.staff_audit(s2, 0, null, null, pl::text);
+  assert (select array_agg((e ->> 'id')::bigint) from jsonb_array_elements(r -> 'actions') e) = array[i1], 'filtre cible';
+  assert jsonb_array_length(wm.staff_audit(s2, 0, s1, 'guild') -> 'actions') = 0
+    and wm.staff_audit(s2, 0, s1, 'guild_message', 'm-aud') -> 'actions' -> 0 ->> 'id' = i3::text, 'filtres cumulés';
+  for i in 1..51 loop
+    perform wm.staff_log(s3, 'dm_read', 'dm_pair', 'p' || i, 'Lecture');
+  end loop;
+  r := wm.staff_audit(s2, 0, s3);
+  assert jsonb_array_length(r -> 'actions') = 50 and (r ->> 'hasMore')::boolean and r -> 'actions' -> 0 ->> 'target_id' = 'p51', 'page 0';
+  r := wm.staff_audit(s2, 1, s3);
+  assert jsonb_array_length(r -> 'actions') = 1 and not (r ->> 'hasMore')::boolean and r -> 'actions' -> 0 ->> 'target_id' = 'p1', 'page 1';
+  d := pg_temp.err(format('select wm.staff_audit(%L)', pl));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+end $$;
+
+-- lock_timeout avant le premier verrou ; ordre des verrous de la dissolution ; lectures stables.
+do $$ declare s text := (select prosrc from pg_proc where oid = to_regproc('wm.admin_guild_dissolve')); bad text; begin
+  assert tests.lock_timeout_violations(array['admin_guild_dissolve', 'admin_guild_message_delete', 'admin_guild_wish_remove'],
+    array['for update', 'for key share', 'delete from public.guild_chat_messages']) is null, 'lock_timeout';
+  assert strpos(s, 'from public.guild_wishlists') > 0 and strpos(s, 'from public.guild_wishlists') < strpos(s, 'for key share')
+    and strpos(s, 'for key share') < strpos(s, 'from public.guilds where id = p_guild_id for update'), 'ordre des verrous de la dissolution';
+  assert strpos(s, 'wm.notify_guild(') < strpos(s, 'delete from public.guilds'), 'notification avant le delete';
+  select string_agg(f, ', ') into bad from unnest(array['staff_guild_search(uuid, text)', 'staff_guild_detail(uuid, uuid)',
+    'staff_dashboard(uuid)', 'staff_audit(uuid, integer, uuid, text, text)']) f
+  where (select provolatile from pg_proc where oid = ('wm.' || f)::regprocedure) <> 's';
+  assert bad is null, 'non stable : ' || bad;
+end $$;
+
 -- Scan de couverture : toute wm.admin_* (hors admin_reason) ouvre par staff_actor, exige un motif et écrit son audit, avec idempotence sauf
 -- admin_dm_thread ; toute wm.staff_* de lecture ouvre par staff_actor ; aucune fonction ne modifie ni ne supprime l'audit (G8).
 do $$ declare bad text; begin
