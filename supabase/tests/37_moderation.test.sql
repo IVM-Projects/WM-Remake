@@ -521,6 +521,233 @@ do $$ declare s text := (select prosrc from pg_proc where oid = 'wm.admin_sancti
   assert bad is null, 'non stable : ' || bad;
 end $$;
 
+-- ===== 2220 : signalements d'image, drapeaux, revue des signalements, messages privés d'une paire signalée, listes =====
+-- Rejeu de 2220 : la migration passe une seconde fois sur la base déjà migrée.
+\ir ../migrations/2220_wm_reports_review.sql
+
+-- Carte dédiée : image_url propre (tests.image_card donne la même à toutes ses cartes, et card_avatar_clear retrouve les migrés par elle).
+create function pg_temp.icard(p_title text) returns uuid language plpgsql as $$
+declare c uuid := tests.image_card(p_title); begin
+  update public.cards set image_url = image_url || '#' || id where id = c;
+  return c;
+end $$;
+
+create function pg_temp.copy_of(p_user uuid, p_card uuid) returns uuid language sql as $$
+  insert into public.user_cards (user_id, card_id, snapshot_title, snapshot_rarity, snapshot_atk, snapshot_def)
+  select p_user, c.id, c.wikipedia_title, c.rarity, c.atk, c.def from public.cards c where c.id = p_card returning id
+$$;
+
+create function pg_temp.audit(p_action text) returns setof wm.staff_actions language sql as $$
+  select * from wm.staff_actions where action = p_action order by id
+$$;
+
+-- Signalement d'image : 9 puis 10e, 11e, avatars, retrait, refus, idempotence.
+do $$ declare x uuid := pg_temp.icard('Img X'); y uuid := pg_temp.icard('Img Y'); a uuid := pg_temp.player('ImgA'); mig uuid := pg_temp.player('ImgMig');
+  oth uuid := pg_temp.player('ImgOth'); ca uuid := pg_temp.copy_of(a, x); co uuid := pg_temp.copy_of(oth, y); u uuid; r jsonb; d jsonb; i int;
+  n0 int := (select count(*) from wm.staff_actions where action = 'image_auto_hide'); begin
+  update public.profiles set avatar_user_card_id = ca, avatar_url = (select image_url from public.cards where id = x) where id = a;
+  update public.profiles set avatar_url = (select image_url from public.cards where id = x) where id = mig;
+  update public.profiles set avatar_user_card_id = co, avatar_url = (select image_url from public.cards where id = y) where id = oth;
+  assert wm.card_image_report_get(a, x) = '{"reported": false}', 'get avant';
+  for i in 1..9 loop
+    u := tests.make_user('ImgRep' || i);
+    r := wm.card_image_report_set(u, x, true);
+    assert r = '{"reported": true, "hidden": false}', r::text;
+  end loop;
+  assert not (select hide_image from public.cards where id = x), 'pas encore masquée';
+  assert wm.card_image_report_get(u, x) = '{"reported": true}', 'get après';
+  u := tests.make_user('ImgRep10');
+  r := wm.card_image_report_set(u, x, true, 'img-10');
+  assert r = '{"reported": true, "hidden": true}', r::text;
+  assert (select hide_image from public.cards where id = x), 'masquée';
+  assert (select count(*) from wm.staff_actions where action = 'image_auto_hide') = n0 + 1, 'une ligne d''audit';
+  assert (select (staff_id is null, target_type, target_id, reason, payload) = (true, 'card', x::text, 'Seuil de signalements atteint',
+    '{"reports": 10}'::jsonb) from wm.staff_actions where action = 'image_auto_hide' order by id desc limit 1), 'audit auto-masquage';
+  assert (select avatar_user_card_id is null and avatar_url is null from public.profiles where id = a), 'avatar copie vidé';
+  assert (select avatar_url is null from public.profiles where id = mig), 'avatar migré vidé';
+  assert (select avatar_user_card_id = co and avatar_url is not null from public.profiles where id = oth), 'autre carte intacte';
+  assert wm.card_image_report_set(u, x, true, 'img-10') = r, 'même idem, même corps';
+  assert (select count(*) from wm.staff_actions where action = 'image_auto_hide') = n0 + 1, 'idem sans second effet';
+  r := wm.card_image_report_set(tests.make_user('ImgRep11'), x, true);
+  assert r = '{"reported": true, "hidden": true}' and (select count(*) from wm.staff_actions where action = 'image_auto_hide') = n0 + 1, 'un 11e';
+  r := wm.card_image_report_set(u, x, false);
+  assert r = '{"reported": false, "hidden": true}' and wm.card_image_report_get(u, x) = '{"reported": false}', 'retrait';
+  assert (select count(*) from wm.card_image_reports where card_id = x) = 10, 'ligne partie';
+  d := pg_temp.err(format('select wm.card_image_report_set(%L, %L, true)', a, gen_random_uuid()));
+  assert d = pg_temp.e(404, null, 'Carte introuvable'), d::text;
+  update wm.config set value = 'true' where key = 'maintenance';
+  d := pg_temp.err(format('select wm.card_image_report_set(%L, %L, true)', a, y));
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert d = pg_temp.e(503, 'maintenance', 'Maintenance en cours, reviens dans quelques minutes.'), d::text;
+  perform pg_temp.sanction(pg_temp.staff('admin'), a, 'ban');
+  d := pg_temp.err(format('select wm.card_image_report_set(%L, %L, true)', a, y));
+  assert d = pg_temp.e(403, null, 'Ton compte est temporairement restreint.') || '{"activity_blocked_until": null}', d::text;
+end $$;
+
+-- Drapeaux : démasquage (signalements effacés, compteur reparti de 0), nsfw vide les avatars, refus.
+do $$ declare m uuid := pg_temp.staff('moderator'); p uuid := pg_temp.player('FlagPl'); x uuid := pg_temp.icard('Flag X'); a uuid := pg_temp.player('FlagA');
+  ca uuid := pg_temp.copy_of(a, x); r jsonb; d jsonb; i int; u uuid; x0 wm.staff_actions; begin
+  for i in 1..10 loop
+    perform wm.card_image_report_set(tests.make_user('FlagRep' || i), x, true);
+  end loop;
+  assert (select hide_image from public.cards where id = x), 'masquée d''office';
+  d := pg_temp.err(format('select wm.admin_card_flags(%L, %L, false, false, %L)', p, x, 'Motif de test'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.err(format('select wm.admin_card_flags(%L, %L, false, false, %L)', m, x, '  '));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  d := pg_temp.err(format('select wm.admin_card_flags(%L, %L, false, false, %L)', m, gen_random_uuid(), 'Motif de test'));
+  assert d = pg_temp.e(404, null, 'Carte introuvable'), d::text;
+  assert not exists (select from wm.staff_actions where action = 'card_flags'), 'refus sans audit';
+  r := wm.admin_card_flags(m, x, false, false, 'Image conforme', 'flag-1');
+  assert r = jsonb_build_object('card', jsonb_build_object('id', x, 'hide_image', false, 'nsfw_image', false),
+    'cleared_avatars', 0, 'cleared_reports', 10), r::text;
+  assert wm.admin_card_flags(m, x, false, false, 'Image conforme', 'flag-1') = r, 'même corps';
+  assert (select count(*) from wm.staff_actions where action = 'card_flags') = 1, 'une seule ligne d''audit';
+  select * into x0 from wm.staff_actions where action = 'card_flags';
+  assert (x0.staff_id, x0.target_type, x0.target_id, x0.reason) = (m, 'card', x::text, 'Image conforme')
+    and x0.payload = '{"before": {"hide_image": true, "nsfw_image": false}, "after": {"hide_image": false, "nsfw_image": false},
+      "cleared_reports": 10}'::jsonb, x0.payload::text;
+  assert not (select hide_image from public.cards where id = x) and not exists (select from wm.card_image_reports where card_id = x), 'état';
+  -- Le compteur est reparti de 0 : neuf signalements ne masquent pas, le dixième oui.
+  for i in 1..9 loop
+    u := tests.make_user('FlagNew' || i);
+    assert (wm.card_image_report_set(u, x, true) ->> 'hidden')::boolean = false, 'pas de boucle avant 10';
+  end loop;
+  assert (wm.card_image_report_set(tests.make_user('FlagNew10'), x, true) ->> 'hidden')::boolean, 're-masquée au 10e';
+  r := wm.admin_card_flags(m, x, false, true, 'Image sensible');
+  assert r -> 'cleared_avatars' = '0' and r -> 'cleared_reports' = '10' and (select nsfw_image from public.cards where id = x), r::text;
+  update public.profiles set avatar_user_card_id = ca where id = a;
+  r := wm.admin_card_flags(m, x, true, true, 'Retiré');
+  assert r -> 'cleared_avatars' = '1' and (select avatar_user_card_id is null and avatar_url is null from public.profiles where id = a), r::text;
+end $$;
+
+-- Revue d'un signalement.
+do $$ declare m uuid := pg_temp.staff('moderator'); p uuid := pg_temp.player('RevPl'); a uuid := pg_temp.player('RevA'); b uuid := pg_temp.player('RevB');
+  rid uuid; r jsonb; d jsonb; begin
+  insert into public.reports (reporter_id, reported_user_id, reason) values (a, b, 'spam') returning id into rid;
+  d := pg_temp.err(format('select wm.admin_report_review(%L, %L, %L, %L)', p, rid, 'resolved', 'Motif de test'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.err(format('select wm.admin_report_review(%L, %L, %L, %L)', m, rid, 'resolved', ' '));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  d := pg_temp.err(format('select wm.admin_report_review(%L, %L, %L, %L)', m, rid, 'x', 'Motif de test'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Statut inconnu'), d::text;
+  d := pg_temp.err(format('select wm.admin_report_review(%L, %L, %L, %L)', m, gen_random_uuid(), 'resolved', 'Motif de test'));
+  assert d = pg_temp.e(404, null, 'Signalement introuvable'), d::text;
+  assert not exists (select from wm.staff_actions where action = 'report_review') and not exists (select from wm.report_reviews where report_id = rid), 'refus sans écriture';
+  r := wm.admin_report_review(m, rid, 'resolved', 'Traité', 'rev-1');
+  assert r = '{"ok": true, "status": "resolved"}', r::text;
+  assert wm.admin_report_review(m, rid, 'resolved', 'Traité', 'rev-1') = r and (select count(*) from wm.staff_actions where action = 'report_review') = 1, 'idem';
+  r := wm.admin_report_review(m, rid, 'dismissed', 'Finalement non');
+  assert r = '{"ok": true, "status": "dismissed"}', r::text;
+  assert (select count(*) from wm.report_reviews where report_id = rid) = 1 and (select status from wm.report_reviews where report_id = rid) = 'dismissed', 'une revue';
+  assert (select count(*) from wm.staff_actions where action = 'report_review' and target_id = rid::text) = 2, 'deux audits';
+  assert (select payload from wm.staff_actions where action = 'report_review' order by id desc limit 1) = '{"status": "dismissed"}', 'payload';
+  assert (select staff_action_id from wm.report_reviews where report_id = rid) = (select max(id) from wm.staff_actions where action = 'report_review'), 'audit rattaché';
+end $$;
+
+-- Messages privés d'une paire signalée.
+do $$ declare m uuid := pg_temp.staff('moderator'); p uuid := pg_temp.player('DmPl'); a uuid := pg_temp.player('DmA'); b uuid := pg_temp.player('DmB');
+  c uuid := pg_temp.player('DmC'); r jsonb; d jsonb; i int; mid uuid; ids uuid[]; tgt text; begin
+  insert into public.friendships (requester_id, addressee_id, status) values (a, b, 'accepted'), (a, c, 'accepted');
+  for i in 1..3 loop
+    insert into public.chat_messages (sender_id, recipient_id, content, created_at)
+    values (case when i = 2 then b else a end, case when i = 2 then a else b end, 'msg ' || i, now() - interval '1 hour' + i * interval '1 minute');
+  end loop;
+  insert into public.chat_messages (sender_id, recipient_id, content) values (a, c, 'hors paire') returning id into mid;
+  d := pg_temp.err(format('select wm.admin_dm_thread(%L, %L, %L, %L)', m, a, b, 'Motif de test'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Aucun signalement entre ces deux joueurs'), d::text;
+  d := pg_temp.err(format('select wm.admin_dm_thread(%L, %L, %L, %L)', p, a, b, 'Motif de test'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.err(format('select wm.admin_dm_thread(%L, %L, %L, %L)', m, a, b, ''));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  assert not exists (select from wm.staff_actions where action = 'dm_read'), 'refus sans audit';
+  insert into public.reports (reporter_id, reported_user_id, reason) values (b, a, 'inappropriate_content');
+  r := wm.admin_dm_thread(m, a, b, 'Lecture du signalement');
+  assert (select array_agg(e ->> 'content') from jsonb_array_elements(r -> 'messages') e) = array['msg 1', 'msg 2', 'msg 3'], r::text;
+  assert (select array_agg(k order by k) from jsonb_object_keys(r -> 'messages' -> 0) k)
+    = array['content', 'created_at', 'id', 'recipient_id', 'sender_id', 'sender_username'], 'clés';
+  assert r -> 'messages' -> 0 ->> 'sender_username' = 'DmA' and r -> 'messages' -> 1 ->> 'sender_username' = 'DmB', 'pseudos';
+  tgt := least(a, b)::text || ':' || greatest(a, b)::text;
+  assert (select (target_type, target_id, payload) = ('dm_pair', tgt, '{"count": 3}'::jsonb) from wm.staff_actions where action = 'dm_read'), 'audit dm_read';
+  r := wm.admin_dm_thread(m, b, a, 'Lecture inverse');
+  assert (select count(*) from wm.staff_actions where action = 'dm_read' and target_id = tgt) = 2, 'même cible';
+  insert into public.chat_messages (sender_id, recipient_id, content, created_at)
+  select a, b, 'bulk ' || g, now() + g * interval '1 second' from generate_series(1, 98) g;
+  r := wm.admin_dm_thread(m, a, b, 'Lecture bornée');
+  assert jsonb_array_length(r -> 'messages') = 100 and r -> 'messages' -> 99 ->> 'content' = 'bulk 98', 'bornée à 100, ordre croissant';
+  -- Suppression.
+  select id into mid from public.chat_messages where content = 'msg 2';
+  d := pg_temp.err(format('select wm.admin_dm_delete(%L, %L, %L)', p, mid, 'Motif de test'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.err(format('select wm.admin_dm_delete(%L, %L, %L)', m, mid, ''));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  r := wm.admin_dm_delete(m, mid, 'Insultes', 'dm-1');
+  assert r = '{"ok": true}' and not exists (select from public.chat_messages where id = mid), r::text;
+  assert wm.admin_dm_delete(m, mid, 'Insultes', 'dm-1') = r and (select count(*) from wm.staff_actions where action = 'dm_delete') = 1, 'idem';
+  assert (select (target_type, target_id, payload) = ('dm', mid::text, jsonb_build_object('sender_id', b, 'recipient_id', a,
+    'created_at', now() - interval '1 hour' + interval '2 minutes')) from wm.staff_actions where action = 'dm_delete'), 'audit sans content';
+  d := pg_temp.err(format('select wm.admin_dm_delete(%L, %L, %L)', m, mid, 'Insultes'));
+  assert d = pg_temp.e(404, null, 'Message introuvable'), d::text;
+  select id into mid from public.chat_messages where content = 'hors paire';
+  d := pg_temp.err(format('select wm.admin_dm_delete(%L, %L, %L)', m, mid, 'Insultes'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Aucun signalement entre ces deux joueurs'), d::text;
+  assert exists (select from public.chat_messages where id = mid) and (select count(*) from wm.staff_actions where action = 'dm_delete') = 1, 'message gardé';
+end $$;
+
+-- Listes du staff.
+do $$ declare m uuid := pg_temp.staff('moderator'); p uuid := pg_temp.player('LstPl'); a uuid := pg_temp.player('LstA'); b uuid := pg_temp.player('LstB');
+  rev uuid; r jsonb; d jsonb; i int; x uuid := pg_temp.icard('Lst X'); y uuid := pg_temp.icard('Lst Y'); u uuid; begin
+  insert into public.reports (reporter_id, reported_user_id, reason, details, created_at) values (a, b, 'cheating', 'détails', now() + interval '1 second') returning id into rev;
+  perform wm.admin_report_review(m, rev, 'resolved', 'Traité');
+  perform pg_temp.sanction(pg_temp.staff('admin'), b, 'warning');
+  r := wm.staff_reports(m, 'reviewed');
+  assert r -> 'reports' -> 0 ->> 'id' = rev::text, r::text;
+  assert (select array_agg(k order by k) from jsonb_object_keys(r -> 'reports' -> 0) k)
+    = array['active_sanctions', 'created_at', 'details', 'id', 'reason', 'reported', 'reporter', 'review'], 'clés';
+  assert r -> 'reports' -> 0 -> 'reporter' = jsonb_build_object('id', a, 'username', 'LstA')
+    and r -> 'reports' -> 0 -> 'reported' = jsonb_build_object('id', b, 'username', 'LstB') and r -> 'reports' -> 0 -> 'active_sanctions' = '1', r::text;
+  assert (select array_agg(k order by k) from jsonb_object_keys(r -> 'reports' -> 0 -> 'review') k) = array['reviewed_at', 'reviewed_by_username', 'status']
+    and r -> 'reports' -> 0 -> 'review' ->> 'status' = 'resolved', 'review';
+  assert not exists (select from jsonb_array_elements(wm.staff_reports(m, 'open') -> 'reports') e where e ->> 'id' = rev::text), 'revu absent des ouverts';
+  assert wm.staff_reports(m) -> 'reports' -> 0 -> 'review' = 'null', 'ouvert sans revue';
+  for i in 1..51 loop
+    u := tests.make_user('LstR' || i);
+    insert into public.reports (reporter_id, reported_user_id, reason) values (u, b, 'spam');
+  end loop;
+  r := wm.staff_reports(m, 'open');
+  assert jsonb_array_length(r -> 'reports') = 50 and (r ->> 'hasMore')::boolean, 'page de 50';
+  assert (wm.staff_reports(m, 'open', -3) -> 'reports') = r -> 'reports', 'page bornée à 0';
+  d := pg_temp.err(format('select wm.staff_reports(%L, %L)', m, 'x'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Statut inconnu'), d::text;
+  d := pg_temp.err(format('select wm.staff_reports(%L)', p));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  -- Images : X (10) avant Y (2).
+  for i in 1..10 loop
+    u := tests.make_user('LstI' || i);
+    insert into wm.card_image_reports (card_id, user_id) values (x, u);
+    if i <= 2 then insert into wm.card_image_reports (card_id, user_id) values (y, u); end if;
+  end loop;
+  r := wm.staff_image_reports(m);
+  -- Les blocs précédents ont laissé d'autres cartes signalées : on ne regarde que X et Y, dans l'ordre rendu.
+  assert (select array_agg(e ->> 'card_id') from jsonb_array_elements(r -> 'cards') e where e ->> 'card_id' in (x::text, y::text)) = array[x::text, y::text], r::text;
+  assert (select array_agg(k order by k) from jsonb_object_keys(r -> 'cards' -> 0) k)
+    = array['card_id', 'hide_image', 'image_url', 'last_reported_at', 'nsfw_image', 'reports', 'wikipedia_title'], 'clés';
+  assert (select e -> 'reports' from jsonb_array_elements(r -> 'cards') e where e ->> 'card_id' = x::text) = '10'
+    and (select e -> 'reports' from jsonb_array_elements(r -> 'cards') e where e ->> 'card_id' = y::text) = '2', 'comptes';
+  d := pg_temp.err(format('select wm.staff_image_reports(%L)', p));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+end $$;
+
+-- lock_timeout, ordre des verrous, lectures stables, aides sous les verrous de l'appelant.
+do $$ declare bad text; begin
+  assert tests.lock_timeout_violations(array['card_image_report_set', 'admin_card_flags', 'admin_report_review', 'admin_dm_delete'],
+    array['for update', 'wm.lock_user(']) is null, 'lock_timeout';
+  assert strpos((select prosrc from pg_proc where oid = to_regproc('wm.card_avatar_clear')), 'lock_timeout') = 0, 'card_avatar_clear sans lock_timeout';
+  select string_agg(f, ', ') into bad from unnest(array['card_image_report_get(uuid, uuid)', 'staff_reports(uuid, text, integer)',
+    'staff_image_reports(uuid, integer)']) f where (select provolatile from pg_proc where oid = ('wm.' || f)::regprocedure) <> 's';
+  assert bad is null, 'non stable : ' || bad;
+end $$;
+
 -- Scan de couverture : toute wm.admin_* (hors admin_reason) ouvre par staff_actor, exige un motif et écrit son audit, avec idempotence sauf
 -- admin_dm_thread ; toute wm.staff_* de lecture ouvre par staff_actor ; aucune fonction ne modifie ni ne supprime l'audit (G8).
 do $$ declare bad text; begin
