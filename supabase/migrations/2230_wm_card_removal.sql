@@ -30,9 +30,11 @@ end $$;
 -- Échange en attente annulé, sous le verrou de l'appelant ; aucun argent (un échange en attente ne retient rien).
 create or replace function wm.trade_void(p_trade_id uuid, p_except uuid default null)
 returns void language plpgsql security definer set search_path = '' as $$
-declare t public.trades;
+declare
+  t public.trades;
+  v_now timestamptz := clock_timestamp();  -- une seule lecture : closed_at = updated_at
 begin
-  update public.trades set status = 'cancelled', closed_at = clock_timestamp(), updated_at = clock_timestamp()
+  update public.trades set status = 'cancelled', closed_at = v_now, updated_at = v_now
   where id = p_trade_id and status = 'pending'
   returning * into t;
   if found then
