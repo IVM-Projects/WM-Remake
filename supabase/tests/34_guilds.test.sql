@@ -54,10 +54,11 @@ do $$ begin
   assert not exists (select from wm.config where key in ('guild', 'achievements') and coalesce(note, '') = ''), 'note manquante';
 end $$;
 
--- Rejeu de 2000 : mêmes valeurs, et une valeur déjà posée garde la sienne.
+-- Rejeu de 2000, suivi de 2250 qui redéfinit check_invariants (M5b-18) : mêmes valeurs, et une valeur déjà posée garde la sienne.
 create temp table progress_config as select pg_temp.progress_config() v;
 update wm.config set value = value || '{"max_members": 5}' where key = 'guild';
 \ir ../migrations/2000_wm_progress_core.sql
+\ir ../migrations/2250_wm_account_delete.sql
 do $$ begin
   assert pg_temp.progress_config() = jsonb_set((select v from progress_config), '{guild,max_members}', '5'), pg_temp.progress_config()::text;
 end $$;

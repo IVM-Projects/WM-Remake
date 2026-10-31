@@ -175,11 +175,13 @@ do $$ declare a uuid; b uuid; c tid; p public.profiles; begin
   assert p.packs_remaining = 4 and p.pack_cap = 4 and p.packs_last_regen_at is null, format('%s/%s %s', p.packs_remaining, p.pack_cap, p.packs_last_regen_at);
 end $$;
 
--- Rejeu de 1870, deux fois : une valeur déjà posée garde sa valeur, aucun profil existant ne change (pas de rattrapage).
+-- Rejeu de 1870, deux fois, suivi de 2250 qui redéfinit handle_new_user (M5b-18) : une valeur déjà posée garde sa valeur, aucun profil
+-- existant ne change (pas de rattrapage).
 create temp table start_profiles as select jsonb_agg(to_jsonb(p) order by p.id) v from public.profiles p;
 update wm.config set value = '7' where key = 'start_packs';
 \ir ../migrations/1870_wm_start_packs.sql
 \ir ../migrations/1870_wm_start_packs.sql
+\ir ../migrations/2250_wm_account_delete.sql
 do $$ begin
   assert (select value from wm.config where key = 'start_packs') = '7'::jsonb, 'start_packs écrasé par le rejeu';
   assert (select jsonb_agg(to_jsonb(p) order by p.id) from public.profiles p) = (select v from start_profiles), 'profils existants modifiés';
