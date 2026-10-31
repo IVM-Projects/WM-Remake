@@ -214,10 +214,15 @@ do $$ declare
   insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (d, 'https://push.test/acc-del', 'k', 'a');
   insert into public.wishlist_items (user_id, card_id) values (d, c[5]);
   insert into public.tags (user_id, name) values (d, 'Favoris') returning id into tg;
+  insert into wm.user_prefs (user_id, sounds) values (d, false) on conflict (user_id) do update set sounds = false;
+  insert into wm.notification_prefs (user_id, push_types) values (d, '{trade_received}')
+  on conflict (user_id) do update set push_types = '{trade_received}';
   insert into public.user_card_tags (user_card_id, tag_id) values (kd[3], tg);
   perform pg_temp.inv('avant la suppression');
   assert exists (select from public.notifications where user_id = d), 'notifications de D';
   led := array(select id from wm.wb_ledger where user_id = d order by id);
+  assert exists (select from wm.user_prefs where user_id = d) and exists (select from wm.notification_prefs where user_id = d),
+    'préférences avant';
 
   r := wm.account_delete(d, 'd_user', 'acc-del-1');
   assert r = '{"ok": true, "voided_auctions": 2, "cancelled_trades": 1, "finished_battles": 1, "cancelled_battles": 1,
@@ -237,7 +242,8 @@ do $$ declare
   assert (select status from public.auctions where id = au1) = 'cancelled', 'enchère de D';
   assert (select wikibidous_balance from public.profiles where id = m) = 500, 'M remboursé';
   assert (select status from public.auctions where id = au2) = 'cancelled', 'enchère de S';
-  assert exists (select from wm.wb_ledger where user_id = d and reason = 'refund'), 'D remboursé';
+  assert (select delta from wm.wb_ledger where user_id = d and reason = 'refund'
+    and ref = 'refund:' || (select id from public.auction_bids where auction_id = au2 and bidder_id = d)) = 80, 'D remboursé';
   assert exists (select from public.user_cards where user_id = s and card_id = c[8]), 'copie rendue à S';
   assert (select status from public.trades where id = tr) = 'cancelled', 'échange';
   assert (select count(*) from public.notifications where type = 'trade_voided' and data ->> 'trade_id' = tr::text) = 1
@@ -258,6 +264,8 @@ do $$ declare
   assert not exists (select from public.guild_wishlists where user_id = d and fulfilled_at is null), 'souhait de guilde';
   assert not exists (select from public.notifications where user_id = d), 'notifications';
   assert not exists (select from public.push_subscriptions where user_id = d), 'push';
+  assert not exists (select from wm.user_prefs where user_id = d) and not exists (select from wm.notification_prefs where user_id = d),
+    'préférences';
   assert not exists (select from public.friendships where d in (requester_id, addressee_id)), 'amitiés';
   assert not exists (select from wm.guild_invites where d in (user_id, inviter_id)), 'invitations';
   assert exists (select from wm.deleted_accounts where user_id = d and auth_done_at is null), 'deleted_accounts';

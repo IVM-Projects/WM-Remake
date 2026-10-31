@@ -186,24 +186,27 @@ $$;
 
 -- Suppression de compte immédiate (A3, M6a-3), une transaction. Politique d'effacement (G1) :
 --   gardé (données partagées, preuves, argent) : la ligne profiles et son id, messages privés et de guilde, échanges clos, batailles
---   finies, dons de guilde, signalements déposés et reçus, sanctions, grand livre, solde inerte, succès, statistiques, audit ;
+--   finies, dons de guilde, signalements déposés et reçus, sanctions, grand livre, solde inerte, succès, statistiques, audit ; aussi
+--   ses signalements d'image (wm.card_image_reports : ils comptent pour le seuil de 10 signaleurs) et ses decks de bataille
+--   (public.battle_decks : historique des batailles finies) ;
 --   effacé (données propres) : pseudo « Joueur supprimé <8 hex> » (16 hex en cas de collision), bio, avatar, profil privé, collection
 --   (vitrine et étiquettes de copie en cascade), étiquettes, liste de souhaits, notifications, abonnements push, amitiés, invitations de
---   guilde reçues et envoyées, souhait de guilde ouvert, rôle staff ;
+--   guilde reçues et envoyées, souhait de guilde ouvert, rôle staff, préférences (wm.user_prefs, wm.notification_prefs) ;
 --   dénoué d'abord : enchères actives dont il est vendeur ou meneur (auction_void), échanges en attente (trade_void), batailles ouvertes
 --   (annulées, ou finies au profit de l'adversaire si active), guilde (départ, transmission au plus ancien membre relu sous le verrou de
 --   la guilde, dissolution s'il n'en reste aucun) ;
---   relu sous les verrous : un engagement absent du premier relevé → 503 BUSY, tout est annulé ;
+--   relu sous les verrous : un engagement (souhait de guilde ouvert compris) absent du premier relevé → 503 BUSY, tout est annulé ;
 --   anti-évasion : empreinte de l'e-mail seulement sous bannissement actif.
 -- Sans wm.actor : un banni exerce ce droit tant que sa session vit.
 -- M6b : la résiliation de l'abonnement Stripe se branche dans la route, avant la suppression GoTrue (A3).
--- shortcut: collection effacée en une transaction ; au-delà d'environ 488 000 copies (N mesuré au banc par la Task 6b : 20 000 copies
--- en 328 ms), 503 : effacement par lots au M8.
+-- shortcut: collection effacée en une transaction ; au-delà d'environ 488 000 copies (N mesuré par la Task 6b sur un banc local sans
+-- fsync : 20 000 copies en 328 ms ; en production, sans doute moins), 503 : effacement par lots au M8.
 create or replace function wm.account_delete(p_uid uuid, p_username text, p_idem text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_resp jsonb;
   v_name text;
+  v_wishes uuid[];
   v_trades uuid[];
   v_auctions uuid[];
   v_battles uuid[];
@@ -234,7 +237,8 @@ begin
   end if;
   perform set_config('lock_timeout', '2s', true);
   -- Ordre C4, le même que wm.admin_card_remove : souhait ouvert, échanges, enchères, batailles, amitiés, puis les profils, puis la guilde.
-  perform from public.guild_wishlists where user_id = p_uid and fulfilled_at is null order by id for update;
+  select coalesce(array_agg(x.id order by x.id), '{}') into v_wishes
+  from (select id from public.guild_wishlists where user_id = p_uid and fulfilled_at is null order by id for update) x;
   select coalesce(array_agg(x.id order by x.id), '{}') into v_trades
   from (select id from public.trades where status = 'pending' and p_uid in (initiator_id, recipient_id) order by id for update) x;
   select coalesce(array_agg(x.id order by x.id), '{}') into v_auctions
@@ -256,7 +260,8 @@ begin
   if exists (select from wm.deleted_accounts where user_id = p_uid) then
     perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
   end if;
-  if exists (select from public.trades where status = 'pending' and p_uid in (initiator_id, recipient_id) and id <> all (v_trades))
+  if exists (select from public.guild_wishlists where user_id = p_uid and fulfilled_at is null and id <> all (v_wishes))
+    or exists (select from public.trades where status = 'pending' and p_uid in (initiator_id, recipient_id) and id <> all (v_trades))
     or exists (select from public.auctions where status = 'active' and p_uid in (seller_id, current_bidder_id) and id <> all (v_auctions))
     or exists (select from public.battles where status in ('pending', 'deck_selection', 'generating_quizzes', 'active')
       and p_uid in (challenger_id, opponent_id) and id <> all (v_battles))
@@ -282,6 +287,7 @@ begin
     end if;
   end if;
   -- Écritures.
+  -- Condition de ban actif : doit rester identique à celle de wm.auth_state (2200).
   insert into wm.banned_emails (email_hash, user_id)
   select wm.email_hash(u.email), p_uid from auth.users u
   where u.id = p_uid and u.email is not null and exists (select from wm.sanctions s where s.user_id = p_uid and s.kind = 'ban'
@@ -313,7 +319,7 @@ begin
     update public.guilds set leader_id = v_heir where id = g;
   end if;
   delete from public.guild_members where user_id = p_uid;
-  delete from public.guild_wishlists where user_id = p_uid and fulfilled_at is null;
+  delete from public.guild_wishlists where id = any (v_wishes) and fulfilled_at is null;
   delete from wm.guild_invites where p_uid in (user_id, inviter_id);
   delete from public.friendships where id = any (v_friends);
   delete from public.notifications where user_id = p_uid;
@@ -322,6 +328,8 @@ begin
   delete from public.tags where user_id = p_uid;
   delete from public.user_cards where user_id = p_uid;
   delete from wm.staff where user_id = p_uid;
+  delete from wm.user_prefs where user_id = p_uid;
+  delete from wm.notification_prefs where user_id = p_uid;
   begin
     update public.profiles set username = 'Joueur supprimé ' || substr(md5(p_uid::text), 1, 8), bio = null, avatar_user_card_id = null,
       avatar_url = null, is_public = false
