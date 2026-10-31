@@ -12,6 +12,8 @@ import { authErrorMessage, usernameProblem } from '@/lib/auth'
 import { setPrefs } from '@/lib/prefs'
 import { pushState, unsubscribePush } from '@/lib/push-browser'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
+import { DataExport } from '@/components/settings/DataExport'
+import { DeleteAccount } from '@/components/settings/DeleteAccount'
 import { PushSection } from './push-section'
 
 type Prefs = { sounds: boolean; hide_sensitive: boolean; is_public: boolean }
@@ -180,6 +182,10 @@ export function SettingsClient() {
             <SignOut />
           </div>
         </Section>
+
+        <DataExport />
+
+        {typeof name === 'string' && <DeleteAccount username={name} />}
       </div>
     </>
   )

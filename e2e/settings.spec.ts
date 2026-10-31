@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import type { Locator, Page, Request, Route } from '@playwright/test'
-import { expect, makePlayer, routeOnce, sql, test } from './fixtures'
+import { brand } from '../lib/brand.ts'
+import { befriend, cookieFor, expect, makePlayer, routeOnce, sql, test } from './fixtures'
+import { UNSURE as UNSURE_TEXT } from '../lib/api.ts'
 import { stubPush } from './push-stub'
 
 const fresh = (prefix: string) => `${prefix}_${randomUUID().slice(-12)}`
@@ -16,7 +19,7 @@ test('pseudo : un changement vers un pseudo libre réussit, le second est refus�
   await page.goto('/settings')
   await expect(page.locator('main h1')).toHaveText('Paramètres')
   await expect(page.getByRole('tab', { name: 'Général' })).toHaveAttribute('aria-selected', 'true')
-  for (const h of ['Profil', 'Préférences', 'Compte']) await expect(page.getByRole('heading', { name: h, exact: true })).toBeVisible()
+  for (const h of ['Profil', 'Préférences', 'Compte', 'Mes données', 'Supprimer mon compte']) await expect(page.getByRole('heading', { name: h, exact: true })).toBeVisible()
   await expect(pseudo(page)).toHaveValue(username)
   // Inchangé : rien à enregistrer.
   await expect(savePseudo(page)).toBeDisabled()
@@ -448,3 +451,133 @@ for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { stat
     await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeFocused()
   })
 }
+
+const EXPORT = '/api/settings/export'
+const DELETE = '/api/settings/delete-account'
+const MIN_TARGET = 44 - 0.01
+const exportButton = (page: Page) => page.getByRole('button', { name: 'Télécharger mes données' })
+const deleteButton = (page: Page) => page.getByRole('button', { name: 'Supprimer mon compte' })
+
+test('export : fichier téléchargé, toast, seconde demande ralentie, échecs 500 et 200 illisible', async ({ page, login }) => {
+  const { uid, username } = await login()
+  try {
+    await page.goto('/settings')
+    await expect(pseudo(page)).toHaveValue(username)
+    // Échecs d'abord (la première réponse réelle consomme la limite de débit).
+    for (const reply of [{ status: 500 }, { status: 200, body: 'x' }]) {
+      await routeOnce(page, `**${EXPORT}`, (r) => r.fulfill(reply))
+      await exportButton(page).click()
+      await expect(page.locator('main').getByRole('alert').filter({ hasText: 'L\'export n\'a pas pu être préparé, réessaie.' })).toBeVisible()
+    }
+    const download = page.waitForEvent('download')
+    await exportButton(page).click()
+    const file = await download
+    expect(file.suggestedFilename()).toMatch(new RegExp(`^${brand.name.toLowerCase()}-export-\\d{4}-\\d{2}-\\d{2}\\.json$`))
+    const body = JSON.parse(readFileSync((await file.path())!, 'utf8')) as { format: string; profile?: { username?: string } }
+    expect(body.format).toBe('export-compte')
+    expect(JSON.stringify(body)).toContain(username)
+    await expect(page.getByRole('status').filter({ hasText: 'Export téléchargé.' })).toBeVisible()
+    await exportButton(page).click()
+    await expect(page.locator('main').getByRole('alert')).toContainText('Le site demande de ralentir')
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
+  }
+})
+
+test('suppression : confirmation par le pseudo, modale annulée sans effet, 500 → incertain', async ({ page, login }) => {
+  const { uid, username } = await login()
+  try {
+    await page.goto('/settings')
+    await expect(pseudo(page)).toHaveValue(username)
+    await deleteButton(page).click()
+    const dialog = page.getByRole('dialog', { name: 'Supprimer ton compte ?' })
+    const confirm = dialog.getByRole('button', { name: 'Supprimer définitivement' })
+    await expect(confirm).toHaveAttribute('aria-disabled', 'true')
+    await dialog.getByRole('button', { name: 'Annuler' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(deleteButton(page)).toBeFocused()
+    expect(sql(`select username from public.profiles where id = :'uid'`, { uid })).toBe(username)
+
+    await deleteButton(page).click()
+    await dialog.getByLabel('Tape ton pseudo pour confirmer').fill(` ${username.toUpperCase()} `)
+    await expect(confirm).not.toHaveAttribute('aria-disabled', 'true')
+    await routeOnce(page, `**${DELETE}`, async (r) => { await r.fetch(); await r.fulfill({ status: 500 }) })
+    await confirm.click()
+    await expect(dialog.getByRole('alert')).toHaveText(UNSURE_TEXT)
+    await expect(dialog.getByLabel('Tape ton pseudo pour confirmer')).toBeFocused()
+    await expect(page).toHaveURL(/\/settings$/)
+  } finally {
+    sql(`select set_config('wm.allow_tombstone_delete', 'on', false);
+delete from auth.users where id = :'uid'`, { uid })
+  }
+})
+
+test('suppression de bout en bout : tombe, enchère annulée, mise remboursée, ami voit « Joueur supprimé », ancien cookie refusé', async ({ page, login, browser, baseURL }) => {
+  const me = await login({ humanVerified: true })
+  const [bidder, friend] = [makePlayer({ balance: 500, humanVerified: true }), makePlayer()]
+  const title = `Zz suppression e2e ${randomUUID().slice(-12)} z`
+  let card: string | undefined
+  try {
+    card = sql(`select tests.image_card(:'t')`, { t: title })
+    const auction = sql(`select from wm.grant_copy(:'s', :'card', true) \\g /dev/null
+select wm.create_auction(:'s', :'card', 100, 60) ->> 'id' as id \\gset
+select wm.place_bid(:'b', :'id', 150) \\g /dev/null
+select :'id'`, { s: me.uid, card, b: bidder.uid })
+    befriend(me, friend)
+    sql(`insert into public.chat_messages (sender_id, recipient_id, content) values (:'f', :'m', 'bonjour')`, { f: friend.uid, m: me.uid })
+    await page.goto('/settings')
+    await expect(pseudo(page)).toHaveValue(me.username)
+    await deleteButton(page).click()
+    const dialog = page.getByRole('dialog', { name: 'Supprimer ton compte ?' })
+    await expect(dialog.getByRole('button', { name: 'Supprimer définitivement' })).toHaveAttribute('aria-disabled', 'true')
+    await dialog.getByLabel('Tape ton pseudo pour confirmer').fill(me.username)
+    await dialog.getByLabel('Tape ton pseudo pour confirmer').press('Enter')
+    await expect(page).toHaveURL(/\/login$/)
+
+    expect(sql(`select username from public.profiles where id = :'u'`, { u: me.uid })).toMatch(/^Joueur supprimé /)
+    expect(sql(`select auth_done_at is not null from wm.deleted_accounts where user_id = :'u'`, { u: me.uid })).toBe('t')
+    expect(sql(`select status from public.auctions where id = :'a'`, { a: auction })).toBe('cancelled')
+    expect(sql(`select wikibidous_balance from public.profiles where id = :'b'`, { b: bidder.uid })).toBe('500')
+    expect(sql(`select coalesce(jsonb_agg(v), '[]') from jsonb_array_elements(wm.check_invariants()) v where v ->> 'user_id' in (:'a', :'b', :'c')`,
+      { a: me.uid, b: bidder.uid, c: friend.uid })).toBe('[]')
+
+    const ctx = await browser.newContext()
+    try {
+      await ctx.addCookies([{ ...cookieFor(friend), url: baseURL! }])
+      const fp = await ctx.newPage()
+      await fp.goto('/dms')
+      await fp.locator('main [data-ready]').waitFor()
+      await expect(fp.getByRole('list', { name: 'Conversations' }).getByRole('link').filter({ hasText: 'Joueur supprimé' })).toBeVisible()
+    } finally {
+      await ctx.close()
+    }
+    const old = await browser.newContext()
+    try {
+      await old.addCookies([{ ...cookieFor(me), url: baseURL! }])
+      expect((await old.request.get(`${baseURL}/api/my-collection`)).status()).toBe(401)
+    } finally {
+      await old.close()
+    }
+  } finally {
+    sql(`select set_config('wm.allow_tombstone_delete', 'on', false);
+delete from public.auctions where card_id = :'card'::uuid;
+delete from auth.users where id = any(string_to_array(:'ids', ',')::uuid[]);
+delete from public.cards where id = :'card'::uuid`, { card: card ?? randomUUID(), ids: [me.uid, bidder.uid, friend.uid].join(',') })
+  }
+})
+
+test('mes données et suppression à 360 px : aucun défilement horizontal, boutons de 44 px', async ({ page, login }) => {
+  const { uid, username } = await login()
+  try {
+    await page.setViewportSize({ width: 360, height: 800 })
+    await page.goto('/settings')
+    await expect(pseudo(page)).toHaveValue(username)
+    for (const b of [exportButton(page), deleteButton(page)]) expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(MIN_TARGET)
+    await deleteButton(page).click()
+    const dialog = page.getByRole('dialog')
+    for (const n of ['Supprimer définitivement', 'Annuler']) expect((await dialog.getByRole('button', { name: n }).boundingBox())!.height).toBeGreaterThanOrEqual(MIN_TARGET)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
+  }
+})

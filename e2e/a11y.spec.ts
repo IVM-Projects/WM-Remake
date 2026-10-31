@@ -488,6 +488,16 @@ test('axe /settings : erreurs affichées (pseudo pris, mots de passe différents
   await expectNoSeriousViolations(page)
 })
 
+test('axe /settings : modale de suppression de compte ouverte', async ({ page, login }) => {
+  await login()
+  await page.goto('/settings')
+  await page.locator(READY['/settings']).waitFor()
+  await page.getByRole('button', { name: 'Supprimer mon compte' }).click()
+  await expect(page.getByRole('dialog', { name: 'Supprimer ton compte ?' })).toBeVisible()
+  await settled(page)
+  await expectNoSeriousViolations(page)
+})
+
 test('axe /guild : sans guilde (une invitation), membre (onglet Membres, chef), modale « Quitter » ouverte', async ({ page, login }) => {
   const me = await login()
   const [leader, mate] = [makePlayer(), makePlayer()]
