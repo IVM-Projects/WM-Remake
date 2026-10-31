@@ -406,7 +406,7 @@ end $$;
 -- ===== Task 7 : account_export =====
 
 do $$ declare
-  p uuid := pg_temp.player('ExpRich', 50); f uuid := pg_temp.player('ExpFriend'); st uuid := pg_temp.player('ExpStranger', 777);
+  p uuid := pg_temp.player('ExpRich', 50); f uuid := pg_temp.player('ExpFriend'); st uuid := pg_temp.player('ExpStranger', 7770123);
   c uuid := tests.image_card('Exp Card'); c2 uuid := tests.image_card('Exp Card Two');
   uc1 uuid; uc2 uuid; fc uuid; tg uuid; au uuid; tr uuid; g uuid; wl uuid; ach uuid;
   b_done uuid; b_deck uuid; stranger_report uuid; received_report uuid;
@@ -500,7 +500,10 @@ begin
   assert strpos(t, v_other_email) = 0 and strpos(t, v_st_email) = 0, 'e-mails d''autrui';
   assert strpos(t, 'MSG-STRANGER-TO-FRIEND') = 0 and strpos(t, 'MSG-FRIEND-TO-STRANGER') = 0 and strpos(t, 'ExpStranger') = 0, 'messages d''autrui';
   assert strpos(t, 'AVERTISSEMENT-AUTRE-JOUEUR') = 0, 'sanction d''autrui';
-  assert strpos(t, st::text) = 0 and strpos(t, 'exp:s') = 0 and strpos(t, '777') = 0, 'portefeuille d''autrui';
+  assert strpos(t, st::text) = 0 and strpos(t, 'exp:s') = 0, 'portefeuille d''autrui';
+  assert t !~ '[:,\[]7770123[,}\]]' and t !~ '[:,\[]7770126[,}\]]', 'solde d''autrui';
+  assert (x -> 'account' ->> 'wikibidous_balance')::int = 65 and not exists (select from jsonb_array_elements(x -> 'ledger') l
+    where l ->> 'user_id' <> p::text), 'solde et grand livre du joueur seulement';
 
   -- Débit : second appel → 429.
   d := pg_temp.err(format('select wm.account_export(%L)', p));

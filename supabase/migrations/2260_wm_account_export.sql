@@ -4,6 +4,7 @@
 -- abonnements push, wm.battle_secrets, un signalement reçu, une clé d'idempotence, une ligne d'audit, l'e-mail d'un autre joueur.
 -- Droit du joueur : ni maintenance ni restriction ne l'empêchent ; compte supprimé (401), suspension ou bannissement (403) le refusent.
 -- Pas de p_idem : rejouer par clé stockerait tout l'export dans wm.idempotency_keys ; la fenêtre de débit (429) tient lieu de garde.
+-- Réponse perdue (délai dépassé après le commit) : l'export reste verrouillé pour la fenêtre de 10 minutes ; /privacy (Task 14) doit le dire.
 -- shortcut: un seul JSON en une transaction ; au-delà d'environ 4 Mo (environ 15 000 copies), la réponse Vercel échoue : export par section au M8.
 create or replace function wm.account_export(p_uid uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -12,7 +13,7 @@ declare
   v_at timestamptz;
   v_email text;
 begin
-  perform wm.access_check(p_uid);
+  perform wm.access_check(p_uid);  -- avant le verrou : une suppression concurrente ne fait que rendre au propriétaire ses propres données (sans risque)
   perform set_config('lock_timeout', '2s', true);
   perform wm.lock_user(p_uid);
   select export_at into v_at from wm.user_state where user_id = p_uid;
@@ -42,7 +43,7 @@ begin
     'tags', coalesce((select jsonb_agg(to_jsonb(t) order by t.created_at, t.id) from public.tags t where t.user_id = p_uid), '[]'),
     'wishlist', coalesce((select jsonb_agg(to_jsonb(w) order by w.created_at, w.card_id)
       from public.wishlist_items w where w.user_id = p_uid), '[]'),
-    'showcase', coalesce((select jsonb_agg(to_jsonb(s) order by s.position) from public.showcase s where s.user_id = p_uid), '[]'),
+    'showcase', coalesce((select jsonb_agg(to_jsonb(s) order by s.position, s.user_card_id) from public.showcase s where s.user_id = p_uid), '[]'),
     'ledger', coalesce((select jsonb_agg(to_jsonb(l) order by l.created_at, l.id) from wm.wb_ledger l where l.user_id = p_uid), '[]'),
     'auctions_sold', coalesce((select jsonb_agg(to_jsonb(a) - 'snapshot_search_document' order by a.created_at, a.id)
       from public.auctions a where a.seller_id = p_uid), '[]'),
