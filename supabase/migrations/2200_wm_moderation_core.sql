@@ -111,8 +111,8 @@ returns text language sql immutable security definer set search_path = '' as $$
   select encode(sha256(convert_to(lower(btrim(p_email)), 'UTF8')), 'hex')
 $$;
 
--- Premier appel de chaque fonction staff (G2, G4) : rend le rôle. Ignore maintenance ; refuse un membre du staff sanctionné (même requête
--- que wm.actor). Ne verrouille rien.
+-- Premier appel de chaque fonction staff (G2, G4) : rend le rôle. Ignore maintenance ; refuse un membre du staff sous restriction,
+-- suspension ou bannissement actifs (requête de wm.actor ; activity_blocked_until ne compte pas, G3). Ne verrouille rien.
 create or replace function wm.staff_actor(p_uid uuid, p_min_role text default 'moderator')
 returns text language plpgsql security definer set search_path = '' as $$
 declare
@@ -135,9 +135,8 @@ begin
   where s.user_id = p_uid and s.kind in ('restriction', 'suspension', 'ban') and s.revoked_at is null
     and s.starts_at <= now() and (s.ends_at is null or s.ends_at > now())
   order by s.ends_at desc nulls first limit 1;
-  if found or p.activity_blocked_until > now() then
-    perform wm.raise_err(403, null, 'Ton compte est temporairement restreint.', jsonb_build_object('activity_blocked_until',
-      case when found and v_ends is null then null else greatest(v_ends, p.activity_blocked_until) end));
+  if found then
+    perform wm.raise_err(403, null, 'Ton compte est temporairement restreint.', jsonb_build_object('activity_blocked_until', v_ends));
   end if;
   return v_role;
 end $$;

@@ -35,6 +35,7 @@ end $$;
 create temp table mod_config as select pg_temp.mod_config() v;
 update wm.config set value = '{"hide_threshold": 3}' where key = 'image_reports';
 \ir ../migrations/2200_wm_moderation_core.sql
+-- Une tâche suivante qui redéfinit actor ou staff_actor ajoute ici son propre \ir, après celui de 2200 (M5b-18).
 do $$ begin
   assert pg_temp.mod_config() = jsonb_set((select v from mod_config), '{image_reports,hide_threshold}', '3'), pg_temp.mod_config()::text;
 end $$;
@@ -102,6 +103,9 @@ do $$ declare pl uuid := tests.make_user('ModPl'); mo uuid := tests.make_user('M
     and (d ->> 'activity_blocked_until')::timestamptz = now() + interval '1 day', d::text;
   update wm.sanctions set revoked_at = now() where user_id in (a2, m2);
   assert wm.staff_actor(a2) = 'admin' and wm.staff_actor(m2) = 'moderator', 'sanction levée';
+  -- activity_blocked_until futur sans sanction : passe (G3, comme access_check).
+  update public.profiles set activity_blocked_until = now() + interval '1 day' where id = a2;
+  assert wm.staff_actor(a2, 'admin') = 'admin', 'activity_blocked_until seul';
   insert into wm.deleted_accounts (user_id) values (dl);
   d := pg_temp.err(format('select wm.staff_actor(%L)', dl));
   assert d ->> 'status' = '401' and d ->> 'code' = 'unauthorized', d::text;
@@ -208,8 +212,7 @@ do $$ declare bad text; begin
     and strpos(p.prosrc, 'wm.staff_actor(') = 0;
   assert bad is null, 'wm.staff_* sans staff_actor : ' || bad;
   select string_agg(p.oid::regprocedure::text, ', ') into bad from pg_proc p
-  where p.pronamespace = 'wm'::regnamespace
-    and (strpos(lower(p.prosrc), 'update wm.staff_actions') > 0 or strpos(lower(p.prosrc), 'delete from wm.staff_actions') > 0);
+  where p.pronamespace = 'wm'::regnamespace and p.prosrc ~* '(update|delete\s+from)\s+wm\.staff_actions';
   assert bad is null, 'audit modifié : ' || bad;
 end $$;
 
