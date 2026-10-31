@@ -36,6 +36,8 @@ create temp table mod_config as select pg_temp.mod_config() v;
 update wm.config set value = '{"hide_threshold": 3}' where key = 'image_reports';
 \ir ../migrations/2200_wm_moderation_core.sql
 -- Une tâche suivante qui redéfinit actor ou staff_actor ajoute ici son propre \ir, après celui de 2200 (M5b-18).
+-- Rejeu de 2210 (sanctions) : la migration passe une seconde fois sur la base déjà migrée.
+\ir ../migrations/2210_wm_sanctions.sql
 do $$ begin
   assert pg_temp.mod_config() = jsonb_set((select v from mod_config), '{image_reports,hide_threshold}', '3'), pg_temp.mod_config()::text;
 end $$;
@@ -197,6 +199,320 @@ do $$ declare u uuid := tests.make_user('ModSj'); st uuid := tests.make_user('Mo
   assert not (wm.sanction_json(s) ->> 'active')::boolean, 'levée';
   insert into wm.sanctions (user_id, kind, starts_at) values (u, 'warning', now() + interval '1 hour') returning * into s;
   assert not (wm.sanction_json(s) ->> 'active')::boolean and wm.sanction_json(s) -> 'created_by_username' = 'null', 'à venir, système';
+end $$;
+
+-- ===== 2210 : sanctions, levée, état GoTrue, « Rouvrir le check », recherche et fiche d'un joueur =====
+
+create function pg_temp.staff(p_role text) returns uuid language plpgsql as $$
+declare u uuid := tests.make_user('Staff' || substr(md5(random()::text), 1, 10)); begin
+  insert into wm.staff (user_id, role) values (u, p_role);
+  return u;
+end $$;
+
+create function pg_temp.player(p_name text) returns uuid language sql as $$ select tests.make_user(p_name) $$;
+
+-- Corps d'erreur attendu (wm.raise_err).
+create function pg_temp.e(p_status int, p_code text, p_msg text) returns jsonb language sql as $$
+  select jsonb_strip_nulls(jsonb_build_object('status', p_status, 'code', p_code, 'error', p_msg, 'message', p_msg))
+$$;
+
+-- Un refus : le corps d'erreur, sans sanction, levée, audit ni clé d'idempotence écrits.
+create function pg_temp.refused(p_sql text) returns jsonb language plpgsql as $$
+declare
+  n text := (select jsonb_build_array((select count(*) from wm.sanctions), (select count(*) from wm.sanctions where revoked_at is not null),
+    (select count(*) from wm.staff_actions), (select count(*) from wm.idempotency_keys), (select count(*) from wm.report_reviews))::text);
+  d jsonb;
+begin
+  d := pg_temp.err(p_sql);
+  assert d is not null, 'aucun refus : ' || p_sql;
+  assert n = (select jsonb_build_array((select count(*) from wm.sanctions), (select count(*) from wm.sanctions where revoked_at is not null),
+    (select count(*) from wm.staff_actions), (select count(*) from wm.idempotency_keys), (select count(*) from wm.report_reviews))::text),
+    'écriture sur refus : ' || p_sql;
+  return d;
+end $$;
+
+create function pg_temp.sanction(p_uid uuid, p_user uuid, p_kind text, p_ends timestamptz default null) returns bigint language sql as $$
+  select (wm.admin_sanction(p_uid, p_user, p_kind, p_ends, 'Motif de test') -> 'sanction' ->> 'id')::bigint
+$$;
+
+-- Pose : bannissement par un admin, réponse, audit exact, écritures et lectures refusées.
+do $$ declare a uuid := pg_temp.staff('admin'); b uuid := pg_temp.player('SanBan'); r jsonb; d jsonb; x wm.staff_actions; s wm.sanctions;
+begin
+  r := wm.admin_sanction(a, b, 'ban', null, '  Triche avérée ');
+  select * into s from wm.sanctions where user_id = b;
+  assert s.kind = 'ban' and s.ends_at is null and s.reason = 'Triche avérée' and s.created_by = a and s.revoked_at is null, to_jsonb(s)::text;
+  assert r = jsonb_build_object('sanction', wm.sanction_json(s), 'auth', jsonb_build_object('user_id', b, 'deleted', false, 'forever', true,
+    'ban_until', null)), r::text;
+  assert r -> 'sanction' ->> 'kind' = 'ban' and r -> 'sanction' -> 'ends_at' = 'null' and (r -> 'sanction' ->> 'active')::boolean, r::text;
+  assert (select count(*) from wm.staff_actions where staff_id = a) = 1, 'une ligne d''audit';
+  select * into x from wm.staff_actions where staff_id = a;
+  assert x.action = 'sanction' and x.target_type = 'user' and x.target_id = b::text and x.reason = 'Triche avérée'
+    and x.payload = jsonb_build_object('sanction_id', s.id, 'kind', 'ban', 'ends_at', null, 'report_id', null), to_jsonb(x)::text;
+  d := pg_temp.err(format('select wm.actor(%L)', b));
+  assert d = pg_temp.e(403, null, 'Ton compte est temporairement restreint.') || '{"activity_blocked_until": null}', d::text;
+  d := pg_temp.err(format('select wm.access_check(%L)', b));
+  assert d = pg_temp.e(403, null, 'Ton compte est temporairement restreint.') || '{"activity_blocked_until": null}', d::text;
+end $$;
+
+-- Suspension de 3 jours, restriction de 2 jours par un modérateur, avertissement sans effet.
+do $$ declare a uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderator'); su uuid := pg_temp.player('SanSusp');
+  re uuid := pg_temp.player('SanRestr'); wa uuid := pg_temp.player('SanWarn'); r jsonb; d jsonb; begin
+  r := wm.admin_sanction(a, su, 'suspension', now() + interval '3 days', 'Insultes répétées');
+  assert r -> 'auth' = jsonb_build_object('user_id', su, 'deleted', false, 'forever', false, 'ban_until', now() + interval '3 days'), r::text;
+  assert (r -> 'sanction' ->> 'ends_at')::timestamptz = now() + interval '3 days', r::text;
+  assert pg_temp.err(format('select wm.access_check(%L)', su)) ->> 'status' = '403', 'suspension : lecture';
+  r := wm.admin_sanction(m, re, 'restriction', now() + interval '2 days', 'Spam au marché');
+  assert r -> 'auth' ->> 'ban_until' is null and not (r -> 'auth' ->> 'forever')::boolean, r::text;
+  d := pg_temp.err(format('select wm.actor(%L)', re));
+  assert d = pg_temp.e(403, null, 'Ton compte est temporairement restreint.')
+    || jsonb_build_object('activity_blocked_until', now() + interval '2 days'), d::text;
+  assert wm.access_check(re) = '{"ok": true}', 'restriction : lecture';
+  r := wm.admin_sanction(m, wa, 'warning', null, 'Premier avertissement');
+  assert r -> 'sanction' ->> 'kind' = 'warning' and r -> 'auth' = jsonb_build_object('user_id', wa, 'deleted', false, 'forever', false,
+    'ban_until', null), r::text;
+  assert wm.actor(wa) ->> 'is_staff' = 'false' and wm.access_check(wa) = '{"ok": true}', 'avertissement';
+end $$;
+
+-- Refus exacts de la pose, chacun sans sanction ni audit.
+do $$ declare a uuid := pg_temp.staff('admin'); a2 uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderator');
+  b uuid := pg_temp.player('SanRef'); p uuid := pg_temp.player('SanRefPl'); dl uuid := pg_temp.player('SanRefDel'); d jsonb;
+  admin_only jsonb := pg_temp.e(403, 'FORBIDDEN', 'Action réservée aux administrateurs');
+  bad_end jsonb := pg_temp.e(400, 'invalid_request', 'La date de fin doit être dans le futur, à un an au plus'); begin
+  insert into wm.deleted_accounts (user_id) values (dl);
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, %L, %L)', m, b, 'suspension', now() + interval '1 day', 'Motif ok'));
+  assert d = admin_only, d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', m, b, 'ban', 'Motif ok'));
+  assert d = admin_only, d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', m, a2, 'warning', 'Motif ok'));
+  assert d = admin_only, d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', a, a, 'warning', 'Motif ok'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Tu ne peux pas te sanctionner toi-même'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', a, b, 'x', 'Motif ok'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Sanction inconnue'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, %L, %L)', a, b, 'ban', now() + interval '1 day', 'Motif ok'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Pas de date de fin pour ce type de sanction'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, %L, %L)', a, b, 'warning', now() + interval '1 day', 'Motif ok'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Pas de date de fin pour ce type de sanction'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', a, b, 'suspension', 'Motif ok'));
+  assert d = bad_end, d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, %L, %L)', a, b, 'suspension', now() - interval '1 second', 'Motif ok'));
+  assert d = bad_end, d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, %L, %L)', a, b, 'suspension', now(), 'Motif ok'));
+  assert d = bad_end, d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, %L, %L)', a, b, 'suspension', now() + interval '366 days', 'Motif ok'));
+  assert d = bad_end, d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', m, b, 'restriction', 'Motif ok'));
+  assert d = bad_end, d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', a, gen_random_uuid(), 'warning', 'Motif ok'));
+  assert d = pg_temp.e(404, null, 'Joueur introuvable'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', a, dl, 'warning', 'Motif ok'));
+  assert d = pg_temp.e(404, null, 'Joueur introuvable'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L)', p, b, 'warning', 'Motif ok'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction(%L, %L, %L, null, %L, null, %L)', a, b, 'warning', '  ', 'k-vide'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  -- Bornes acceptées : un an pile, et un admin qui avertit un modérateur.
+  perform pg_temp.sanction(a, b, 'suspension', now() + interval '365 days');
+  perform pg_temp.sanction(a, m, 'warning');
+end $$;
+
+-- Signalement : un rapport qui vise le joueur passe à resolved, rattaché à l'audit ; un autre est ignoré.
+do $$ declare a uuid := pg_temp.staff('admin'); b uuid := pg_temp.player('SanRepB'); c uuid := pg_temp.player('SanRepC');
+  o uuid := pg_temp.player('SanRepO'); rb uuid; ro uuid; r jsonb; v wm.report_reviews; begin
+  insert into public.reports (reporter_id, reported_user_id, reason) values (c, b, 'cheating') returning id into rb;
+  insert into public.reports (reporter_id, reported_user_id, reason) values (c, o, 'spam') returning id into ro;
+  r := wm.admin_sanction(a, b, 'warning', null, 'Triche signalée', rb);
+  select * into v from wm.report_reviews where report_id = rb;
+  assert v.status = 'resolved' and v.reviewed_by = a and v.reviewed_at = now()
+    and v.staff_action_id = (select id from wm.staff_actions where staff_id = a and payload ->> 'report_id' = rb::text), to_jsonb(v)::text;
+  r := wm.admin_sanction(a, b, 'warning', null, 'Mauvais signalement', ro);
+  assert r -> 'sanction' ->> 'kind' = 'warning' and not exists (select from wm.report_reviews where report_id = ro), 'rapport ignoré';
+  assert (select count(*) from wm.sanctions where user_id = b) = 2, 'deux sanctions';
+end $$;
+
+-- Levée : état, audit exact, 409 ensuite ; modérateur sur un ban ; id inconnu.
+do $$ declare a uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderator'); b uuid := pg_temp.player('SanRev');
+  b2 uuid := pg_temp.player('SanRev2'); i bigint; j bigint; r jsonb; d jsonb; x wm.staff_actions; begin
+  i := pg_temp.sanction(a, b, 'ban');
+  r := wm.admin_sanction_revoke(a, i, ' Erreur de cible ');
+  assert (r -> 'sanction' ->> 'revoked_at')::timestamptz = now() and not (r -> 'sanction' ->> 'active')::boolean, r::text;
+  assert r -> 'auth' = jsonb_build_object('user_id', b, 'deleted', false, 'forever', false, 'ban_until', null), r::text;
+  assert r -> 'sanction' = (select wm.sanction_json(s) from wm.sanctions s where id = i), r::text;
+  assert wm.actor(b) ->> 'is_staff' = 'false', 'actor passe';
+  select * into x from wm.staff_actions where action = 'sanction_revoke' and target_id = i::text;
+  assert x.staff_id = a and x.target_type = 'sanction' and x.reason = 'Erreur de cible'
+    and x.payload = jsonb_build_object('user_id', b, 'kind', 'ban'), to_jsonb(x)::text;
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', a, i, 'Encore une fois'));
+  assert d = pg_temp.e(409, null, 'Cette sanction est déjà levée'), d::text;
+  j := pg_temp.sanction(a, b2, 'ban');
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', m, j, 'Levée par un modérateur'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Action réservée aux administrateurs'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', a, -1, 'Id inconnu'));
+  assert d = pg_temp.e(404, null, 'Sanction introuvable'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', pg_temp.player('SanRevPl'), j, 'Levée par un joueur'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', a, j, ''));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+  -- Un modérateur lève la restriction d'un joueur.
+  j := pg_temp.sanction(m, b2, 'restriction', now() + interval '1 day');
+  assert (wm.admin_sanction_revoke(m, j, 'Restriction levée') -> 'sanction' ->> 'revoked_at') is not null, 'modérateur, restriction';
+end $$;
+
+-- Staff qui outrepasse (Review Focus) : chacun 403 sans levée ni audit.
+do $$ declare a1 uuid := pg_temp.staff('admin'); a2 uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderator');
+  mw uuid := pg_temp.staff('moderator'); m2 uuid := pg_temp.staff('moderator'); i bigint; d jsonb;
+  admin_only jsonb := pg_temp.e(403, 'FORBIDDEN', 'Action réservée aux administrateurs'); begin
+  i := pg_temp.sanction(a1, m, 'restriction', now() + interval '1 day');
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', m, i, 'Je me lève'));
+  assert d = pg_temp.e(403, null, 'Ton compte est temporairement restreint.')
+    || jsonb_build_object('activity_blocked_until', now() + interval '1 day'), d::text;
+  i := pg_temp.sanction(a1, mw, 'warning');
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', mw, i, 'Je me lève'));
+  assert d = admin_only, d::text;
+  i := pg_temp.sanction(a1, m2, 'warning');
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', mw, i, 'Pour un collègue'));
+  assert d = admin_only, d::text;
+  i := pg_temp.sanction(a1, a2, 'warning');
+  assert (wm.admin_sanction_revoke(a1, i, 'Pour un admin') -> 'sanction' ->> 'revoked_at') is not null, 'admin lève un admin';
+  i := pg_temp.sanction(a2, a1, 'warning');
+  d := pg_temp.refused(format('select wm.admin_sanction_revoke(%L, %L, %L)', a1, i, 'Je me lève'));
+  assert d = admin_only, d::text;
+end $$;
+
+-- Idempotence : même clé deux fois → même corps, un seul effet, une seule ligne d'audit.
+do $$ declare a uuid := pg_temp.staff('admin'); b uuid := pg_temp.player('SanIdem'); r1 jsonb; r2 jsonb; i bigint; begin
+  r1 := wm.admin_sanction(a, b, 'warning', null, 'Clé rejouée', null, 'k-sanction');
+  r2 := wm.admin_sanction(a, b, 'warning', null, 'Clé rejouée', null, 'k-sanction');
+  assert r1 = r2 and (select count(*) from wm.sanctions where user_id = b) = 1
+    and (select count(*) from wm.staff_actions where staff_id = a and action = 'sanction') = 1, 'sanction : ' || r2::text;
+  i := (r1 -> 'sanction' ->> 'id')::bigint;
+  r1 := wm.admin_sanction_revoke(a, i, 'Clé rejouée', 'k-revoke');
+  r2 := wm.admin_sanction_revoke(a, i, 'Clé rejouée', 'k-revoke');
+  assert r1 = r2 and (select count(*) from wm.staff_actions where staff_id = a and action = 'sanction_revoke') = 1, 'levée : ' || r2::text;
+  r1 := wm.admin_auth_sync(a, b, 'Clé rejouée', 'k-sync');
+  r2 := wm.admin_auth_sync(a, b, 'Clé rejouée', 'k-sync');
+  assert r1 = r2 and (select count(*) from wm.staff_actions where staff_id = a and action = 'auth_sync') = 1, 'sync : ' || r2::text;
+  perform wm.lock_user(b);
+  update wm.user_state set achievements_checked_at = now() where user_id = b;
+  r1 := wm.admin_achievements_recheck(a, b, 'Clé rejouée', 'k-recheck');
+  update wm.user_state set achievements_checked_at = now() where user_id = b;
+  r2 := wm.admin_achievements_recheck(a, b, 'Clé rejouée', 'k-recheck');
+  assert r1 = r2 and (select achievements_checked_at is not null from wm.user_state where user_id = b)
+    and (select count(*) from wm.staff_actions where staff_id = a and action = 'achievements_recheck') = 1, 'recheck : ' || r2::text;
+end $$;
+
+-- admin_auth_sync : admin seul, compte supprimé visé, audit exact, aucune autre écriture.
+do $$ declare a uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderator'); b uuid := pg_temp.player('SanSync'); r jsonb; d jsonb;
+  x wm.staff_actions; begin
+  perform pg_temp.sanction(a, b, 'suspension', now() + interval '2 days');
+  insert into wm.deleted_accounts (user_id) values (b);
+  r := wm.admin_auth_sync(a, b, ' Session à rattraper ');
+  assert r = jsonb_build_object('auth', jsonb_build_object('user_id', b, 'deleted', true, 'forever', false,
+    'ban_until', now() + interval '2 days')), r::text;
+  select * into x from wm.staff_actions where action = 'auth_sync' and staff_id = a;
+  assert x.target_type = 'user' and x.target_id = b::text and x.reason = 'Session à rattraper' and x.payload = r, to_jsonb(x)::text;
+  d := pg_temp.refused(format('select wm.admin_auth_sync(%L, %L, %L)', m, b, 'Par un modérateur'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Action réservée aux administrateurs'), d::text;
+  d := pg_temp.refused(format('select wm.admin_auth_sync(%L, %L, %L)', a, gen_random_uuid(), 'Inconnu'));
+  assert d = pg_temp.e(404, null, 'Joueur introuvable'), d::text;
+  d := pg_temp.refused(format('select wm.admin_auth_sync(%L, %L, %L)', a, b, 'ab'));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+end $$;
+
+-- admin_achievements_recheck : achievements_checked_at posé puis nul, audit exact ; refus.
+do $$ declare m uuid := pg_temp.staff('moderator'); b uuid := pg_temp.player('SanCheck'); dl uuid := pg_temp.player('SanCheckDel');
+  r jsonb; d jsonb; x wm.staff_actions; begin
+  perform wm.lock_user(b);
+  update wm.user_state set achievements_checked_at = now() where user_id = b;
+  assert (select achievements_checked_at = now() from wm.user_state where user_id = b), 'posé';
+  r := wm.admin_achievements_recheck(m, b, 'Succès manquant');
+  assert r = '{"ok": true}' and (select achievements_checked_at is null from wm.user_state where user_id = b), r::text;
+  select * into x from wm.staff_actions where action = 'achievements_recheck' and staff_id = m;
+  assert x.target_type = 'user' and x.target_id = b::text and x.reason = 'Succès manquant' and x.payload = '{}', to_jsonb(x)::text;
+  insert into wm.deleted_accounts (user_id) values (dl);
+  d := pg_temp.refused(format('select wm.admin_achievements_recheck(%L, %L, %L)', m, dl, 'Compte supprimé'));
+  assert d = pg_temp.e(404, null, 'Joueur introuvable'), d::text;
+  d := pg_temp.refused(format('select wm.admin_achievements_recheck(%L, %L, %L)', m, gen_random_uuid(), 'Inconnu'));
+  assert d = pg_temp.e(404, null, 'Joueur introuvable'), d::text;
+  d := pg_temp.refused(format('select wm.admin_achievements_recheck(%L, %L, %L)', pg_temp.player('SanCheckPl'), b, 'Par un joueur'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  d := pg_temp.refused(format('select wm.admin_achievements_recheck(%L, %L, null)', m, b));
+  assert d = pg_temp.e(400, 'invalid_request', 'Le motif est obligatoire (3 à 500 caractères)'), d::text;
+end $$;
+
+-- staff_user_search : début de pseudo insensible à la casse, % et _ littéraux, 2 caractères au moins, 20 au plus.
+do $$ declare m uuid := pg_temp.staff('moderator'); al1 uuid := pg_temp.player('Alpha1'); al2 uuid := pg_temp.player('alBeta'); r jsonb;
+  d jsonb; begin
+  perform pg_temp.player('xAlpha');
+  perform pg_temp.player('abPct');
+  perform pg_temp.player('a_Und');
+  insert into wm.deleted_accounts (user_id) values (al2);
+  r := wm.staff_user_search(m, ' AL ');
+  assert r = jsonb_build_object('users', jsonb_build_array(
+    jsonb_build_object('id', al2, 'username', 'alBeta', 'created_at', now(), 'deleted', true),
+    jsonb_build_object('id', al1, 'username', 'Alpha1', 'created_at', now(), 'deleted', false))), r::text;
+  -- Un pseudo ne contient jamais % (C28) : 'a%' ne doit rien rendre, abPct compris.
+  assert wm.staff_user_search(m, 'a%') = '{"users": []}', wm.staff_user_search(m, 'a%')::text;
+  r := wm.staff_user_search(m, 'a_');
+  assert (select jsonb_agg(u ->> 'username') from jsonb_array_elements(r -> 'users') u) = '["a_Und"]', r::text;
+  assert wm.staff_user_search(m, 'zzqq') = '{"users": []}', 'aucun';
+  d := pg_temp.err(format('select wm.staff_user_search(%L, %L)', m, ' a '));
+  assert d = pg_temp.e(400, 'invalid_request', 'Tape au moins 2 caractères'), d::text;
+  assert pg_temp.err(format('select wm.staff_user_search(%L, null)', m)) = d, 'nul';
+  d := pg_temp.err(format('select wm.staff_user_search(%L, %L)', pg_temp.player('SanSearchPl'), 'al'));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+  for i in 0..24 loop
+    perform pg_temp.player(format('Pz%s', lpad(i::text, 2, '0')));
+  end loop;
+  r := wm.staff_user_search(m, 'pz');
+  assert jsonb_array_length(r -> 'users') = 20 and r -> 'users' -> 0 ->> 'username' = 'Pz00' and r -> 'users' -> 19 ->> 'username' = 'Pz19',
+    r::text;
+end $$;
+
+-- staff_user_detail : clés exactes, sanctions récentes d'abord, signalements, guilde, aucun e-mail ; compte supprimé.
+do $$ declare a uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderator'); b uuid := pg_temp.player('SanDetail');
+  c uuid := pg_temp.player('SanDetailC'); g uuid; i bigint; j bigint; r jsonb; d jsonb; begin
+  i := pg_temp.sanction(a, b, 'warning');
+  j := pg_temp.sanction(a, b, 'restriction', now() + interval '1 day');
+  insert into public.reports (reporter_id, reported_user_id, reason) values (c, b, 'spam'), (b, c, 'cheating'), (m, b, 'cheating');
+  insert into public.guilds (name, leader_id) values ('Guilde fiche', b) returning id into g;
+  insert into public.guild_members (guild_id, user_id, role) values (g, b, 'leader');
+  r := wm.staff_user_detail(m, b);
+  assert (select array_agg(k order by k) from jsonb_object_keys(r) k)
+    = array['guild', 'reports_filed', 'reports_received', 'sanctions', 'staff_role', 'user'], r::text;
+  assert r -> 'user' = jsonb_build_object('id', b, 'username', 'SanDetail', 'created_at', now(), 'last_seen_at', null, 'is_pro', false,
+    'is_vip', false, 'balance', 0, 'is_public', true, 'deleted_at', null, 'auth_pending', false), r::text;
+  assert r -> 'staff_role' = 'null' and r -> 'reports_received' = '2' and r -> 'reports_filed' = '1'
+    and r -> 'guild' = jsonb_build_object('id', g, 'name', 'Guilde fiche'), r::text;
+  assert r -> 'sanctions' = jsonb_build_array((select wm.sanction_json(s) from wm.sanctions s where id = j),
+    (select wm.sanction_json(s) from wm.sanctions s where id = i)), r::text;
+  assert strpos(r::text, '@') = 0, 'aucun e-mail';
+  r := wm.staff_user_detail(a, m);
+  assert r -> 'staff_role' = '"moderator"' and r -> 'guild' = 'null' and r -> 'sanctions' = '[]', r::text;
+  insert into wm.deleted_accounts (user_id) values (c);
+  r := wm.staff_user_detail(m, c);
+  assert (r -> 'user' ->> 'deleted_at')::timestamptz = now() and (r -> 'user' ->> 'auth_pending')::boolean, r::text;
+  update wm.deleted_accounts set auth_done_at = now() where user_id = c;
+  assert not (wm.staff_user_detail(m, c) -> 'user' ->> 'auth_pending')::boolean, 'auth faite';
+  d := pg_temp.err(format('select wm.staff_user_detail(%L, %L)', m, gen_random_uuid()));
+  assert d = pg_temp.e(404, null, 'Joueur introuvable'), d::text;
+  d := pg_temp.err(format('select wm.staff_user_detail(%L, %L)', pg_temp.player('SanDetailPl'), b));
+  assert d = pg_temp.e(403, 'FORBIDDEN', 'Accès réservé à l''équipe de modération'), d::text;
+end $$;
+
+-- lock_timeout avant le premier verrou ; levée : la sanction for update avant le profil ; lectures stables ; les six sont scannées.
+do $$ declare s text := (select prosrc from pg_proc where oid = 'wm.admin_sanction_revoke(uuid, bigint, text, text)'::regprocedure);
+  bad text; begin
+  assert tests.lock_timeout_violations(array['admin_sanction', 'admin_sanction_revoke', 'admin_achievements_recheck']) is null,
+    tests.lock_timeout_violations(array['admin_sanction', 'admin_sanction_revoke', 'admin_achievements_recheck']);
+  assert strpos(s, 'from wm.sanctions') > 0 and strpos(s, 'from wm.sanctions') < strpos(s, 'for update')
+    and strpos(s, 'for update') < strpos(s, 'wm.lock_user('), 'ordre des verrous de la levée';
+  select string_agg(f, ', ') into bad from unnest(array['admin_sanction', 'admin_sanction_revoke', 'admin_auth_sync',
+    'admin_achievements_recheck', 'staff_user_search', 'staff_user_detail']) f where to_regproc('wm.' || f) is null;
+  assert bad is null, 'absentes : ' || bad;
+  select string_agg(f, ', ') into bad from unnest(array['staff_user_search(uuid, text)', 'staff_user_detail(uuid, uuid)']) f
+  where (select provolatile from pg_proc where oid = ('wm.' || f)::regprocedure) <> 's';
+  assert bad is null, 'non stable : ' || bad;
 end $$;
 
 -- Scan de couverture : toute wm.admin_* (hors admin_reason) ouvre par staff_actor, exige un motif et écrit son audit, avec idempotence sauf
