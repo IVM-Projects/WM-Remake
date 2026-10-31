@@ -20,7 +20,7 @@
     - `deploy-m5b.sql` (concaténation de `0008` et de `2000`…`2060`, de l'historique et du `notify`), généré depuis c42564e (1 311 lignes, `md5` `a4d87b68…`) et répété sur une base de `develop` sans `seed.sql` (deux passes, onze fichiers de test verts tels quels, même empreinte des 175 fonctions `wm` que la tête), puis lancé par l'utilisateur dans le SQL Editor (historique `20261031010000`…`20261031010007`) ;
     - contrôles du MCP verts (droits, sondes 401 `42501`, invariants, 51 succès et 51 règles, config, classement vide, conseillers, sept jobs inchangés) ;
     - fusion `--no-ff` 9ee6eb8 dans `develop`, production `dpl_BpLcvjxaDj4vtvdGE2LCtyvQKcq9` READY (environ 63 s), `/api/health` 200, `health.yml` vert en `workflow_dispatch` (run 41193894908) ;
-    - essai en deux navigateurs (forux et forux2) : invitation, don, bataille gagnée avec `guildPoints` = 500, 15 succès réclamés, dissolution au départ du dernier membre.
+    - essai en deux navigateurs (forux et forux2) : invitation, don, bataille gagnée avec `guildPoints` = 500, 15 succès réclamés, dissolution au départ du dernier membre ; plusieurs preuves de l'essai ne sont pas relevées (chat vu en moins de 10 s, copie reçue, affichage des classements : liste dans `docs/verifications.md`, ligne de l'essai, départs et dissolution).
     Détail : « M5b — livraison » de `docs/verifications.md`.
   - Comptes de démo : forux et forux2 ont joué l'essai ; la guilde créée a été dissoute au départ du dernier membre (donc plus aucune guilde sur la démo), et ses dons et scores sont partis avec elle. forux a réclamé 15 succès. Les 39 titres des succès inférés sont des données SQL : voir l'étape humaine 14.
 
