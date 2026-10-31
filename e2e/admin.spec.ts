@@ -18,7 +18,6 @@ select null, 'image_auto_hide', :'type', :'t', 'lot de test' from generate_serie
 
 test('un joueur : 404 sur /admin, /admin/audit et /admin/users, sans titre « Administration » ni lien au pied', async ({ page, login }) => {
   await login()
-  // /admin/users n'existe pas avant la Task 16 : son 404 ne prouve pas la garde, seuls /admin et /admin/audit le font.
   for (const path of ['/admin', '/admin/audit', '/admin/users']) {
     await page.goto(path)
     await expect(page.getByRole('heading', { name: 'Page introuvable' })).toBeVisible()

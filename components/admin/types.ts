@@ -42,3 +42,45 @@ export const ACTION_LABELS: Record<string, string> = {
   guild_dissolve: 'Guilde dissoute', guild_message_delete: 'Message de guilde supprimé', guild_wish_remove: 'Souhait retiré',
   ban_carryover: 'Bannissement reporté',
 }
+
+export type SanctionKind = 'warning' | 'restriction' | 'suspension' | 'ban'
+export type Sanction = {
+  id: number
+  kind: SanctionKind
+  reason: string | null
+  starts_at: string
+  ends_at: string | null
+  revoked_at: string | null
+  active: boolean
+}
+export type Sanctioned = { sanction: Sanction; auth_synced: boolean }
+export type SearchUser = { id: string; username: string; created_at: string; deleted: boolean }
+export type UserDetail = {
+  user: { id: string; username: string; is_pro: boolean; is_vip: boolean; balance: number; is_public: boolean; deleted_at: string | null; auth_pending: boolean }
+  staff_role: StaffRole | null
+  sanctions: Sanction[]
+  reports_received: number
+  reports_filed: number
+  guild: { id: string; name: string } | null
+}
+
+export type Who = { id: string; username: string | null }
+export type ReportRow = {
+  id: string
+  reason: string
+  details: string | null
+  created_at: string
+  reporter: Who
+  reported: Who
+  review: { status: 'resolved' | 'dismissed'; reviewed_at: string; reviewed_by_username: string | null } | null
+  active_sanctions: number
+}
+export type ImageRow = {
+  card_id: string
+  wikipedia_title: string
+  image_url: string | null
+  hide_image: boolean
+  nsfw_image: boolean
+  reports: number
+}
+export type DmMessage = { id: string; sender_username: string | null; content: string; created_at: string }

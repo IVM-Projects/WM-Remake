@@ -92,6 +92,59 @@ for (const path of ['/admin', '/admin/audit']) {
   })
 }
 
+// Espace admin (Task 16) : fiche ouverte avec la modale de sanction, puis les deux files de signalements avec la lecture d'une paire de joueurs.
+test('axe /admin/users (staff) : fiche ouverte, puis SanctionModal ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const a = makePlayer()
+  try {
+    sql(`insert into wm.sanctions (user_id, kind, reason, ends_at) values (:'a', 'restriction', 'motif de test', now() + interval '1 day')`, { a: a.uid })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto(`/admin/users?user=${a.uid}`)
+    await page.locator('main [data-ready]').waitFor()
+    await expect(page.getByRole('table')).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Sanctionner', exact: true }).click()
+    await page.getByRole('radio', { name: 'Restriction' }).check()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from wm.staff_actions where staff_id = :'u'`, { u: u.uid })
+    sql(`delete from auth.users where id = any(array[:'u', :'a']::uuid[])`, { u: u.uid, a: a.uid })
+  }
+})
+
+test('axe /admin/reports (staff) : files Joueurs et Images, DmThreadModal ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const [a, c] = [makePlayer(), makePlayer()]
+  const title = `Zz a11y image ${randomUUID().slice(-12)} z`
+  let card = ''
+  try {
+    card = sql(`select tests.image_card(:'t')`, { t: title })
+    sql(`select wm.report_upsert(:'c', :'a', 'spam', 'détails')`, { c: c.uid, a: a.uid })
+    sql(`insert into public.chat_messages (sender_id, recipient_id, content) values (:'a', :'c', 'bonjour')`, { a: a.uid, c: c.uid })
+    sql(`insert into wm.card_image_reports (card_id, user_id) values (:'k', :'c')`, { k: card, c: c.uid })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto('/admin/reports')
+    await page.locator('main [data-ready]').waitFor()
+    await expect(page.getByRole('button', { name: 'Lire les messages' }).first()).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('tab', { name: 'Images' }).click()
+    await expect(page.getByRole('listitem').filter({ hasText: title })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('tab', { name: 'Joueurs' }).click()
+    await page.getByRole('listitem').filter({ hasText: `${c.username} a signalé ${a.username}` }).getByRole('button', { name: 'Lire les messages' }).click()
+    await page.getByRole('dialog').getByLabel('Motif (obligatoire)').fill('Motif de test')
+    await expectNoSeriousViolations(page)
+    await page.getByRole('dialog').getByRole('button', { name: 'Lire les messages' }).click()
+    await expect(page.getByRole('log')).toContainText('bonjour')
+    await expectNoSeriousViolations(page)
+  } finally {
+    if (card) sql(`delete from public.cards where id = :'k'`, { k: card })
+    sql(`delete from wm.staff_actions where staff_id = :'u'`, { u: u.uid })
+    sql(`delete from auth.users where id = any(array[:'u', :'a', :'c']::uuid[])`, { u: u.uid, a: a.uid, c: c.uid })
+  }
+})
+
 test('axe /pulls mobile, feuille « Plus » ouverte', async ({ page, login }) => {
   await login(); await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/pulls')

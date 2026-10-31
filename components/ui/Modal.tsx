@@ -5,6 +5,9 @@ import { createPortal } from 'react-dom'
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]'
 
+// Modales ouvertes, la plus récente en dernier : seule celle-ci prend Échap et Tab (une confirmation ouverte sur une autre modale).
+const open: HTMLElement[] = []
+
 // Nom de la boîte : labelledBy (id d'un titre), ou label quand la page n'a aucun id d'élément (détail d'une enchère, M3-2).
 type Props = { onClose: () => void; labelledBy?: string; label?: string; className: string; children: ReactNode }
 
@@ -19,7 +22,7 @@ export function Modal({ onClose, labelledBy, label, className, children }: Props
   // Sur document : Échap et Tab marchent même si le focus est tombé sur body. Un enfant garde Échap par preventDefault (liste d'étiquettes ouverte).
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
     const root = panel.current
-    if (e.defaultPrevented || !root) return
+    if (e.defaultPrevented || !root || open.at(-1) !== root) return
     if (e.key === 'Escape') {
       e.preventDefault()
       onClose()
@@ -41,8 +44,11 @@ export function Modal({ onClose, labelledBy, label, className, children }: Props
   useEffect(() => {
     opener.current ??= document.activeElement as HTMLElement | null
     panel.current?.focus()
+    const mine = panel.current
+    if (mine) open.push(mine)
     document.addEventListener('keydown', onKeyDown)
     return () => {
+      if (mine) open.splice(open.indexOf(mine), 1)
       document.removeEventListener('keydown', onKeyDown)
       opener.current?.focus()
     }
