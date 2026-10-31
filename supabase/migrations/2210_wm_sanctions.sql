@@ -42,6 +42,10 @@ begin
   end if;
   perform set_config('lock_timeout', '2s', true);
   perform wm.lock_user(p_user_id);
+  -- Relu sous le verrou du profil : account_delete a pu valider entre-temps (refus sous verrou, G1).
+  if exists (select from wm.deleted_accounts where user_id = p_user_id) then
+    perform wm.raise_err(404, null, 'Joueur introuvable');
+  end if;
   insert into wm.sanctions (user_id, kind, reason, ends_at, created_by)
   values (p_user_id, p_kind, v_reason, p_ends_at, p_uid)
   returning * into s;
@@ -133,6 +137,10 @@ begin
   end if;
   perform set_config('lock_timeout', '2s', true);
   perform wm.lock_user(p_user_id);
+  -- Relu sous le verrou du profil : account_delete a pu valider entre-temps (refus sous verrou, G1).
+  if exists (select from wm.deleted_accounts where user_id = p_user_id) then
+    perform wm.raise_err(404, null, 'Joueur introuvable');
+  end if;
   update wm.user_state set achievements_checked_at = null where user_id = p_user_id;
   perform wm.staff_log(p_uid, 'achievements_recheck', 'user', p_user_id::text, v_reason);
   return wm.idem_store(p_uid, p_idem, '{"ok": true}');
@@ -152,7 +160,7 @@ begin
       'created_at', u.created_at, 'deleted', u.deleted) order by lower(u.username))
     from (select p.id, p.username, p.created_at, exists (select from wm.deleted_accounts d where d.user_id = p.id) deleted
       from public.profiles p where lower(p.username) like v_q || '%'
-      order by lower(p.username) limit (select (value ->> 'search')::int from wm.config where key = 'admin')) u), '[]'));
+      order by lower(p.username) limit coalesce((select (value ->> 'search')::int from wm.config where key = 'admin'), 20)) u), '[]'));
 end $$;
 
 -- Fiche d'un joueur pour le staff, sans e-mail ; un compte supprimé reste lisible (deleted_at, auth_pending tant que GoTrue n'a pas suivi).

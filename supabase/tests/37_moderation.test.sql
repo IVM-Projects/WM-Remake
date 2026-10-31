@@ -36,7 +36,8 @@ create temp table mod_config as select pg_temp.mod_config() v;
 update wm.config set value = '{"hide_threshold": 3}' where key = 'image_reports';
 \ir ../migrations/2200_wm_moderation_core.sql
 -- Une tâche suivante qui redéfinit actor ou staff_actor ajoute ici son propre \ir, après celui de 2200 (M5b-18).
--- Rejeu de 2210 (sanctions) : la migration passe une seconde fois sur la base déjà migrée.
+
+-- Rejeu de 2210 (sanctions), sans lien avec la règle ci-dessus : la migration passe une seconde fois sur la base déjà migrée.
 \ir ../migrations/2210_wm_sanctions.sql
 do $$ begin
   assert pg_temp.mod_config() = jsonb_set((select v from mod_config), '{image_reports,hide_threshold}', '3'), pg_temp.mod_config()::text;
@@ -507,6 +508,11 @@ do $$ declare s text := (select prosrc from pg_proc where oid = 'wm.admin_sancti
     tests.lock_timeout_violations(array['admin_sanction', 'admin_sanction_revoke', 'admin_achievements_recheck']);
   assert strpos(s, 'from wm.sanctions') > 0 and strpos(s, 'from wm.sanctions') < strpos(s, 'for update')
     and strpos(s, 'for update') < strpos(s, 'wm.lock_user('), 'ordre des verrous de la levée';
+  -- Compte supprimé relu sous le verrou du profil (la course elle-même : test de concurrence de la Task 8).
+  select string_agg(f, ', ') into bad from unnest(array['admin_sanction', 'admin_achievements_recheck']) f,
+    lateral (select prosrc src from pg_proc where oid = to_regproc('wm.' || f)) p
+  where strpos(substr(src, strpos(src, 'wm.lock_user(')), 'from wm.deleted_accounts') = 0;
+  assert bad is null, 'compte supprimé non relu sous verrou : ' || bad;
   select string_agg(f, ', ') into bad from unnest(array['admin_sanction', 'admin_sanction_revoke', 'admin_auth_sync',
     'admin_achievements_recheck', 'staff_user_search', 'staff_user_detail']) f where to_regproc('wm.' || f) is null;
   assert bad is null, 'absentes : ' || bad;
