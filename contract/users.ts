@@ -15,14 +15,17 @@ export function psql(databaseUrl: string, sql: string, vars: Record<string, stri
 
 export function makeUser(
   databaseUrl: string,
-  opts: { username?: string; balance?: number; pro?: boolean; humanVerified?: boolean } = {},
+  opts: { username?: string; balance?: number; pro?: boolean; humanVerified?: boolean; staff?: 'admin' | 'moderator' } = {},
 ): { uid: string; username: string } {
   const username = opts.username ?? `u_${randomUUID().slice(-12)}`
-  const vars = { username, balance: String(opts.balance ?? 0), pro: String(opts.pro ?? false), human: String(opts.humanVerified ?? false) }
+  const vars = {
+    username, balance: String(opts.balance ?? 0), pro: String(opts.pro ?? false), human: String(opts.humanVerified ?? false), staff: opts.staff ?? '',
+  }
   const uid = psql(databaseUrl, `select tests.make_user(:'username', :'balance') as uid \\gset
 update public.profiles set is_pro = :'pro' where id = :'uid';
 insert into wm.user_state (user_id, human_verified_until) select :'uid'::uuid, now() + interval '12 hours' where :'human'::boolean
 on conflict (user_id) do update set human_verified_until = excluded.human_verified_until;
+insert into wm.staff (user_id, role) select :'uid'::uuid, :'staff' where :'staff' <> '';
 \\echo :uid
 `, vars)
   return { uid, username }

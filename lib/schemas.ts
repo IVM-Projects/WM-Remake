@@ -102,3 +102,19 @@ export const PushSubscriptionBody = PushEndpoint.extend({
 })
 // Types validés en SQL (« Type de notification inconnu ») ; 13 aujourd'hui.
 export const PushTypes = z.object({ push_types: z.array(pgText).max(20) })
+
+// Espace staff (D§7.12) : longueurs du motif et bornes en SQL.
+export const AdminReason = z.object({ reason: pgText })
+export const AdminSanction = z.object({
+  kind: z.enum(['warning', 'restriction', 'suspension', 'ban'], { error: 'Sanction inconnue' }),
+  ends_at: z.iso.datetime({ offset: true }).nullish(),
+  reason: pgText,
+  report_id: z.uuid().nullish(),
+})
+export const AdminPageQuery = z.object({ page: intParam.default(0) })
+export const AdminAuditQuery = AdminPageQuery.extend({
+  staff_id: z.uuid().optional(), target_type: z.string().max(32).optional(), target_id: z.string().max(80).optional(),
+})
+export const AdminSearchQuery = z.object({ q: pgText })
+export const UserParams = z.object({ userId: z.uuid() })
+export const SanctionParams = z.object({ sanctionId: z.coerce.number().int().positive() })
