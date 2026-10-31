@@ -8,6 +8,18 @@ export function Footer() {
       <Link href="/credits" className="inline-flex min-h-11 items-center font-medium text-accent underline hover:text-accent-light">
         Crédits
       </Link>
+ ·{' '}
+      <Link href="/terms" className="inline-flex min-h-11 items-center font-medium text-accent underline hover:text-accent-light">
+        Conditions
+      </Link>
+ ·{' '}
+      <Link href="/rules" className="inline-flex min-h-11 items-center font-medium text-accent underline hover:text-accent-light">
+        Règles
+      </Link>
+ ·{' '}
+      <Link href="/privacy" className="inline-flex min-h-11 items-center font-medium text-accent underline hover:text-accent-light">
+        Confidentialité
+      </Link>
     </footer>
   )
 }

@@ -1,5 +1,5 @@
 // Version des CGU acceptée à l'inscription, lue par le trigger wm.handle_new_user.
-export const TERMS_VERSION = '2026-10-19'
+export const TERMS_VERSION = '2026-10-31'
 
 // Refus du trigger d'inscription : GoTrue relaie le message de wm.raise_err, sauf appelé avec X-Supabase-Api-Version (supabase-js).
 const KNOWN = new Set([

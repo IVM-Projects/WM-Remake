@@ -23,6 +23,9 @@ test('pied de page du jeu : mention et lien vers /credits, hors de la nav', asyn
   await expect(footer).toContainText('Projet indépendant de la Fondation Wikimedia')
   await expect(footer.getByRole('link', { name: 'Crédits', exact: true })).toHaveAttribute('href', '/credits')
   await expect(page.locator('nav a[href="/credits"]')).toHaveCount(0)
+  for (const [name, href] of [['Conditions', '/terms'], ['Règles', '/rules'], ['Confidentialité', '/privacy']]) {
+    await expect(footer.getByRole('link', { name, exact: true })).toHaveAttribute('href', href)
+  }
 })
 
 // Ouvre la seule copie du joueur, préférences lues avant l'ouverture ; « Vues (30j) » prouve que les lectures de l'ouverture

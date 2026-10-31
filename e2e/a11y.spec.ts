@@ -61,7 +61,7 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
   .map((a) => a.finished.catch(() => null))))
 
-for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
+for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/privacy', '/credits',
   'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements', '/leaderboard']) {
   test(`axe ${path}`, async ({ page, login }) => {
     if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements', '/leaderboard'].includes(path)) await login()
