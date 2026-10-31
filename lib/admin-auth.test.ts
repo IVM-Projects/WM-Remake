@@ -7,7 +7,7 @@ vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: () => ({ schema: () => ({ rpc }), auth: { admin: { updateUserById, deleteUser } } }),
 }))
 
-const { banDuration, applyAuthState, withAuthSync } = await import('@/lib/admin-auth')
+const { banDuration, applyAuthState, withAuthSync, deleteAccountCall } = await import('@/lib/admin-auth')
 
 const ID = '00000000-0000-4000-8000-000000000001'
 const state = (s: Partial<{ deleted: boolean; forever: boolean; ban_until: string | null }> = {}) =>
@@ -89,5 +89,37 @@ describe('withAuthSync', () => {
     expect(await withAuthSync('admin_sanction')({})).toBe(err)
     expect(await withAuthSync('admin_sanction')({})).toEqual({ data: { ok: true }, error: null })
     expect(rpc).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('deleteAccountCall', () => {
+  const done = { ok: true, voided_auctions: 0, cancelled_trades: 0, finished_battles: 0, cancelled_battles: 0, guild: null }
+  const args = { p_username: 'moi', p_idem: 'k', p_uid: ID }
+
+  it('account_delete, puis deleteUser(uid, true), puis account_auth_done → auth_pending faux', async () => {
+    rpcs({ data: done, error: null }, { data: { ok: true }, error: null })
+    expect(await deleteAccountCall(args)).toEqual({ data: { ...done, auth_pending: false }, error: null })
+    expect(rpc.mock.calls).toEqual([['account_delete', args], ['account_auth_done', { p_uid: ID }]])
+    expect(deleteUser).toHaveBeenCalledWith(ID, true)
+    expect(deleteUser.mock.invocationCallOrder[0]).toBeLessThan(rpc.mock.invocationCallOrder[1])
+  })
+
+  it('GoTrue en erreur → auth_pending vrai, aucun account_auth_done ; account_auth_done en erreur → auth_pending vrai', async () => {
+    deleteUser.mockResolvedValueOnce({ data: null, error: { status: 500 } })
+    rpcs({ data: done, error: null })
+    expect((await deleteAccountCall(args)).data).toEqual({ ...done, auth_pending: true })
+    expect(rpc).toHaveBeenCalledTimes(1)
+    rpc.mockReset()
+    rpcs({ data: done, error: null }, { data: null, error: { code: '55P03' } })
+    expect((await deleteAccountCall(args)).data).toEqual({ ...done, auth_pending: true })
+    expect(vi.mocked(console.error).mock.calls).toEqual([['{"auth":"sync_failed"}'], ['{"auth":"sync_failed"}']])
+  })
+
+  it('erreur SQL → rendue telle quelle, GoTrue jamais appelé', async () => {
+    const err = { data: null, error: { code: 'P0001', details: '{"status":400}' } }
+    rpcs(err)
+    expect(await deleteAccountCall(args)).toBe(err)
+    expect(deleteUser).not.toHaveBeenCalled()
+    expect(rpc).toHaveBeenCalledTimes(1)
   })
 })

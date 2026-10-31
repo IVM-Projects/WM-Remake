@@ -54,3 +54,22 @@ export function withAuthSync(fn: string): (args: Record<string, unknown>) => Pro
     return { data: { ...data, auth_synced: synced }, error: null }
   }
 }
+
+// Enveloppe `call` de POST /api/settings/delete-account : la transaction, puis la suppression douce GoTrue (G1) ; un échec GoTrue
+// laisse auth_done_at nul (auth_pending: true), rattrapé par POST auth-sync.
+export async function deleteAccountCall(args: Record<string, unknown>): Promise<RpcResult> {
+  const db = createAdminClient().schema('wm')
+  const res = await db.rpc('account_delete', args)
+  if (res.error) return res
+  // M6b : résilier l'abonnement Stripe ici, avant la suppression GoTrue (A3).
+  let ok = await applyAuthState({ user_id: String(args.p_uid), deleted: true, forever: false, ban_until: null })
+  if (ok) {
+    try {
+      ok = !(await db.rpc('account_auth_done', { p_uid: args.p_uid })).error
+    } catch {
+      ok = false
+    }
+    if (!ok) syncFailed()
+  }
+  return { data: { ...(res.data as object), auth_pending: !ok }, error: null }
+}

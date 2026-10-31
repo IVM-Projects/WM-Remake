@@ -130,3 +130,6 @@ export const CardIdParams = z.object({ cardId: z.uuid() })
 export const WishParams = z.object({ wishId: z.uuid() })
 // Signalement d'image du joueur : aucun corps, la carte vient du chemin.
 export const ImageReportParams = z.object({ id: z.uuid() })
+
+// Suppression du compte : confirmée par la saisie du pseudo, comparé en SQL (wm.account_delete).
+export const AccountDelete = z.object({ username: pgText })
