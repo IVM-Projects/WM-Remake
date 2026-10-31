@@ -27,10 +27,10 @@ export default function PrivacyPage() {
         { id: 'conservation', heading: 'Conservation', body: (
           <ul className="list-disc space-y-2 pl-5">
             <li>Ton compte est conservé jusqu&apos;à sa suppression.</li>
-            <li>Quand tu supprimes ton compte, ton e-mail, tes données d&apos;identité (pseudo, bio, avatar) et tes réglages personnels sont effacés, ainsi que ta collection, tes amis et tes notifications. L&apos;historique de jeu reste, pseudonymisé sous « Joueur supprimé … » : messages, échanges, batailles, signalements, sanctions et mouvements de wikibidous, nécessaires aux autres joueurs et à l&apos;équilibre du jeu.</li>
-            <li>Les lignes de journal de sécurité propres à ton compte, tenues par notre service d&apos;authentification, sont supprimées dans la mesure du possible.</li>
+            <li>Quand tu supprimes ton compte, ton e-mail, ton pseudo, ta bio et ton avatar sont effacés, ainsi que tes réglages (préférences et notifications), ta collection, tes étiquettes, ta liste de souhaits, tes notifications, tes abonnements push, tes amitiés et tes invitations de guilde. Ton rôle éventuel dans le staff est retiré. Tes enchères et échanges en cours sont annulés. Ton profil reste comme une coquille anonyme « Joueur supprimé … » qui garde l&apos;historique utile aux autres joueurs et à l&apos;équilibre du jeu : messages, échanges, batailles, signalements, sanctions, mouvements de wikibidous, succès et statistiques.</li>
+            <li>Les lignes de journal de sécurité propres à ton compte, tenues par notre service d&apos;authentification (inscription, connexions), sont supprimées dans la mesure du possible ; si cette purge échoue, ces lignes peuvent rester.</li>
             <li>Le journal de modération est conservé sans limite de durée tant que le service existe.</li>
-            <li>Si tu supprimes ton compte alors que tu es banni, une empreinte (hachage à sens unique, SHA-256) de ton e-mail est gardée tant que le bannissement dure, uniquement pour qu&apos;une nouvelle inscription avec la même adresse reste bannie. Aucune empreinte n&apos;est gardée après une suspension, une restriction ou un avertissement.</li>
+            <li>Si tu supprimes ton compte alors que tu es banni, une empreinte (hachage à sens unique, SHA-256) de ton e-mail est gardée tant que le bannissement n&apos;est pas levé par l&apos;équipe, uniquement pour qu&apos;une nouvelle inscription avec la même adresse reste bannie. Aucune empreinte n&apos;est gardée après une suspension, une restriction ou un avertissement.</li>
           </ul>
         ) },
         { id: 'droits', heading: 'Tes droits', body: (
