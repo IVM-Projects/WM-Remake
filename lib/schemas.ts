@@ -118,3 +118,15 @@ export const AdminAuditQuery = AdminPageQuery.extend({
 export const AdminSearchQuery = z.object({ q: pgText })
 export const UserParams = z.object({ userId: z.uuid() })
 export const SanctionParams = z.object({ sanctionId: z.coerce.number().int().positive() })
+
+// Signalements, images, messages, cartes et guildes du staff (M6a) : bornes et rôles en SQL.
+export const ReportsQuery = AdminPageQuery.extend({ status: z.enum(['open', 'reviewed'], { error: 'Statut inconnu' }).default('open') })
+export const ReportReview = AdminReason.extend({ status: z.enum(['resolved', 'dismissed'], { error: 'Statut inconnu' }) })
+export const DmThread = AdminReason.extend({ user_a: z.uuid(), user_b: z.uuid() })
+export const CardFlags = AdminReason.extend({ hide_image: z.boolean(), nsfw_image: z.boolean() })
+export const ReportParams = z.object({ reportId: z.uuid() })
+export const MessageParams = z.object({ messageId: z.uuid() })
+export const CardIdParams = z.object({ cardId: z.uuid() })
+export const WishParams = z.object({ wishId: z.uuid() })
+// Signalement d'image du joueur : aucun corps, la carte vient du chemin.
+export const ImageReportParams = z.object({ id: z.uuid() })
