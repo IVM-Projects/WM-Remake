@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
 import { SECRET_KEY } from '../harness.ts'
@@ -45,6 +46,23 @@ const login = (env: ContractEnv, email: string, password: string) =>
     method: 'POST', headers: { apikey: 'sb_publishable_test', 'content-type': 'application/json' }, body: JSON.stringify({ email, password }),
   })
 
+// Joueur inscrit par l'API admin de GoTrue (identité et métadonnées comme une vraie inscription), vérifié humain comme makeUser.
+async function gotrueUser(env: ContractEnv): Promise<{ uid: string; username: string; email: string; password: string }> {
+  const username = `d_${randomUUID().slice(-12)}`
+  const email = `${randomUUID()}@test.local`
+  const password = 'mot-de-passe-de-test'
+  const res = await fetch(`${env.backend.supabaseUrl}/auth/v1/admin/users`, {
+    method: 'POST', headers: { apikey: SECRET_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { username, age_confirmed: true, terms_version: 'test' } }),
+  })
+  const text = await res.text()
+  assert.equal(res.status, 200, text.slice(0, 500))
+  const uid = (JSON.parse(text) as { id: string }).id
+  sql(env, `insert into wm.user_state (user_id, human_verified_until) values (:'u', now() + interval '12 hours')
+on conflict (user_id) do update set human_verified_until = excluded.human_verified_until`, { u: uid })
+  return { uid, username, email, password }
+}
+
 export const account: RouteSpec[] = [
   {
     method: 'GET',
@@ -66,10 +84,10 @@ export const account: RouteSpec[] = [
           const report = sql(env, `insert into public.reports (reporter_id, reported_user_id, reason) values (:'f', :'u', 'spam') returning id`,
             { f: friend.uid, u: me.uid })
           const res = await api(env, EXPORT, { uid: me.uid })
-          assert.equal(res.headers.get('content-disposition'), 'attachment; filename="export-compte.json"')
-          assert.equal(res.headers.get('cache-control'), 'no-store')
           const text = await res.text()
           assert.equal(res.status, 200, text.slice(0, 500))
+          assert.equal(res.headers.get('content-disposition'), 'attachment; filename="export-compte.json"')
+          assert.equal(res.headers.get('cache-control'), 'no-store')
           const body = JSON.parse(text) as Record<string, unknown> & { push_subscriptions: unknown[]; friends: unknown[] }
           assert.deepEqual(Object.keys(body).sort(), EXPORT_KEYS)
           assert.deepEqual([body.format, body.version, body.push_subscriptions.length, body.friends.length], ['export-compte', 1, 1, 1])
@@ -106,10 +124,8 @@ export const account: RouteSpec[] = [
           + 'pierre tombale, GoTrue en suppression douce (ligne gardée, connexion refusée), 401 ensuite, rejeu identique, invariants',
         timeout: 60_000,
         run: async (env) => {
-          const d = makeUser(db(env), { humanVerified: true })
+          const d = await gotrueUser(env)
           const [m, e, h] = [makeUser(db(env), { balance: 1000, humanVerified: true }), makeUser(db(env)), makeUser(db(env))]
-          const email = `${d.uid}@test.local`
-          const password = 'mot-de-passe-de-test'
           try {
             const [sold, offered] = giveCards(db(env), d.uid, 'C', 2)
             const eCopy = giveCards(db(env), e.uid, 'C')[0]
@@ -120,12 +136,13 @@ export const account: RouteSpec[] = [
               'offered_by', user_id) order by id) from public.user_cards where id in (:'o', :'c'))) ->> 'id'`, { d: d.uid, e: e.uid, o: offered, c: eCopy })
             const guild = guildWith(env, d.uid, [h.uid])
             sql(env, `insert into public.chat_messages (sender_id, recipient_id, content) values (:'d', :'e', 'bonjour')`, { d: d.uid, e: e.uid })
-            // Mot de passe posé par l'API admin de GoTrue : D se connecte avant la suppression, plus après.
-            const put = await fetch(`${env.backend.supabaseUrl}/auth/v1/admin/users/${d.uid}`, {
-              method: 'PUT', headers: { apikey: SECRET_KEY, 'content-type': 'application/json' }, body: JSON.stringify({ password }),
-            })
-            assert.equal(put.status, 200, await put.text())
-            assert.equal((await login(env, email, password)).status, 200)
+            const session = await login(env, d.email, d.password)
+            assert.equal(session.status, 200)
+            const { refresh_token: refreshToken } = (await session.json()) as { refresh_token: string }
+            // Témoin : l'e-mail d'origine est bien là où une vraie inscription le garde (ligne et identité).
+            assert.equal(sql(env, `select (select count(*) from auth.users u where id = :'d' and u::text like '%' || :'e' || '%')
+              || '|' || (select count(*) from auth.identities where user_id = :'d' and identity_data::text like '%' || :'e' || '%')`,
+            { d: d.uid, e: d.email }), '1|1')
 
             await refused(await send(env, 'POST', DELETE, d.uid, { username: 'mauvais' }, idem()), 400,
               'Tape ton pseudo exactement pour confirmer', 'invalid_request')
@@ -135,12 +152,23 @@ export const account: RouteSpec[] = [
               ok: true, voided_auctions: 1, cancelled_trades: 1, finished_battles: 0, cancelled_battles: 0, guild: 'transferred', auth_pending: false,
             })
 
-            // Observé sur GoTrue v2.197.0 : la suppression douce garde la ligne, pose deleted_at, remplace l'e-mail, coupe la connexion.
+            // Observé sur GoTrue v2.197.0 : la suppression douce garde la ligne, pose deleted_at, efface l'e-mail de la ligne, de ses
+            // métadonnées et des identités, et coupe connexion et renouvellement. (Le journal auth.audit_log_entries le garde : voir le rapport.)
             assert.equal(sql(env, `select count(*) || '|' || bool_and(deleted_at is not null) || '|' || bool_and(email is distinct from :'e')
-              from auth.users where id = :'d'`, { d: d.uid, e: email }), '1|true|true')
-            const denied = await login(env, email, password)
+              || '|' || bool_and(u::text not like '%' || :'e' || '%')
+              || '|' || bool_and(coalesce(raw_user_meta_data::text, '') || coalesce(raw_app_meta_data::text, '') not like '%' || :'e' || '%')
+              from auth.users u where id = :'d'`, { d: d.uid, e: d.email }), '1|true|true|true|true')
+            assert.equal(sql(env, `select count(*) from auth.identities where user_id = :'d'
+              and (email is not null or identity_data::text like '%' || :'e' || '%')`, { d: d.uid, e: d.email }), '0')
+            const denied = await login(env, d.email, d.password)
             assert.equal(denied.status, 400)
             assert.equal(((await denied.json()) as { error_code: string }).error_code, 'invalid_credentials')
+            const refreshed = await fetch(`${env.backend.supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+              method: 'POST', headers: { apikey: 'sb_publishable_test', 'content-type': 'application/json' },
+              body: JSON.stringify({ refresh_token: refreshToken }),
+            })
+            assert.equal(refreshed.status, 400)
+            assert.equal(((await refreshed.json()) as { error_code: string }).error_code, 'refresh_token_not_found')
             assert.match(sql(env, `select username from public.profiles where id = :'d'`, { d: d.uid }), /^Joueur supprimé [0-9a-f]{8}$/)
             assert.equal(sql(env, `select auth_done_at is not null from wm.deleted_accounts where user_id = :'d'`, { d: d.uid }), 't')
             assert.equal(sql(env, `select wikibidous_balance from public.profiles where id = :'m'`, { m: m.uid }), '1000')
