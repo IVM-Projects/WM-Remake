@@ -8,6 +8,8 @@ const rpc = vi.fn()
 const schema = vi.fn(() => ({ rpc }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ auth: { getClaims } }) }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => ({ schema }) }))
+const accessDenied = vi.fn()
+vi.mock('@/lib/access', () => ({ accessDenied }))
 // Le vrai NextRequest reste ; after() simulé, son rappel appelé à la main.
 vi.mock('next/server', async (importOriginal) => ({ ...(await importOriginal<typeof import('next/server')>()), after: vi.fn() }))
 // Fabrique exigée : le module d'origine charge server-only, qui lève ici.
@@ -28,6 +30,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {})
   getClaims.mockResolvedValue({ data: null, error: null })
   rpc.mockResolvedValue({ data: { ok: true }, error: null })
+  accessDenied.mockResolvedValue(null)
 })
 
 describe('route()', () => {
@@ -155,6 +158,24 @@ describe('route()', () => {
     expect(getClaims).not.toHaveBeenCalled()
     expect(rpc.mock.calls[0]).toStrictEqual(['health', {}])
     expect(res.status).toBe(200)
+  })
+
+  it('GET connecté refusé par accessDenied → sa réponse telle quelle, RPC non appelée (G4)', async () => {
+    signedIn()
+    accessDenied.mockResolvedValue(fail(403, 'Ton compte est temporairement restreint.'))
+    const res = await route({ fn: 'fn' })(req(), ctx)
+    expect(accessDenied).toHaveBeenCalledWith('u1')
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'Ton compte est temporairement restreint.', message: 'Ton compte est temporairement restreint.' })
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('POST connecté ou GET sans auth → accessDenied jamais appelé', async () => {
+    signedIn()
+    await route({ fn: 'fn' })(req({ method: 'POST' }), ctx)
+    await route({ fn: 'health', auth: false })(req(), ctx)
+    expect(accessDenied).not.toHaveBeenCalled()
+    expect(rpc).toHaveBeenCalledTimes(2)
   })
 
   it('args ne peut pas remplacer p_uid', async () => {

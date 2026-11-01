@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
 import { Avatar } from '@/components/ui/Avatar'
 import { link } from '@/components/ui/button'
+import { DataTable } from '@/components/ui/DataTable'
 import { Loading } from '@/components/ui/Loading'
 import { ReadError } from '@/components/ui/Section'
 import { tabKey } from '@/components/ui/tabs'
@@ -126,36 +127,28 @@ export function LeaderboardClient() {
                     {data.me ? `Ton rang : ${formatInt(data.me.rank)} (${formatInt(data.me.value)})` : 'Tu n\'es pas encore classé.'}
                   </p>
                   {data.entries.length ? (
-                    <div className="card-frame">
-                      <table className="w-full table-fixed text-left text-sm">
-                        <caption ref={caption} tabIndex={-1} className="sr-only">{`Classement des joueurs : ${boardLabel[1]}, ${periodLabel}`}</caption>
-                        <thead>
-                          <tr className="border-b border-[var(--color-border)]">
-                            <th scope="col" className="w-14 px-2 py-2 sm:w-16 sm:px-3">Rang</th>
-                            <th scope="col" className="px-2 py-2 sm:px-3">Joueur</th>
-                            <th scope="col" className="w-28 px-2 py-2 text-right sm:px-3">{boardLabel[2]}</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[var(--color-border)]">
-                          {data.entries.map((e) => {
-                            const own = e.user_id === meId
-                            return (
-                              <tr key={e.user_id} aria-current={own ? 'true' : undefined} className={own ? 'bg-[var(--color-surface-light)] font-semibold' : undefined}>
-                                <td className="px-2 py-2 tabular-nums sm:px-3">{formatInt(e.rank)}</td>
-                                <td className="px-2 py-2 sm:px-3">
-                                  <span className="flex items-center gap-3">
-                                    <span className="hidden sm:inline-flex"><Avatar url={e.avatar_url} name={e.username} size="sm" /></span>
-                                    <Link href={`/profile/${encodeURIComponent(e.username)}`} className={`${link} min-w-0 wrap-anywhere`}>{e.username}</Link>
-                                    {own && <span className="sr-only"> (toi)</span>}
-                                  </span>
-                                </td>
-                                <td className="px-2 py-2 text-right tabular-nums sm:px-3">{formatInt(e.value)}</td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                    <DataTable
+                      caption={`Classement des joueurs : ${boardLabel[1]}, ${periodLabel}`}
+                      captionRef={caption}
+                      rows={data.entries}
+                      rowKey={(e) => e.user_id}
+                      current={(e) => e.user_id === meId}
+                      columns={[
+                        { key: 'rank', header: 'Rang', headerClassName: 'w-14 sm:w-16', cellClassName: 'tabular-nums', cell: (e) => formatInt(e.rank) },
+                        {
+                          key: 'player',
+                          header: 'Joueur',
+                          cell: (e) => (
+                            <span className="flex items-center gap-3">
+                              <span className="hidden sm:inline-flex"><Avatar url={e.avatar_url} name={e.username} size="sm" /></span>
+                              <Link href={`/profile/${encodeURIComponent(e.username)}`} className={`${link} min-w-0 wrap-anywhere`}>{e.username}</Link>
+                              {e.user_id === meId && <span className="sr-only"> (toi)</span>}
+                            </span>
+                          ),
+                        },
+                        { key: 'value', header: boardLabel[2], headerClassName: 'w-28 text-right', cellClassName: 'text-right tabular-nums', cell: (e) => formatInt(e.value) },
+                      ]}
+                    />
                   ) : (
                     <p className="card-frame p-6 text-center text-sm">Personne n&apos;est encore classé.</p>
                   )}

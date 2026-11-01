@@ -1,5 +1,5 @@
 // Version des CGU acceptée à l'inscription, lue par le trigger wm.handle_new_user.
-export const TERMS_VERSION = '2026-10-19'
+export const TERMS_VERSION = '2026-10-31'
 
 // Refus du trigger d'inscription : GoTrue relaie le message de wm.raise_err, sauf appelé avec X-Supabase-Api-Version (supabase-js).
 const KNOWN = new Set([
@@ -23,6 +23,8 @@ const BY_CODE = new Map([
   ['email_address_not_authorized', 'L\'envoi d\'e-mails n\'est pas encore configuré, réessaie plus tard.'],
   // Plafond par IP du projet hébergé (/token, /signup, /verify) : toute une salle derrière un même NAT l'atteint ensemble.
   ['over_request_rate_limit', 'Trop de tentatives depuis ce réseau, réessaie dans quelques minutes.'],
+  // Compte suspendu ou banni (inféré) : GoTrue refuse le jeton, le code est celui de la route de sanction.
+  ['user_banned', 'Ce compte est suspendu. Contacte l\'équipe par l\'adresse indiquée dans la politique de confidentialité.'],
 ])
 
 // sessionStorage et non l'URL (/verify-email?email=…) : l'adresse resterait dans les journaux de requêtes et l'historique.

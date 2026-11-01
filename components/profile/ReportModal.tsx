@@ -10,7 +10,7 @@ import { api, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 
 // Motifs du D (enum report_reason, M4b-10), dans l'ordre affiché.
-const REASONS = [['cheating', 'Triche'], ['inappropriate_content', 'Contenu inapproprié'], ['spam', 'Spam']] as const
+export const REASONS = [['cheating', 'Triche'], ['inappropriate_content', 'Contenu inapproprié'], ['spam', 'Spam']] as const
 type Reason = (typeof REASONS)[number][0]
 type Report = { reason: Reason; details: string | null }
 

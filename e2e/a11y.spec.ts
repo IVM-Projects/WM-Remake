@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { befriend, expect, giveCopies, imageCopy, makeGuild, makePlayer, sql, test } from './fixtures'
+import { befriend, cookieFor, expect, giveCopies, imageCopy, makeGuild, makePlayer, makeStaff, sql, test } from './fixtures'
 import { stubPush } from './push-stub'
 
 type Known = { rule: string; selector: string }
@@ -54,6 +54,9 @@ const READY: Record<string, string> = {
   '/achievements': 'main [data-ready]',
   // Classement des joueurs lu (ou l'échec).
   '/leaderboard': 'main [data-ready]',
+  // Tableau de bord et journal lus (ou l'échec).
+  '/admin': 'main [data-ready]',
+  '/admin/audit': 'main [data-ready]',
 }
 
 // Animations finies (fondu, pivot de la carte) : axe mesurerait le contraste d'un texte encore à demi transparent.
@@ -61,7 +64,7 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
   .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
   .map((a) => a.finished.catch(() => null))))
 
-for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/credits',
+for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/rules', '/privacy', '/credits',
   'http://127.0.0.1:3101/gate', '/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements', '/leaderboard']) {
   test(`axe ${path}`, async ({ page, login }) => {
     if (['/pulls', '/collection', '/global-collection', '/friends', '/settings', '/battle', '/guild', '/achievements', '/leaderboard'].includes(path)) await login()
@@ -73,6 +76,112 @@ for (const path of ['/', '/login', '/signup', '/forgot-password', '/reset-passwo
     await expectNoSeriousViolations(page)
   })
 }
+
+for (const path of ['/admin', '/admin/audit']) {
+  test(`axe ${path} (staff)`, async ({ page, context, baseURL }) => {
+    const u = makeStaff()
+    try {
+      await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+      await page.goto(path)
+      await page.locator(READY[path]).waitFor()
+      await settled(page)
+      await expectNoSeriousViolations(page)
+    } finally {
+      sql(`delete from auth.users where id = :'uid'`, { uid: u.uid })
+    }
+  })
+}
+
+// Espace admin (Task 16) : fiche ouverte avec la modale de sanction, puis les deux files de signalements avec la lecture d'une paire de joueurs.
+test('axe /admin/users (staff) : fiche ouverte, puis SanctionModal ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const a = makePlayer()
+  try {
+    sql(`insert into wm.sanctions (user_id, kind, reason, ends_at) values (:'a', 'restriction', 'motif de test', now() + interval '1 day')`, { a: a.uid })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto(`/admin/users?user=${a.uid}`)
+    await page.locator('main [data-ready]').waitFor()
+    await expect(page.getByRole('table')).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Sanctionner', exact: true }).click()
+    await page.getByRole('radio', { name: 'Restriction' }).check()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from wm.staff_actions where staff_id = :'u'`, { u: u.uid })
+    sql(`delete from auth.users where id = any(array[:'u', :'a']::uuid[])`, { u: u.uid, a: a.uid })
+  }
+})
+
+test('axe /admin/reports (staff) : files Joueurs et Images, DmThreadModal ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const [a, c] = [makePlayer(), makePlayer()]
+  const title = `Zz a11y image ${randomUUID().slice(-12)} z`
+  let card = ''
+  try {
+    card = sql(`select tests.image_card(:'t')`, { t: title })
+    sql(`select wm.report_upsert(:'c', :'a', 'spam', 'détails')`, { c: c.uid, a: a.uid })
+    sql(`insert into public.chat_messages (sender_id, recipient_id, content) values (:'a', :'c', 'bonjour')`, { a: a.uid, c: c.uid })
+    sql(`insert into wm.card_image_reports (card_id, user_id) values (:'k', :'c')`, { k: card, c: c.uid })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto('/admin/reports')
+    await page.locator('main [data-ready]').waitFor()
+    await expect(page.getByRole('button', { name: 'Lire les messages' }).first()).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('tab', { name: 'Images' }).click()
+    await expect(page.getByRole('listitem').filter({ hasText: title })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('tab', { name: 'Joueurs' }).click()
+    await page.getByRole('listitem').filter({ hasText: `${c.username} a signalé ${a.username}` }).getByRole('button', { name: 'Lire les messages' }).click()
+    await page.getByRole('dialog').getByLabel('Motif (obligatoire)').fill('Motif de test')
+    await expectNoSeriousViolations(page)
+    await page.getByRole('dialog').getByRole('button', { name: 'Lire les messages' }).click()
+    await expect(page.getByRole('log')).toContainText('bonjour')
+    await expectNoSeriousViolations(page)
+  } finally {
+    if (card) sql(`delete from public.cards where id = :'k'`, { k: card })
+    sql(`delete from wm.staff_actions where staff_id = :'u'`, { u: u.uid })
+    sql(`delete from auth.users where id = any(array[:'u', :'a', :'c']::uuid[])`, { u: u.uid, a: a.uid, c: c.uid })
+  }
+})
+
+test('axe /admin/cards (staff) : fiche ouverte, puis ActionModal de retrait ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const title = `Zz a11y carte ${randomUUID().slice(-12)} z`
+  let card = ''
+  try {
+    card = sql(`select tests.image_card(:'t')`, { t: title })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto(`/admin/cards?card=${card}`)
+    await expect(page.getByRole('heading', { name: title, level: 2 })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    await page.getByRole('button', { name: 'Retirer la carte' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('dialog').getByLabel('Motif (obligatoire)').fill('Motif de test')
+    await expectNoSeriousViolations(page)
+  } finally {
+    if (card) sql(`delete from wm.staff_actions where target_id = :'k'; delete from public.cards where id = :'k'`, { k: card })
+    sql(`delete from wm.staff_actions where staff_id = :'u'`, { u: u.uid })
+    sql(`delete from auth.users where id = :'u'`, { u: u.uid })
+  }
+})
+
+test('axe /admin/guilds (staff) : fiche ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const lead = makePlayer()
+  let gid = ''
+  try {
+    gid = makeGuild(lead, [], `Zq${randomUUID().replaceAll('-', '').slice(0, 14)}`)
+    sql(`insert into public.guild_chat_messages (guild_id, user_id, content) values (:'g', :'u', 'bonjour la guilde')`, { g: gid, u: lead.uid })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto(`/admin/guilds?guild=${gid}`)
+    await expect(page.getByRole('log', { name: 'Messages de la guilde' })).toContainText('bonjour la guilde')
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from public.guilds where leader_id = :'l'`, { l: lead.uid })
+    sql(`delete from auth.users where id = any(array[:'u', :'l']::uuid[])`, { u: u.uid, l: lead.uid })
+  }
+})
 
 test('axe /pulls mobile, feuille « Plus » ouverte', async ({ page, login }) => {
   await login(); await page.setViewportSize({ width: 390, height: 844 })
@@ -485,6 +594,16 @@ test('axe /settings : erreurs affichées (pseudo pris, mots de passe différents
   await page.getByRole('button', { name: 'Changer le mot de passe' }).click()
   await expect(page.getByText('Les deux mots de passe ne correspondent pas.', { exact: true })).toBeVisible()
   await expect(page.locator('input[name="sounds"]')).toBeVisible()
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /settings : modale de suppression de compte ouverte', async ({ page, login }) => {
+  await login()
+  await page.goto('/settings')
+  await page.locator(READY['/settings']).waitFor()
+  await page.getByRole('button', { name: 'Supprimer mon compte' }).click()
+  await expect(page.getByRole('dialog', { name: 'Supprimer ton compte ?' })).toBeVisible()
+  await settled(page)
   await expectNoSeriousViolations(page)
 })
 

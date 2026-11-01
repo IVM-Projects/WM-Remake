@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { after, type NextRequest } from 'next/server'
 import { z } from 'zod'
+import { accessDenied } from '@/lib/access'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { resolveTz } from '@/lib/tz'
@@ -102,6 +103,11 @@ export function route<I = undefined, P = Record<string, string>>(opts: {
       const { data } = await (await createClient()).auth.getClaims()
       ctx.uid = data?.claims.sub ?? null
       if (!ctx.uid) return fail(401, UNAUTHORIZED, 'unauthorized')
+      // Lectures seulement : les écritures passent par wm.actor (G4).
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        const denied = await accessDenied(ctx.uid)
+        if (denied) return denied
+      }
     }
     if (ctx.idem !== null && (ctx.idem.length < 1 || ctx.idem.length > 128)) {
       return fail(400, 'Idempotency-Key invalide (1 à 128 caractères).', 'invalid_request')

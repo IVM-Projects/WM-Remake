@@ -63,14 +63,15 @@ do $$ begin
   assert (select coalesce(note, '') <> '' from wm.config where key = 'battle'), 'note manquante';
 end $$;
 
--- Rejeu de 1900, suivi de 2000 qui redéfinit check_invariants (M5b-18), puis de 2040 qui redéfinit battle_finish : mêmes valeurs, et une
--- valeur déjà posée garde la sienne.
+-- Rejeu de 1900, suivi de 2000 qui redéfinit check_invariants (M5b-18), puis de 2040 qui redéfinit battle_finish, puis de 2250 qui
+-- redéfinit check_invariants : mêmes valeurs, et une valeur déjà posée garde la sienne.
 create temp table battle_config as select pg_temp.battle_config() v;
 update wm.config set value = value || '{"quota_free": 5}' where key = 'battle';
 update wm.config set value = value || '{"battles_closed": 7}' where key = 'list_caps';
 \ir ../migrations/1900_wm_battle_core.sql
 \ir ../migrations/2000_wm_progress_core.sql
 \ir ../migrations/2040_wm_score_hooks.sql
+\ir ../migrations/2250_wm_account_delete.sql
 do $$ begin
   assert pg_temp.battle_config() = jsonb_set(jsonb_set((select v from battle_config), '{battle,quota_free}', '5'), '{list_caps,battles_closed}', '7'),
     pg_temp.battle_config()::text;

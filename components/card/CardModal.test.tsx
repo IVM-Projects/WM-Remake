@@ -85,6 +85,16 @@ describe('CardModal (R§6.5)', () => {
     expect(text).toContain('Texte de l\'article : CC BY-SA 4.0 — crédits sur la page Wikipédia.')
   })
 
+  test('« Signaler l\'image » : seulement avec une image non masquée, non pressé et inactif jusqu\'à la lecture', () => {
+    const withImage = { ...catalogue, image_url: 'https://upload.wikimedia.org/x.jpg' }
+    const report = (item: CatalogCard) => html(<CardModal item={item} onClose={noop} />).match(/<button [^>]*>Signaler l'image<\/button>/)?.[0] ?? ''
+    const b = report(withImage)
+    expect(b).toContain('aria-pressed="false"')
+    expect(b).toContain('aria-disabled="true"')
+    expect(report({ ...withImage, hide_image: true })).toBe('')
+    expect(report(catalogue)).toBe('')
+  })
+
   test('pied : « Mettre aux enchères » (accent doux, replié), puis « Défausser », la pièce W et « +1 »', () => {
     const sell = h.match(/<button [^>]*>(?:(?!<\/button>).)*Mettre aux enchères<\/button>/)?.[0] ?? ''
     expect(sell).toContain('aria-expanded="false"')

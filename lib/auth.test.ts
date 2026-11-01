@@ -24,6 +24,11 @@ describe('authErrorMessage', () => {
       .toBe('Trop de tentatives depuis ce réseau, réessaie dans quelques minutes.')
   })
 
+  it('compte suspendu ou banni (user_banned)', () => {
+    expect(authErrorMessage({ code: 'user_banned', message: 'User is banned' }))
+      .toBe('Ce compte est suspendu. Contacte l\'équipe par l\'adresse indiquée dans la politique de confidentialité.')
+  })
+
   it('le reste → message générique (jamais un texte anglais ni une clé héritée)', () => {
     for (const err of [null, {}, { message: 'Database error saving new user' }, { code: 'constructor' }, { code: 'unexpected_failure' }]) {
       expect(authErrorMessage(err)).toBe('Une erreur est survenue, réessaie.')

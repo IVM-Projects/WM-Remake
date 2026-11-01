@@ -102,3 +102,35 @@ export const PushSubscriptionBody = PushEndpoint.extend({
 })
 // Types validés en SQL (« Type de notification inconnu ») ; 13 aujourd'hui.
 export const PushTypes = z.object({ push_types: z.array(pgText).max(20) })
+
+// Espace staff (D§7.12) : longueurs du motif et bornes en SQL.
+export const AdminReason = z.object({ reason: pgText })
+export const AdminSanction = z.object({
+  kind: z.enum(['warning', 'restriction', 'suspension', 'ban'], { error: 'Sanction inconnue' }),
+  // Année 0000 : valide en RFC 3339, absente de timestamptz (22008 → 500) ; la fenêtre de dates reste vérifiée en SQL.
+  ends_at: z.iso.datetime({ offset: true }).refine((v) => !v.startsWith('0000'), 'Date invalide').nullish(),
+  reason: pgText,
+  report_id: z.uuid().nullish(),
+})
+export const AdminPageQuery = z.object({ page: intParam.default(0) })
+export const AdminAuditQuery = AdminPageQuery.extend({
+  staff_id: z.uuid().optional(), target_type: pgText.max(32).optional(), target_id: pgText.max(80).optional(),
+})
+export const AdminSearchQuery = z.object({ q: pgText })
+export const UserParams = z.object({ userId: z.uuid() })
+export const SanctionParams = z.object({ sanctionId: z.coerce.number().int().positive() })
+
+// Signalements, images, messages, cartes et guildes du staff (M6a) : bornes et rôles en SQL.
+export const ReportsQuery = AdminPageQuery.extend({ status: z.enum(['open', 'reviewed'], { error: 'Statut inconnu' }).default('open') })
+export const ReportReview = AdminReason.extend({ status: z.enum(['resolved', 'dismissed'], { error: 'Statut inconnu' }) })
+export const DmThread = AdminReason.extend({ user_a: z.uuid(), user_b: z.uuid() })
+export const CardFlags = AdminReason.extend({ hide_image: z.boolean(), nsfw_image: z.boolean() })
+export const ReportParams = z.object({ reportId: z.uuid() })
+export const MessageParams = z.object({ messageId: z.uuid() })
+export const CardIdParams = z.object({ cardId: z.uuid() })
+export const WishParams = z.object({ wishId: z.uuid() })
+// Signalement d'image du joueur : aucun corps, la carte vient du chemin.
+export const ImageReportParams = z.object({ id: z.uuid() })
+
+// Suppression du compte : confirmée par la saisie du pseudo, comparé en SQL (wm.account_delete).
+export const AccountDelete = z.object({ username: pgText })

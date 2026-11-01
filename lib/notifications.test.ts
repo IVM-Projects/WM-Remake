@@ -107,7 +107,7 @@ test('un fetchUnread rejeté garde le compte précédent ; une lecture dépassé
 
 const n = (type: string, data: Record<string, unknown>): Notification => ({ id: 'n-1', type, data, read: false, created_at: '2026-10-22T10:00:00Z' })
 
-test('notificationView : texte et lien des 12 types, et d\'un type inconnu', () => {
+test('notificationView : texte et lien des 14 types, et d\'un type inconnu', () => {
   const t = { trade_id: 't-1', user_id: 'u-1', username: 'Alice' }
   const f = { friendship_id: 'f-1', user_id: 'u-1', username: 'Alice' }
   // data de wm.notification_data (M3) : card_title (snapshot de la copie) avant wikipedia_title.
@@ -116,6 +116,7 @@ test('notificationView : texte et lien des 12 types, et d\'un type inconnu', () 
     n('trade_received', t), n('trade_countered', t), n('trade_accepted', t), n('trade_declined', t), n('trade_cancelled', t),
     n('friend_request', f), n('friend_accepted', f),
     n('auction_outbid', a), n('auction_won', a), n('auction_sold', a), n('auction_unsold', a), n('wishlist_listed', { ...a, card_title: undefined }),
+    n('auction_voided', { auction_id: 'a-1', card_title: 'Lune', amount: 100 }), n('trade_voided', { trade_id: 't-1', user_id: null, username: null }),
     n('inconnu_x', { guild_id: 'g-1' }),
   ].map(notificationView)
   expect(views).toEqual([
@@ -132,6 +133,8 @@ test('notificationView : texte et lien des 12 types, et d\'un type inconnu', () 
     { text: 'Chat vendue pour 1 234 wikibidous', href: '/marketplace/a-1' },
     { text: 'Chat n\'a pas trouvé preneur', href: '/marketplace/a-1' },
     { text: 'Chat (animal), de ta liste de souhaits, est en vente', href: '/marketplace/a-1' },
+    { text: 'La vente de Lune a été annulée', href: '/marketplace/a-1' },
+    { text: 'Un échange a été annulé', href: '/trades/t-1' },
     { text: 'Nouvelle notification', href: null },
   ])
   // Une unité au singulier (wikibidous(1)).

@@ -15,6 +15,13 @@ export const makePlayer = (opts?: Parameters<typeof makeUser>[1]): User => makeU
 // psql sur la base du banc (variables :'nom', jamais de concaténation).
 export const sql = (query: string, vars?: Record<string, string>): string => psql(backend().databaseUrl, query, vars)
 
+// Membre du staff : un joueur de makePlayer avec sa ligne wm.staff (supprimé avec auth.users, en cascade).
+export const makeStaff = (role: 'admin' | 'moderator' = 'admin'): User => {
+  const u = makePlayer()
+  sql(`insert into wm.staff (user_id, role) values (:'uid', :'role')`, { uid: u.uid, role })
+  return u
+}
+
 // n copies des n premières cartes du seed de cette rareté (P20) ; renvoie les ids des copies.
 export const giveCopies = (u: User, rarity: string, n = 1): string[] => giveCards(backend().databaseUrl, u.uid, rarity, n)
 

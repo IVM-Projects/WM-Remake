@@ -6,7 +6,8 @@ import { MarketPanel } from '@/components/market/MarketPanel'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
-import { api, apiOnce, unsure, userMessage } from '@/lib/api'
+import { ghost } from '@/components/ui/button'
+import { api, apiOnce, unsure, UNSURE, userMessage } from '@/lib/api'
 import { formatInt } from '@/lib/format'
 import { usePrefs } from '@/lib/prefs'
 import { rarityOf, type RarityCode } from '@/lib/rarity'
@@ -74,7 +75,10 @@ type Meta = Pick<CatalogCard, 'summary' | 'q_score' | 'pageviews'>
 export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onUnsure }: Props) {
   const owned = 'card' in item ? item : null
   const card = owned ? owned.card : (item as CatalogCard)
-  const face = owned ? faceOf(owned) : card
+  // Masquée d'office par le dernier signalement (10e signaleur) : la modale montre l'emblème sans attendre la grille.
+  const [hiddenNow, setHiddenNow] = useState<string | null>(null)
+  const hidden = hiddenNow === card.id
+  const face = { ...(owned ? faceOf(owned) : card), ...(hidden && { hide_image: true }) }
   const r = rarityOf(face.rarity)
   const id = useId()
   const [tab, setTab] = useState<'details' | 'market'>('details')
@@ -99,7 +103,8 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onU
   const [error, setError] = useState<string | null>(null)
   const needMeta = card.q_score === undefined || card.pageviews === undefined
   const isOwned = !!owned
-  const imageShown = showsImage(card, usePrefs().hideSensitive)
+  const imageShown = showsImage(hidden ? { ...card, hide_image: true } : card, usePrefs().hideSensitive)
+  const canReport = !!card.image_url && !card.hide_image && !hidden
   // Crédit rangé avec sa carte : une modale réutilisée pour une autre carte n'affiche jamais celui de la précédente.
   const [credit, setCredit] = useState<(Credit & { card_id: string }) | null>(null)
 
@@ -129,6 +134,42 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onU
     api<Credit | null>(`/api/cards/${card.id}/credits`).then((c) => { if (live && c) setCredit({ ...c, card_id: card.id }) }, () => {})
     return () => { live = false }
   }, [card.id, imageShown])
+
+  // Signalement d'image (D:638) : l'état est lu à l'ouverture ; une lecture en échec laisse le bouton actif, non pressé.
+  const [reported, setReported] = useState(false)
+  const [reportReady, setReportReady] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
+  const reportBusy = useRef(false)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!canReport) return
+    let live = true
+    api<{ reported: boolean }>(`/api/cards/${card.id}/image-report`)
+      .then((r) => { if (live) setReported(r.reported === true) }, () => {})
+      .finally(() => { if (live) setReportReady(true) })
+    return () => { live = false }
+  }, [card.id, canReport])
+
+  async function toggleReport() {
+    if (!reportReady || reportBusy.current) return
+    reportBusy.current = true
+    setReportError(null)
+    const next = !reported
+    try {
+      const r = await apiOnce<{ reported: boolean; hidden: boolean } | null>(keys.current, `image-report:${card.id}:${next}`, `/api/cards/${card.id}/image-report`, { method: next ? 'POST' : 'DELETE' })
+      if (!r) throw new Error('illisible')
+      setReported(r.reported)
+      toast(r.reported ? 'Image signalée. L\'équipe va la vérifier.' : 'Signalement retiré.')
+      if (r.hidden) {
+        setHiddenNow(card.id)
+        // Le bouton disparaît : le focus passe à « Fermer » plutôt que de tomber sur body.
+        closeRef.current?.focus()
+      }
+    } catch (e) {
+      setReportError(unsure(e) ? UNSURE : userMessage(e, UNSURE))
+    }
+    reportBusy.current = false
+  }
 
   async function toggleStar() {
     // Un PATCH à la fois : un double clic laisserait l'écran et la base en désaccord.
@@ -204,6 +245,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onU
       <button
         type="button"
         aria-label="Fermer"
+        ref={closeRef}
         onClick={onClose}
         className="absolute top-3 right-3 inline-flex size-11 items-center justify-center rounded-xl transition-colors hover:bg-[var(--color-surface-light)]"
       >
@@ -296,6 +338,20 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onU
                   <p>Texte de l&apos;article : CC BY-SA 4.0 — crédits sur la page Wikipédia.</p>
                   {imageShown && credit?.card_id === card.id && <ImageCredit credit={credit} />}
                 </div>
+                {canReport && (
+                  <div className="border-t border-[var(--color-border)] pt-3">
+                    <button
+                      type="button"
+                      aria-pressed={reported}
+                      aria-disabled={!reportReady}
+                      onClick={() => void toggleReport()}
+                      className={`${ghost} ${reported ? 'bg-[var(--color-surface-light)]' : ''}`}
+                    >
+                      Signaler l&apos;image
+                    </button>
+                    {reportError && <p role="alert" className="mt-2 text-sm text-red-400 wrap-anywhere">{reportError}</p>}
+                  </div>
+                )}
               </>
             )}
           </div>

@@ -39,6 +39,9 @@ export function notificationView({ type, data }: Pick<Notification, 'type' | 'da
     case 'guild_invite': return { text: `${u} t'invite dans la guilde ${data.guild_name}`, href: '/guild' }
     case 'guild_kicked': return { text: `Tu ne fais plus partie de la guilde ${data.guild_name}`, href: '/guild' }
     case 'guild_donation': return { text: `${u} t'a donné la carte que tu demandais`, href: '/guild' }
+    // Cloche seulement : ni auction_voided ni trade_voided dans push_types (M6a).
+    case 'auction_voided': return { text: `La vente de ${c} a été annulée`, href: auction }
+    case 'trade_voided': return { text: 'Un échange a été annulé', href: trade }
     default: return { text: 'Nouvelle notification', href: null }
   }
 }
