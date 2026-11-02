@@ -23,6 +23,12 @@ const count = z.int().min(0)
 const Dashboard = z.strictObject({
   open_reports: count, image_reports: count, auto_hidden_cards: count, active_sanctions: count, removed_cards: count, auth_pending: count,
   health: z.object({}).loose(),
+  // Stripe (2320) : litiges ouverts, résiliations en attente, achats reçus sur un compte supprimé (crédit inerte).
+  stripe_disputes_open: count, stripe_pending: count, purchases_on_deleted: count,
+  stripe_disputes: z.array(z.strictObject({
+    id: z.string(), amount: z.int(), currency: z.string(), reason: z.string().nullable(), status: z.string(), created_at: Iso,
+  })),
+  stripe_pending_users: z.array(z.strictObject({ user_id: z.uuid(), username: z.string(), deleted_at: Iso })),
 })
 const AuditRow = z.strictObject({
   id: z.int().positive(), staff_id: z.uuid().nullable(), staff_username: z.string().nullable(), action: z.string(), target_type: z.string(),

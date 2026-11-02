@@ -1,6 +1,6 @@
 -- Socle Stripe (2300_wm_stripe_core.sql) : config shop, tables, drapeau stripe_pending posé à la suppression, shop_state,
--- stripe_checkout_prepare, stripe_customer_set, stripe_portal_prepare, grace_status, VIP = Pro (S:75) ; les tâches suivantes du M6b
--- ajoutent leurs blocs (stripe_apply…).
+-- stripe_checkout_prepare, stripe_customer_set, stripe_portal_prepare, grace_status, VIP = Pro (S:75) ; stripe_apply (2310) ; invariants,
+-- export, tableau de bord et résiliation (2320).
 -- Une seule transaction pour tout le fichier (now() figé) : chaque bloc crée ses joueurs et ne filtre que sur eux.
 -- check_invariants est global : une violation voulue se fait dans une sous-transaction annulée (WMT00, 27_market.test.sql:278-285) ; un
 -- abonnement active ou trialing posé à la main l'est sur un joueur is_pro (invariant stripe_pro, 2320).
@@ -74,6 +74,28 @@ do $$ begin
   assert (select array_agg(format('%s:%s:%s:%s', proname, prosecdef, provolatile, proconfig) order by proname)
     from pg_proc where pronamespace = 'wm'::regnamespace and proname in ('stripe_uid', 'stripe_apply'))
     = array['stripe_apply:t:v:{"search_path=\"\""}', 'stripe_uid:t:s:{"search_path=\"\""}'], 'réglages des fonctions';
+end $$;
+
+-- Rejeu de 2250, 2260 et 2240 suivi de 2320 (M5b-18), puis 2320 une seconde fois : les trois fonctions redéfinies retrouvent le corps de
+-- 2320 ; réglages des six fonctions de 2320.
+create temp table stripe_ops_src as select proname, md5(prosrc) h from pg_proc
+  where pronamespace = 'wm'::regnamespace and proname in ('check_invariants', 'account_export', 'staff_dashboard');
+\ir ../migrations/2250_wm_account_delete.sql
+\ir ../migrations/2260_wm_account_export.sql
+\ir ../migrations/2240_wm_guild_moderation.sql
+\ir ../migrations/2320_wm_stripe_ops.sql
+\ir ../migrations/2320_wm_stripe_ops.sql
+do $$ begin
+  assert (select count(*) from stripe_ops_src) = 3 and not exists (select from stripe_ops_src s join pg_proc p on p.proname = s.proname
+    and p.pronamespace = 'wm'::regnamespace where md5(p.prosrc) <> s.h), 'corps changé par le rejeu';
+  assert (select bool_and(strpos(prosrc, k) > 0) from pg_proc, unnest(array['stripe_purchase', 'stripe_pro']) k
+    where oid = to_regproc('wm.check_invariants')), 'check_invariants de 2320';
+  assert (select array_agg(format('%s:%s:%s:%s', proname, prosecdef, provolatile, proconfig) order by proname)
+    from pg_proc where pronamespace = 'wm'::regnamespace and proname in ('check_invariants', 'account_export', 'staff_dashboard',
+      'stripe_cancel_targets', 'stripe_cancel_done', 'admin_stripe_cancel'))
+    = array['account_export:t:v:{"search_path=\"\""}', 'admin_stripe_cancel:t:v:{"search_path=\"\""}',
+      'check_invariants:t:v:{"search_path=\"\""}', 'staff_dashboard:t:s:{"search_path=\"\""}',
+      'stripe_cancel_done:t:v:{"search_path=\"\""}', 'stripe_cancel_targets:t:s:{"search_path=\"\""}'], 'réglages des fonctions de 2320';
 end $$;
 
 -- Colonnes, contraintes et index (G27), définitions complètes.
@@ -651,6 +673,186 @@ do $$ declare bad text := tests.lock_timeout_violations(array['stripe_customer_s
   bad := tests.lock_timeout_violations(array['stripe_apply'], array['insert into wm.stripe_events', 'wm.lock_user(']);
   assert bad is null, 'lock_timeout absent ou tardif : ' || bad;
   assert strpos(s, 'insert into wm.stripe_events') between 1 and strpos(s, 'wm.lock_user(') - 1, 'stripe_events après le profil';
+end $$;
+
+-- ===== 2320 : invariants, export, tableau de bord, résiliation =====
+
+-- stripe_purchase (G25 a) : ligne stripe sans achat, achat sans ligne, montant différent ; chaque violation dans une sous-transaction
+-- annulée (WMT00), la liste entière comparée (les invariants sont vides avant).
+do $$ declare a uuid := tests.make_user('StrInvP'); d jsonb; begin
+  begin
+    perform wm.wallet_apply(a, 2500, 'stripe', 'stripe:cs_test_bench_x');
+    d := wm.check_invariants();
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d = jsonb_build_array(jsonb_build_object('check', 'stripe_purchase', 'ref', 'stripe:cs_test_bench_x', 'user_id', a,
+    'problem', 'no_purchase')), coalesce(d::text, 'aucune');
+  begin
+    insert into wm.purchases (session_id, user_id, item, amount, currency, wb) values ('cs_test_bench_nl', a, 'wb_2500', 499, 'cad', 2500);
+    d := wm.check_invariants();
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d = jsonb_build_array(jsonb_build_object('check', 'stripe_purchase', 'session_id', 'cs_test_bench_nl', 'user_id', a,
+    'problem', 'no_ledger')), coalesce(d::text, 'aucune');
+  begin
+    insert into wm.purchases (session_id, user_id, item, amount, currency, wb) values ('cs_test_bench_am', a, 'wb_2500', 499, 'cad', 100);
+    perform wm.wallet_apply(a, 2500, 'stripe', 'stripe:cs_test_bench_am');
+    d := wm.check_invariants();
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d = jsonb_build_array(jsonb_build_object('check', 'stripe_purchase', 'ref', 'stripe:cs_test_bench_am', 'user_id', a,
+    'problem', 'amount')), coalesce(d::text, 'aucune');
+  -- Une ligne stripe face à un achat pro_monthly de la même session n'est pas couverte.
+  begin
+    insert into wm.purchases (session_id, user_id, item, amount, currency, wb) values ('cs_test_bench_pm', a, 'pro_monthly', 999, 'cad', 0);
+    perform wm.wallet_apply(a, 2500, 'stripe', 'stripe:cs_test_bench_pm');
+    d := wm.check_invariants();
+    raise exception using errcode = 'WMT00';
+  exception when sqlstate 'WMT00' then null;
+  end;
+  assert d = jsonb_build_array(jsonb_build_object('check', 'stripe_purchase', 'ref', 'stripe:cs_test_bench_pm', 'user_id', a,
+    'problem', 'no_purchase')), coalesce(d::text, 'aucune');
+  perform pg_temp.inv('stripe_purchase');
+end $$;
+
+-- stripe_pro (G25 b) : abonnement active posé à la main sur un profil non Pro → une violation ; stripe_apply la répare.
+do $$ declare a uuid := tests.make_user('StrInvPro'); T bigint := extract(epoch from now())::bigint; P bigint := T + 30 * 86400; begin
+  perform pg_temp.sub('sub_bench_invpro', a, 'active', now() - interval '1 day');
+  assert wm.check_invariants() = jsonb_build_array(jsonb_build_object('check', 'stripe_pro', 'subscription_id', 'sub_bench_invpro',
+    'user_id', a)), wm.check_invariants()::text;
+  assert pg_temp.ap(pg_temp.ev('evt_bench_invpro', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_invpro', a, 'active', P)))
+    = 'applied' and pg_temp.pro(a), 'stripe_apply';
+  perform pg_temp.inv('stripe_pro');
+  -- trialing compte aussi ; past_due non.
+  update public.profiles set is_pro = false where id = a;
+  update wm.subscriptions set status = 'trialing' where id = 'sub_bench_invpro';
+  assert wm.check_invariants() = jsonb_build_array(jsonb_build_object('check', 'stripe_pro', 'subscription_id', 'sub_bench_invpro',
+    'user_id', a)), 'trialing';
+  update wm.subscriptions set status = 'past_due' where id = 'sub_bench_invpro';
+  perform pg_temp.inv('past_due');
+end $$;
+
+-- Export (G24) : Customer, abonnement, deux achats aux valeurs exactes ; aucun price_id ; joueur sans paiement.
+do $$ declare a uuid := tests.make_user('StrExp'); b uuid := tests.make_user('StrExpB'); T bigint := extract(epoch from now())::bigint;
+  P bigint := T + 30 * 86400; x jsonb; begin
+  assert pg_temp.ap(pg_temp.ev('evt_bench_e1', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_e1', a, 'payment'))) = 'applied';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_e2', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_e2', a, 'subscription')))
+    = 'applied';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_e3', 'customer.subscription.created', T, pg_temp.sub('sub_bench_e3', a, 'active', P, true)))
+    = 'applied';
+  x := wm.account_export(a);
+  assert x -> 'stripe_customer_id' = to_jsonb(pg_temp.cus(a)), 'stripe_customer_id';
+  assert x -> 'subscriptions' = jsonb_build_array(jsonb_build_object('id', 'sub_bench_e3', 'status', 'active',
+    'current_period_end', to_timestamp(P), 'cancel_at_period_end', true, 'cancel_at', to_timestamp(P), 'canceled_at', null,
+    'latest_invoice_status', null, 'updated_at', now())), x -> 'subscriptions';
+  assert x -> 'purchases' = jsonb_build_array(
+    jsonb_build_object('session_id', 'cs_test_bench_e1', 'item', 'wb_2500', 'amount', 499, 'currency', 'cad', 'consent', 'accepted',
+      'wb', 2500, 'created_at', now()),
+    jsonb_build_object('session_id', 'cs_test_bench_e2', 'item', 'pro_monthly', 'amount', 999, 'currency', 'cad', 'consent', 'accepted',
+      'wb', 0, 'created_at', now())), x -> 'purchases';
+  assert strpos(x::text, 'price_test_bench') = 0, 'price_id exporté';
+  x := wm.account_export(b);
+  assert x -> 'stripe_customer_id' = 'null' and x -> 'subscriptions' = '[]' and x -> 'purchases' = '[]', 'sans paiement';
+  perform pg_temp.inv('export');
+end $$;
+
+-- Tableau de bord (G8, G10, G38) : écarts sur un jeu construit (compteurs globaux) ; litige ouvert et fermé, pierre tombale stripe_pending,
+-- achat après la suppression (compté) et avant (non compté) ; 20 litiges ouverts au plus, les plus récents.
+do $$ declare st uuid := tests.make_user('StrDashM'); dl uuid := tests.make_user('StrDashD'); T bigint := extract(epoch from now())::bigint;
+  dp jsonb := jsonb_build_object('id', 'dp_bench_open', 'object', 'dispute', 'charge', 'ch_bench_open', 'amount', 499, 'currency', 'cad',
+    'reason', 'fraudulent', 'status', 'needs_response', 'created', T - 3600);
+  r0 jsonb; r jsonb; begin
+  insert into wm.staff (user_id, role) values (st, 'moderator');
+  r0 := wm.staff_dashboard(st);
+  assert pg_temp.ap(pg_temp.ev('evt_bench_dd1', 'charge.dispute.created', T, dp)) = 'applied', 'ouvert';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_dd2', 'charge.dispute.closed', T, dp || '{"id": "dp_bench_closed", "status": "won"}'))
+    = 'applied', 'fermé';
+  update public.profiles set is_pro = true where id = dl;
+  perform pg_temp.sub('sub_bench_dash', dl, 'active');
+  insert into wm.purchases (session_id, user_id, item, amount, currency, wb, created_at)
+  values ('cs_test_bench_dash_old', dl, 'pro_monthly', 999, 'cad', 0, now() - interval '1 day');
+  insert into wm.deleted_accounts (user_id) values (dl);
+  assert pg_temp.ap(pg_temp.ev('evt_bench_dd3', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_dash', dl, 'payment')))
+    = 'applied', 'achat sur pierre tombale';
+  r := wm.staff_dashboard(st);
+  assert (select array_agg(k order by k) from jsonb_object_keys(r) k) = array['active_sanctions', 'auth_pending', 'auto_hidden_cards',
+    'health', 'image_reports', 'open_reports', 'purchases_on_deleted', 'removed_cards', 'stripe_disputes', 'stripe_disputes_open',
+    'stripe_pending', 'stripe_pending_users'], 'clés';
+  assert jsonb_build_object('stripe_disputes_open', (r ->> 'stripe_disputes_open')::int - (r0 ->> 'stripe_disputes_open')::int,
+    'stripe_pending', (r ->> 'stripe_pending')::int - (r0 ->> 'stripe_pending')::int,
+    'purchases_on_deleted', (r ->> 'purchases_on_deleted')::int - (r0 ->> 'purchases_on_deleted')::int)
+    = '{"stripe_disputes_open": 1, "stripe_pending": 1, "purchases_on_deleted": 1}', r::text;
+  assert r -> 'stripe_disputes' @> jsonb_build_array(jsonb_build_object('id', 'dp_bench_open', 'amount', 499, 'currency', 'cad',
+    'reason', 'fraudulent', 'status', 'needs_response', 'created_at', to_timestamp(T - 3600))), 'litige ouvert listé';
+  assert (select count(*) from jsonb_array_elements(r -> 'stripe_disputes') e where e ->> 'id' = 'dp_bench_open') = 1
+    and not exists (select from jsonb_array_elements(r -> 'stripe_disputes') e where e ->> 'id' = 'dp_bench_closed'), 'litige fermé listé';
+  assert r -> 'stripe_pending_users' @> jsonb_build_array(jsonb_build_object('user_id', dl,
+    'username', (select username from public.profiles where id = dl), 'deleted_at', now())), 'pierre tombale listée';
+  insert into wm.stripe_disputes (id, amount, currency, status, created_at, event_created)
+  select 'dp_bench_many_' || lpad(i::text, 2, '0'), 1, 'cad', 'needs_response', now() - make_interval(secs => i), now()
+  from generate_series(1, 21) i;
+  assert (select array_agg(e ->> 'id') from jsonb_array_elements(wm.staff_dashboard(st) -> 'stripe_disputes') e)
+    = (select array_agg('dp_bench_many_' || lpad(i::text, 2, '0') order by i) from generate_series(1, 20) i), 'les 20 plus récents';
+  perform pg_temp.inv('tableau de bord');
+end $$;
+
+-- Résiliation (G10, G35) : cibles non terminales ; admin_stripe_cancel (chemin staff du M6a, P6a:35) ; stripe_cancel_done.
+do $$ declare ad uuid := tests.make_user('StrCanA'); mo uuid := tests.make_user('StrCanM'); d uuid := tests.make_user('StrCanD');
+  d2 uuid := tests.make_user('StrCanD2'); c uuid := tests.make_user('StrCanC'); n uuid := tests.make_user('StrCanN');
+  q text := 'select wm.admin_stripe_cancel(%L, %L, %L)'; r jsonb; e jsonb;
+  none jsonb := '{"status":409,"error":"Aucune résiliation en attente","message":"Aucune résiliation en attente"}'; begin
+  insert into wm.staff (user_id, role) values (ad, 'admin'), (mo, 'moderator');
+  update public.profiles set is_pro = true where id in (d, d2);
+  perform pg_temp.sub('sub_bench_cx_1', d, 'active');
+  perform pg_temp.sub('sub_bench_cx_0', d, 'canceled');
+  perform pg_temp.sub('sub_bench_cx_c', c, 'canceled');
+  insert into wm.deleted_accounts (user_id) values (d), (c);
+  assert wm.stripe_cancel_targets(d) = '{"subscription_ids": ["sub_bench_cx_1"]}', 'cibles';
+  assert wm.stripe_cancel_targets(c) = '{"subscription_ids": []}', 'canceled seul';
+  -- Modérateur : 403 sans audit ; motif trop court : 400 ; rien en attente (pas de pierre tombale, ou drapeau faux) : 409.
+  e := pg_temp.err(format(q, mo, d, 'Résiliation'));
+  assert e = '{"status":403,"code":"FORBIDDEN","error":"Action réservée aux administrateurs","message":"Action réservée aux administrateurs"}',
+    coalesce(e::text, 'acceptée');
+  e := pg_temp.err(format(q, ad, d, 'ab'));
+  assert e = '{"status":400,"code":"invalid_request","error":"Le motif est obligatoire (3 à 500 caractères)","message":"Le motif est obligatoire (3 à 500 caractères)"}',
+    coalesce(e::text, 'acceptée');
+  assert pg_temp.err(format(q, ad, n, 'Résiliation')) = none, 'sans pierre tombale';
+  assert pg_temp.err(format(q, ad, c, 'Résiliation')) = none, 'drapeau faux';
+  assert not exists (select from wm.staff_actions where target_id in (d::text, c::text, n::text)), 'audit d''un refus';
+  -- Succès, même clé deux fois : même corps, une ligne d'audit.
+  r := wm.admin_stripe_cancel(ad, d, '  Résiliation après suppression  ', 'idem-stripe-cancel');
+  assert r = jsonb_build_object('stripe', jsonb_build_object('user_id', d, 'subscription_ids', jsonb_build_array('sub_bench_cx_1'))), r::text;
+  assert wm.admin_stripe_cancel(ad, d, 'Résiliation après suppression', 'idem-stripe-cancel') = r, 'rejeu par clé';
+  assert (select jsonb_agg(jsonb_build_object('staff_id', staff_id, 'action', action, 'target_type', target_type, 'reason', reason,
+    'payload', payload)) from wm.staff_actions where target_id = d::text) = jsonb_build_array(jsonb_build_object('staff_id', ad,
+    'action', 'stripe_cancel', 'target_type', 'user', 'reason', 'Résiliation après suppression',
+    'payload', '{"subscription_ids": ["sub_bench_cx_1"]}'::jsonb)), 'une ligne d''audit';
+  assert (select stripe_pending from wm.deleted_accounts where user_id = d), 'admin_stripe_cancel n''écrit pas le drapeau';
+  -- Résiliation réussie : drapeau levé.
+  assert wm.stripe_cancel_done(d, array['sub_bench_cx_1']) = '{"ok": true, "stripe_pending": false}', 'done';
+  assert not (select stripe_pending from wm.deleted_accounts where user_id = d), 'drapeau levé';
+  assert pg_temp.err(format(q, ad, d, 'Résiliation')) = none, 'plus rien en attente';
+  -- Review Focus, abonné supprimé : un second abonnement créé entre les cibles et la fin garde le drapeau ; ids nuls aussi.
+  perform pg_temp.sub('sub_bench_cx_3', d2, 'active');
+  insert into wm.deleted_accounts (user_id) values (d2);
+  assert wm.stripe_cancel_targets(d2) = '{"subscription_ids": ["sub_bench_cx_3"]}', 'cibles d2';
+  perform pg_temp.sub('sub_bench_cx_4', d2, 'active');
+  assert wm.stripe_cancel_done(d2, array['sub_bench_cx_3']) = '{"ok": true, "stripe_pending": true}', 'second abonnement';
+  assert (select stripe_pending from wm.deleted_accounts where user_id = d2), 'drapeau gardé';
+  assert wm.stripe_cancel_done(d2, null) = '{"ok": true, "stripe_pending": true}', 'ids nuls';
+  assert wm.stripe_cancel_done(d2, array['sub_bench_cx_3', 'sub_bench_cx_4']) = '{"ok": true, "stripe_pending": false}', 'les deux';
+  assert wm.stripe_cancel_done(n, array['sub_bench_cx_3']) = '{"ok": true, "stripe_pending": false}', 'sans pierre tombale';
+  assert not exists (select from wm.deleted_accounts where user_id = n), 'aucune pierre tombale créée';
+  perform pg_temp.inv('résiliation');
+end $$;
+
+-- lock_timeout avant le premier verrou (P5).
+do $$ declare bad text := tests.lock_timeout_violations(array['stripe_cancel_done', 'admin_stripe_cancel'],
+  array['update wm.deleted_accounts', 'for update']); begin
+  assert bad is null, 'lock_timeout absent ou tardif : ' || bad;
 end $$;
 
 select pg_temp.inv('fin de 40');

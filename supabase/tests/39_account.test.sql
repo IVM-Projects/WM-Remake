@@ -3,9 +3,11 @@
 -- Une seule transaction pour tout le fichier (now() figé) : chaque bloc crée ses joueurs et ne filtre que sur eux.
 -- check_invariants est global : une violation voulue se fait dans une sous-transaction annulée (WMT00, 27_market.test.sql:278-285).
 
--- Rejeu de 2250 : la migration passe une seconde fois sur la base déjà migrée.
+-- Rejeu de 2250 et 2260 : les migrations passent une seconde fois sur la base déjà migrée ; suivies de 2320, qui redéfinit
+-- check_invariants et account_export (M5b-18).
 \ir ../migrations/2250_wm_account_delete.sql
 \ir ../migrations/2260_wm_account_export.sql
+\ir ../migrations/2320_wm_stripe_ops.sql
 
 create function pg_temp.inv(p_label text) returns void language plpgsql as $$ begin
   assert wm.check_invariants() = '[]'::jsonb, p_label || ' : ' || wm.check_invariants()::text;
@@ -508,7 +510,7 @@ do $$ declare
   k text[] := array['format', 'version', 'generated_at', 'account', 'state', 'stats', 'preferences', 'notification_prefs', 'push_subscriptions',
     'notifications', 'cards', 'tags', 'wishlist', 'showcase', 'ledger', 'auctions_sold', 'bids', 'trades', 'friends', 'messages',
     'reports_filed', 'battles', 'guild', 'achievements', 'pro_daily_claims', 'special_pack_claims', 'grace_grants', 'sanctions',
-    'image_reports', 'staff_role'];
+    'image_reports', 'staff_role', 'stripe_customer_id', 'subscriptions', 'purchases'];
 begin
   uc1 := pg_temp.copy(p, c); uc2 := pg_temp.copy(p, c2); fc := pg_temp.copy(f, c);
   insert into public.tags (user_id, name) values (p, 'Zeta') returning id into tg;

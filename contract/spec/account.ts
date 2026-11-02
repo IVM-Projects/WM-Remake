@@ -15,10 +15,11 @@ const UNAUTHORIZED = 'Session expirée, reconnecte-toi.'
 const EXPORT = '/api/settings/export'
 const DELETE = '/api/settings/delete-account'
 
-// Clés de premier niveau de wm.account_export (Task 7, 2260).
+// Clés de premier niveau de wm.account_export (Task 7, 2260 ; paiements Stripe, 2320).
 const EXPORT_KEYS = ['account', 'achievements', 'auctions_sold', 'battles', 'bids', 'cards', 'format', 'friends', 'generated_at', 'grace_grants',
-  'guild', 'image_reports', 'ledger', 'messages', 'notification_prefs', 'notifications', 'preferences', 'pro_daily_claims', 'push_subscriptions',
-  'reports_filed', 'sanctions', 'showcase', 'special_pack_claims', 'staff_role', 'state', 'stats', 'tags', 'trades', 'version', 'wishlist']
+  'guild', 'image_reports', 'ledger', 'messages', 'notification_prefs', 'notifications', 'preferences', 'pro_daily_claims', 'purchases',
+  'push_subscriptions', 'reports_filed', 'sanctions', 'showcase', 'special_pack_claims', 'staff_role', 'state', 'stats', 'stripe_customer_id',
+  'subscriptions', 'tags', 'trades', 'version', 'wishlist']
 
 // Clés des abonnements push jamais exportées (G10), cherchées à toute profondeur.
 const PUSH_SECRETS = new Set(['p256dh', 'auth'])
