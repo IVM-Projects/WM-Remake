@@ -1,6 +1,7 @@
 // Banc de contrat : PG local (db-test.sh) + PostgREST + Mailpit + GoTrue + passerelle imitant Supabase + `next start`.
 // Lancé aussi par `node contract/serve.ts` : imports relatifs en .ts seulement, aucun alias @/.
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request, type Server } from 'node:http'
@@ -30,6 +31,31 @@ const VAPID_PRIVATE = webpush.generateVAPIDKeys().privateKey
 
 // Vérificateur Turnstile du banc (POST /turnstile/siteverify) : seul ce couple est accepté.
 const TURNSTILE = { secret: 'test-turnstile', response: 'dev-bypass' }
+
+// Faux Stripe du banc (G36) : valeurs factices, la clé de test fait suivre STRIPE_API_URL (lib/stripe.ts).
+export const STRIPE = { key: 'sk_test_bench_fake', webhookSecret: 'whsec_test_bench_fake', pricePro: 'price_test_bench_pro', priceWb: 'price_test_bench_wb' }
+export type StripeRequest = { method: string; path: string; form: Record<string, string>; idempotency_key: string | null; stripe_version: string | null }
+export const stripeRequests = async (env: { backend: Pick<Backend, 'supabaseUrl'> }): Promise<StripeRequest[]> =>
+  (await fetch(`${env.backend.supabaseUrl}/stripe/requests`)).json() as Promise<StripeRequest[]>
+export const resetStripeRequests = async (env: { backend: Pick<Backend, 'supabaseUrl'> }): Promise<void> =>
+  void (await fetch(`${env.backend.supabaseUrl}/stripe/requests`, { method: 'DELETE' }))
+// Ids neufs à chaque appel, jamais un compteur : une base de banc réutilisée garde les ids d'un run précédent (C8).
+const benchId = () => randomUUID().replaceAll('-', '')
+
+function fakeStripe(method: string, path: string): { status: number; body: unknown } {
+  const h = benchId()
+  if (method === 'POST' && path === '/v1/customers') return { status: 200, body: { id: `cus_bench_${h}`, object: 'customer' } }
+  if (method === 'POST' && path === '/v1/checkout/sessions') {
+    return { status: 200, body: { id: `cs_test_bench_${h}`, object: 'checkout.session', url: `https://checkout.stripe.com/c/pay/cs_test_bench_${h}` } }
+  }
+  if (method === 'POST' && path === '/v1/billing_portal/sessions') {
+    return { status: 200, body: { id: `bps_bench_${h}`, object: 'billing_portal.session', url: `https://billing.stripe.com/p/session/test_bench_${h}` } }
+  }
+  const sub = method === 'DELETE' && /^\/v1\/subscriptions\/([\w-]+)$/.exec(path)
+  if (sub && sub[1].startsWith('sub_bench_fail')) return { status: 500, body: { error: { type: 'api_error', message: 'bench' } } }
+  if (sub) return { status: 200, body: { id: sub[1], object: 'subscription', status: 'canceled' } }
+  return { status: 404, body: { error: { type: 'invalid_request_error', message: 'bench' } } }
+}
 
 export type Backend = {
   supabaseUrl: typeof SUPABASE_URL
@@ -95,6 +121,7 @@ const UPSTREAMS = [['/rest/v1', POSTGREST_PORT], ['/auth/v1', GOTRUE_PORT]] as c
 
 function gateway(privateJwk: JsonWebKey): Server {
   const deliveries = new Map<string, { headers: unknown; body_b64: string }[]>()
+  const stripeLog: StripeRequest[] = []
   return createServer((req, res) => {
     const json = (status: number, body: unknown) => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
     const url = req.url ?? '/'
@@ -112,6 +139,26 @@ function gateway(privateJwk: JsonWebKey): Server {
         const form = new URLSearchParams(body)
         const ok = form.get('secret') === TURNSTILE.secret && form.get('response') === TURNSTILE.response
         json(200, ok ? { success: true } : { success: false, 'error-codes': ['invalid-input-response'] })
+      })
+    }
+    if (url === '/stripe/requests' && req.method === 'GET') return json(200, stripeLog)
+    if (url === '/stripe/requests' && req.method === 'DELETE') {
+      stripeLog.length = 0
+      return void res.writeHead(204).end()
+    }
+    if (url.startsWith('/v1/')) {
+      let body = ''
+      req.setEncoding('utf8').on('data', (chunk: string) => (body += chunk))
+      return void req.on('end', () => {
+        // Paramètres d'un GET ou d'un DELETE dans la requête, d'un POST dans le corps (formulaire, comme le SDK).
+        const [path, query = ''] = url.split('?')
+        const header = (name: string) => (typeof req.headers[name] === 'string' ? req.headers[name] : null)
+        stripeLog.push({
+          method: req.method ?? '', path, form: Object.fromEntries(new URLSearchParams(body || query)),
+          idempotency_key: header('idempotency-key'), stripe_version: header('stripe-version'),
+        })
+        const out = fakeStripe(req.method ?? '', path)
+        json(out.status, out.body)
       })
     }
     // Faux service de push : enregistre sans déchiffrer, la spec déchiffre (contract/push-crypto.ts).
@@ -265,6 +312,11 @@ export async function startNext(name: 'plain' | 'gated', backend: Backend): Prom
     CRON_SECRET,
     VAPID_PRIVATE,
     VAPID_SUBJECT: 'mailto:push@example.invalid',
+    STRIPE_SECRET_KEY: STRIPE.key,
+    STRIPE_WEBHOOK_SECRET: STRIPE.webhookSecret,
+    STRIPE_PRICE_PRO_MONTHLY: STRIPE.pricePro,
+    STRIPE_PRICE_WB_2500: STRIPE.priceWb,
+    STRIPE_API_URL: backend.supabaseUrl,
   })
   const stop = () => kill(child)
   try {

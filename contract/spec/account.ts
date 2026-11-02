@@ -131,6 +131,8 @@ export const account: RouteSpec[] = [
             const d = await gotrueUser(env, created)
             const x = await gotrueUser(env, created) // témoin : son journal GoTrue ne bouge pas
             const [m, e, h, f] = [makeUser(db(env), { balance: 1000, humanVerified: true }), makeUser(db(env)), makeUser(db(env)), makeUser(db(env))]
+            // Supprimés aussi : la bataille de F part avec D, sa ligne battle: resterait orpheline (battle_money des specs suivantes).
+            created.push(m.uid, e.uid, h.uid, f.uid)
             const [sold, offered] = giveCards(db(env), d.uid, 'C', 2)
             const eCopy = giveCards(db(env), e.uid, 'C')[0]
             const auction = listed(env, d.uid, sold)
