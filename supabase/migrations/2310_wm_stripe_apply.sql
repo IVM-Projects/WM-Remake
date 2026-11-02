@@ -12,10 +12,12 @@
 --   | customer.subscription.created/updated/     | metadata.uid, puis stripe_customers     | upsert subscriptions gardé (G5, G44) ; is_pro        | applied / stale /
 --   | deleted                                    |                                         | recalculé (G4) → pro_started / pro_ended ;           | unresolved
 --   |                                            |                                         | pierre tombale : stripe_pending recalculé (G35)      |
---   | invoice.paid, invoice.payment_failed       | parent.subscription_details.metadata    | latest_invoice_status/at de l'abonnement s'il existe | applied / unresolved
---   |                                            | .uid, puis stripe_customers             | et si plus récent ; échec → pro_payment_failed       |
+--   | invoice.paid, invoice.payment_failed       | propriétaire de l'abonnement connu,     | latest_invoice_status/at de l'abonnement s'il existe | applied / unresolved
+--   |                                            | parent.subscription_details.metadata    | et si plus récent (à égalité, un échec ne remplace   |
+--   |                                            | .uid, puis stripe_customers             | pas paid) ; échec écrit → pro_payment_failed         |
 --   | charge.dispute.created, .closed            | aucun                                   | upsert stripe_disputes gardé par t >= event_created  | applied
---   | autre, livemode vrai, objet sans id valide | —                                       | rien (D:104 : test seulement)                        | ignored
+--   | autre, livemode vrai, objet sans id valide,| —                                       | rien (D:104 : test seulement)                        | ignored
+--   | abonnement de statut nul ou inconnu        |                                         |                                                      |
 -- G5 : la ligne wm.subscriptions est l'instantané du dernier événement appliqué ; aucun appel API ; fin de période = items.data[0].
 -- G44 : t > event_created remplace ; t < event_created jamais (stale) ; à égalité, remplace sauf si le statut stocké est terminal
 -- (canceled, incomplete_expired) ou si le statut reçu est incomplete sur un autre statut stocké (created/updated d'un même Checkout dans la
@@ -107,7 +109,8 @@ begin
     end if;
 
   elsif v_type in ('customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted')
-      and o ->> 'id' like 'sub\_%' then
+      and o ->> 'id' like 'sub\_%'
+      and o ->> 'status' in ('active', 'canceled', 'incomplete', 'incomplete_expired', 'past_due', 'paused', 'trialing', 'unpaid') then
     -- Le propriétaire d'une ligne connue ne change pas (user_id jamais réécrit) : un metadata.uid retouché ne déplace pas l'abonnement.
     v_uid := coalesce((select user_id from wm.subscriptions where id = o ->> 'id'),
       wm.stripe_uid(array[o -> 'metadata' ->> 'uid'], o ->> 'customer'));
@@ -148,17 +151,22 @@ begin
     end if;
 
   elsif v_type in ('invoice.paid', 'invoice.payment_failed') then
-    v_uid := wm.stripe_uid(array[o -> 'parent' -> 'subscription_details' -> 'metadata' ->> 'uid'], o ->> 'customer');
+    -- Comme pour les abonnements : le propriétaire de la ligne connue d'abord.
+    v_uid := coalesce((select user_id from wm.subscriptions where id = o -> 'parent' -> 'subscription_details' ->> 'subscription'),
+      wm.stripe_uid(array[o -> 'parent' -> 'subscription_details' -> 'metadata' ->> 'uid'], o ->> 'customer'));
     if v_uid is null then
       v_outcome := 'unresolved';
     else
       perform wm.lock_user(v_uid);
       v_tomb := exists (select from wm.deleted_accounts where user_id = v_uid);
-      -- À égalité de date (paiement réussi d'une facture qui avait échoué : même invoice.created), le dernier reçu l'emporte.
+      -- À égalité de date (même facture : invoice.created ne bouge pas entre un échec et sa relance payée), un échec ne remplace
+      -- jamais paid ; sinon le dernier reçu l'emporte.
       update wm.subscriptions set latest_invoice_status = case v_type when 'invoice.paid' then 'paid' else 'payment_failed' end,
         latest_invoice_at = to_timestamp((o ->> 'created')::bigint), updated_at = now()
       where id = o -> 'parent' -> 'subscription_details' ->> 'subscription' and user_id = v_uid
-        and (latest_invoice_at is null or latest_invoice_at <= to_timestamp((o ->> 'created')::bigint));
+        and (latest_invoice_at is null or latest_invoice_at < to_timestamp((o ->> 'created')::bigint)
+          or (latest_invoice_at = to_timestamp((o ->> 'created')::bigint)
+            and not (latest_invoice_status = 'paid' and v_type = 'invoice.payment_failed')));
       if found and v_type = 'invoice.payment_failed' and not v_tomb then
         insert into public.notifications (user_id, type, data) values (v_uid, 'pro_payment_failed',
           jsonb_build_object('subscription_id', o -> 'parent' -> 'subscription_details' ->> 'subscription', 'invoice_id', o ->> 'id'));

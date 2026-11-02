@@ -482,6 +482,12 @@ do $$ declare a uuid := tests.make_user('StrApI'); T bigint := extract(epoch fro
   assert pg_temp.ap('{"id": "evt_bench_i3", "type": "checkout.session.completed", "created": 1}') = 'ignored', 'sans objet';
   assert pg_temp.ap(pg_temp.ev('evt_bench_i4', 'customer.subscription.updated', T, '{}')) = 'ignored', 'abonnement sans id';
   assert pg_temp.ap(pg_temp.ev('evt_bench_i5', 'charge.dispute.created', T, '{}')) = 'ignored', 'litige sans id';
+  -- Statut d'abonnement nul ou hors des huit valeurs : ignoré, aucune ligne.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_i6', 'customer.subscription.created', T, pg_temp.sub('sub_bench_i6', a, null, T)))
+    = 'ignored', 'statut nul';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_i7', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_i6', a, 'bogus', T)))
+    = 'ignored', 'statut inconnu';
+  assert not exists (select from wm.subscriptions where id = 'sub_bench_i6'), 'aucune ligne';
   perform pg_temp.inv('objet incomplet');
 end $$;
 
@@ -516,7 +522,7 @@ do $$ declare a uuid := tests.make_user('StrUidA'); b uuid := tests.make_user('S
 end $$;
 
 -- Factures (G29, C5) : latest_invoice_* de l'abonnement s'il existe et si plus récent ; échec → pro_payment_failed.
-do $$ declare a uuid := tests.make_user('StrInv'); T bigint := extract(epoch from now())::bigint; P bigint := T + 30 * 86400; i jsonb;
+do $$ declare a uuid := tests.make_user('StrInv'); b uuid := tests.make_user('StrInvB'); T bigint := extract(epoch from now())::bigint; P bigint := T + 30 * 86400; i jsonb;
   begin
   assert pg_temp.ap(pg_temp.ev('evt_bench_f0', 'customer.subscription.created', T, pg_temp.sub('sub_bench_1', a, 'active', P))) = 'applied';
   i := jsonb_build_object('id', 'in_bench_1', 'object', 'invoice', 'customer', pg_temp.cus(a), 'created', T, 'parent',
@@ -540,8 +546,20 @@ do $$ declare a uuid := tests.make_user('StrInv'); T bigint := extract(epoch fro
   assert pg_temp.ap(pg_temp.ev('evt_bench_f4', 'invoice.payment_failed', T + 107, jsonb_set(i, '{parent,subscription_details,subscription}',
     '"sub_bench_inconnu"'))) = 'applied', 'abonnement inconnu';
   assert pg_temp.n(a, 'pro_payment_failed') = 1 and not exists (select from wm.subscriptions where id = 'sub_bench_inconnu'), 'rien écrit';
-  assert pg_temp.ap(pg_temp.ev('evt_bench_f5', 'invoice.paid', T + 108, jsonb_set(jsonb_set(i, '{parent,subscription_details,metadata,uid}',
-    to_jsonb(gen_random_uuid())), '{customer}', '"cus_bench_inconnu"'))) = 'unresolved', 'facture introuvable';
+  -- Même facture, même created : un échec reçu après paid ne le remplace pas et ne notifie pas.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f6', 'invoice.payment_failed', T + 109, i || jsonb_build_object('id', 'in_bench_2', 'created', T + 100)))
+    = 'applied', 'échec à égalité';
+  assert (select latest_invoice_status = 'paid' and latest_invoice_at = to_timestamp(T + 100) from wm.subscriptions where id = 'sub_bench_1')
+    and pg_temp.n(a, 'pro_payment_failed') = 1, 'paid gardé à égalité';
+  -- metadata.uid d'un autre joueur : la ligne et la notification restent au propriétaire de l'abonnement.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f7', 'invoice.payment_failed', T + 205, jsonb_set(i, '{parent,subscription_details,metadata,uid}',
+    to_jsonb(b)) || jsonb_build_object('id', 'in_bench_3', 'created', T + 200))) = 'applied', 'uid d''un autre';
+  assert (select latest_invoice_status = 'payment_failed' and latest_invoice_at = to_timestamp(T + 200) from wm.subscriptions
+    where id = 'sub_bench_1') and pg_temp.n(a, 'pro_payment_failed') = 2 and pg_temp.n(b, 'pro_payment_failed') = 0, 'propriétaire gardé';
+  -- Abonnement inconnu, uid inexistant, Customer inconnu : introuvable.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f5', 'invoice.paid', T + 108, jsonb_set(jsonb_set(jsonb_set(i,
+    '{parent,subscription_details,metadata,uid}', to_jsonb(gen_random_uuid())), '{customer}', '"cus_bench_inconnu"'),
+    '{parent,subscription_details,subscription}', '"sub_bench_inconnu"'))) = 'unresolved', 'facture introuvable';
   perform pg_temp.inv('factures');
 end $$;
 
@@ -557,6 +575,7 @@ do $$ declare T bigint := extract(epoch from now())::bigint; dp jsonb := jsonb_b
   assert pg_temp.ap(pg_temp.ev('evt_bench_d3', 'charge.dispute.created', T + 10, dp)) = 'applied', 'created ancien';
   assert (select status = 'lost' and event_created = to_timestamp(T + 50) from wm.stripe_disputes where id = 'dp_bench_1'), 'garde';
   assert (select count(*) from wm.stripe_disputes where id = 'dp_bench_1') = 1, 'une ligne';
+  perform pg_temp.inv('litiges');
 end $$;
 
 -- Ignorés (G29, D:104) : type inconnu consigné ; livemode vrai sans effet.
