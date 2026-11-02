@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
+import { resetStripeRequests, stripeRequests } from '../harness.ts'
 import { api, authCookie, created, failed, giveCards, idem, Iso, makeUser, noSession, ok, psql, refused, send } from '../users.ts'
 import { Card } from './catalog.ts'
 import { guildWith } from './guilds.ts'
@@ -18,6 +19,7 @@ const Sanction = z.strictObject({
 const AuthState = z.strictObject({ user_id: z.uuid(), deleted: z.boolean(), forever: z.boolean(), ban_until: Iso.nullable() })
 const Sanctioned = z.strictObject({ sanction: Sanction, auth: AuthState, auth_synced: z.boolean() })
 const Synced = z.strictObject({ auth: AuthState, auth_synced: z.boolean() })
+const StripeSynced = z.strictObject({ stripe: z.strictObject({ user_id: z.uuid(), subscription_ids: z.array(z.string()) }), stripe_synced: z.boolean() })
 const Me = z.strictObject({ role: Role.nullable() })
 const count = z.int().min(0)
 const Dashboard = z.strictObject({
@@ -317,6 +319,72 @@ export const admin: RouteSpec[] = [
         assert.deepEqual([s.auth.forever, s.auth_synced], [true, true])
         assert.notEqual(bannedUntil(env, p.uid), '')
         await refused(await post(env, `/users/${p.uid}/auth-sync`, mod.uid, { reason: 'Session à resynchroniser' }), 403, ADMIN_ONLY, 'FORBIDDEN')
+      },
+    },
+  ], { reason: REASON }),
+  spec('POST', '/users/{userId}/stripe-cancel', [
+    {
+      name: 'Review Focus — « Résilier » : sa pierre tombale en attente (Stripe en panne), 200 stripe_synced faux, toujours en attente ; '
+        + 'abonnement suivant résilié → stripe_synced vrai, plus en attente, un audit par appel, rejeu identique ; modérateur 403, '
+        + 'sans attente 409, motif \'ab\' 400 ; ligne JSON de route() masquée',
+      timeout: 60_000,
+      run: async (env) => {
+        const [boss, mod] = [staffOf(env, 'admin'), staffOf(env, 'moderator')]
+        const d = makeUser(db(env), { pro: true, humanVerified: true }) // Pro : hygiène stripe_pro
+        try {
+          const hex = () => randomUUID().replaceAll('-', '')
+          const [fail, okSub] = [`sub_bench_fail_${hex()}`, `sub_bench_ok_${hex()}`]
+          const subscription = (id: string) => sql(env, `insert into wm.subscriptions (id, user_id, customer_id, status, event_created)
+values (:'s', :'u', 'cus_bench_' || :'h', 'active', now())`, { s: id, u: d.uid, h: hex() })
+          subscription(fail)
+          const deleted = await ok(await send(env, 'POST', '/api/settings/delete-account', d.uid, { username: d.username }, idem()),
+            z.object({ stripe_pending: z.boolean() }).loose())
+          assert.equal(deleted.stripe_pending, true)
+          const pending = () => sql(env, `select stripe_pending from wm.deleted_accounts where user_id = :'u'`, { u: d.uid })
+          const listed = async () => (await ok(await get(env, '/dashboard', boss.uid), Dashboard)).stripe_pending_users.some((u) => u.user_id === d.uid)
+          assert.equal(pending(), 't')
+          assert.equal(await listed(), true)
+          const cancel = (uid: string, body: unknown = { reason: 'Résiliation à rejouer' }, headers: Record<string, string> = idem()) =>
+            post(env, `/users/${d.uid}/stripe-cancel`, uid, body, headers)
+
+          await resetStripeRequests(env)
+          const vercelId = randomUUID()
+          assert.deepEqual(await ok(await cancel(boss.uid, undefined, { ...idem(), 'x-vercel-id': vercelId }), StripeSynced),
+            { stripe: { user_id: d.uid, subscription_ids: [fail] }, stripe_synced: false })
+          assert.ok((await stripeRequests(env)).every((r) => r.method === 'DELETE' && r.path === `/v1/subscriptions/${fail}`))
+          assert.equal(pending(), 't')
+          assert.equal(await listed(), true)
+          const log = readFileSync(new URL('../../.cache/logs/next-plain.log', import.meta.url), 'utf8')
+          const line = log.split('\n').find((l) => l.includes(vercelId))
+          assert.ok(line)
+          const entry = JSON.parse(line) as Record<string, unknown>
+          assert.deepEqual([entry.route, entry.status, entry.rpc], ['/api/admin/users/[userId]/stripe-cancel', 200, 'admin_stripe_cancel'])
+          for (const secret of [d.uid, boss.uid, fail]) assert.ok(!line.includes(secret), secret)
+
+          sql(env, `update wm.subscriptions set status = 'canceled' where id = :'s'`, { s: fail })
+          subscription(okSub)
+          await resetStripeRequests(env)
+          const key = idem()
+          const synced = await ok(await cancel(boss.uid, undefined, key), StripeSynced)
+          assert.deepEqual(synced, { stripe: { user_id: d.uid, subscription_ids: [okSub] }, stripe_synced: true })
+          assert.deepEqual((await stripeRequests(env)).map((r) => [r.method, r.path]), [['DELETE', `/v1/subscriptions/${okSub}`]])
+          assert.equal(pending(), 'f')
+          assert.equal(await listed(), false)
+          assert.deepEqual(await ok(await cancel(boss.uid, undefined, key), StripeSynced), synced)
+          const audits = () => sql(env, `select string_agg(payload ->> 'subscription_ids', ' ' order by id) from wm.staff_actions
+where action = 'stripe_cancel' and target_type = 'user' and target_id = :'u' and staff_id = :'s'`, { u: d.uid, s: boss.uid })
+          assert.equal(audits(), `["${fail}"] ["${okSub}"]`)
+
+          await refused(await cancel(mod.uid), 403, ADMIN_ONLY, 'FORBIDDEN')
+          await refused(await cancel(boss.uid), 409, 'Aucune résiliation en attente')
+          await refused(await post(env, `/users/${player(env).uid}/stripe-cancel`, boss.uid, { reason: 'Résiliation à rejouer' }), 409,
+            'Aucune résiliation en attente')
+          await refused(await cancel(boss.uid, { reason: 'ab' }), 400, 'Le motif est obligatoire (3 à 500 caractères)', 'invalid_request')
+          assert.equal(audits(), `["${fail}"] ["${okSub}"]`)
+          assert.equal(sql(env, `select wm.check_invariants()`), '[]')
+        } finally {
+          sql(env, `select set_config('wm.allow_tombstone_delete', 'on', false); delete from auth.users where id = :'u'`, { u: d.uid })
+        }
       },
     },
   ], { reason: REASON }),

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ContractEnv, RouteSpec } from '../../lib/contract.ts'
-import { SECRET_KEY } from '../harness.ts'
+import { resetStripeRequests, SECRET_KEY, stripeRequests } from '../harness.ts'
 import { forbiddenKeys } from '../leak.ts'
 import { api, failed, giveCards, idem, makeUser, noSession, ok, psql, refused, send } from '../users.ts'
 import { befriend } from './friends.ts'
@@ -38,7 +38,7 @@ function pushSecretPaths(body: unknown): string[] {
 
 const Deleted = z.strictObject({
   ok: z.literal(true), voided_auctions: z.int(), cancelled_trades: z.int(), finished_battles: z.int(), cancelled_battles: z.int(),
-  guild: z.enum(['left', 'transferred', 'dissolved']).nullable(), auth_pending: z.boolean(),
+  guild: z.enum(['left', 'transferred', 'dissolved']).nullable(), auth_pending: z.boolean(), stripe_pending: z.boolean(),
 })
 
 // Connexion GoTrue par mot de passe (comme supabase-js), via la passerelle.
@@ -64,6 +64,20 @@ async function gotrueUser(env: ContractEnv, created: string[], email = `${random
 on conflict (user_id) do update set human_verified_until = excluded.human_verified_until`, { u: uid })
   return { uid, username, email, password }
 }
+
+// Abonné (Task 8) : joueur Pro (hygiène stripe_pro) avec un abonnement active posé par psql ; renvoie l'id de l'abonnement.
+function subscribe(env: ContractEnv, uid: string, outcome: 'ok' | 'fail'): string {
+  const sub = `sub_bench_${outcome}_${randomUUID().replaceAll('-', '')}`
+  sql(env, `update public.profiles set is_pro = true where id = :'u';
+insert into wm.subscriptions (id, user_id, customer_id, status, event_created) values (:'s', :'u', :'c', 'active', now())`,
+  { u: uid, s: sub, c: `cus_bench_${randomUUID().replaceAll('-', '')}` })
+  return sub
+}
+// Pierres tombales et lignes GoTrue des cas de suppression (la garde levée pour cette session psql seulement, Task 6a).
+const dropUsers = (env: ContractEnv, ids: string[]) => sql(env, `select set_config('wm.allow_tombstone_delete', 'on', false);
+delete from auth.users where id = any (string_to_array(:'ids', ',')::uuid[])`, { ids: ids.join(',') })
+const tombstone = (env: ContractEnv, uid: string) => sql(env, `select (select deleted_at is not null from auth.users where id = :'u')
+  || '|' || (select stripe_pending from wm.deleted_accounts where user_id = :'u')`, { u: uid })
 
 export const account: RouteSpec[] = [
   {
@@ -167,10 +181,13 @@ export const account: RouteSpec[] = [
             await refused(await send(env, 'POST', DELETE, d.uid, { username: 'mauvais' }, idem()), 400,
               'Tape ton pseudo exactement pour confirmer', 'invalid_request')
             const key = idem()
+            await resetStripeRequests(env)
             const first = await ok(await send(env, 'POST', DELETE, d.uid, { username: d.username }, key), Deleted)
             assert.deepEqual(first, {
               ok: true, voided_auctions: 1, cancelled_trades: 1, finished_battles: 1, cancelled_battles: 0, guild: 'transferred', auth_pending: false,
+              stripe_pending: false,
             })
+            assert.deepEqual(await stripeRequests(env), []) // sans abonnement, Stripe jamais appelé (G32)
 
             // Observé sur GoTrue v2.197.0 : la suppression douce garde la ligne, pose deleted_at, efface l'e-mail de la ligne, de ses
             // métadonnées et des identités, et coupe connexion et renouvellement.
@@ -214,6 +231,47 @@ export const account: RouteSpec[] = [
             // Garde des pierres tombales levée pour cette session psql seulement (Task 6a) ; la ligne GoTrue survit à la suppression douce.
             sql(env, `select set_config('wm.allow_tombstone_delete', 'on', false);
 delete from auth.users where id = any (string_to_array(:'ids', ',')::uuid[])`, { ids: created.join(',') })
+          }
+        },
+      },
+      {
+        name: 'Review Focus, abonné supprimé, Stripe répond : un DELETE /v1/subscriptions/<id> avant GoTrue, stripe_pending faux partout',
+        timeout: 60_000,
+        run: async (env) => {
+          const created: string[] = []
+          try {
+            const d = await gotrueUser(env, created)
+            const sub = subscribe(env, d.uid, 'ok')
+            await resetStripeRequests(env)
+            const res = await ok(await send(env, 'POST', DELETE, d.uid, { username: d.username }, idem()), Deleted)
+            assert.deepEqual([res.auth_pending, res.stripe_pending], [false, false])
+            assert.deepEqual((await stripeRequests(env)).map((r) => [r.method, r.path]), [['DELETE', `/v1/subscriptions/${sub}`]])
+            assert.equal(tombstone(env, d.uid), 'true|false')
+            assert.equal(sql(env, `select wm.check_invariants()`), '[]')
+          } finally {
+            dropUsers(env, created)
+          }
+        },
+      },
+      {
+        name: 'Review Focus, Stripe en panne : 200 stripe_pending vrai, la suppression faite quand même (pierre tombale, GoTrue en douceur)',
+        timeout: 60_000,
+        run: async (env) => {
+          const created: string[] = []
+          try {
+            const d = await gotrueUser(env, created)
+            const sub = subscribe(env, d.uid, 'fail')
+            await resetStripeRequests(env)
+            const res = await ok(await send(env, 'POST', DELETE, d.uid, { username: d.username }, idem()), Deleted)
+            assert.deepEqual([res.ok, res.auth_pending, res.stripe_pending], [true, false, true])
+            const calls = await stripeRequests(env)
+            assert.ok(calls.length >= 1)
+            assert.deepEqual(new Set(calls.map((r) => `${r.method} ${r.path}`)), new Set([`DELETE /v1/subscriptions/${sub}`]))
+            assert.equal(tombstone(env, d.uid), 'true|true')
+            assert.equal((await login(env, d.email, d.password)).status, 400)
+            assert.equal(sql(env, `select wm.check_invariants()`), '[]')
+          } finally {
+            dropUsers(env, created)
           }
         },
       },
