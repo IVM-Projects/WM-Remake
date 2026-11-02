@@ -49,8 +49,8 @@ test('aucune promesse de meilleures chances', () => {
 
 test('prix par formatPrice, paquet par formatInt, étiquettes qui contiennent le texte visible', () => {
   const h = html(state())
-  expect(formatPrice(999)).toContain('9,99')
-  expect(formatPrice(499)).toContain('4,99')
+  expect(formatPrice(999)).toMatch(/9,99.CAD/)
+  expect(formatPrice(499)).toMatch(/4,99.CAD/)
   expect(h).toContain(`${formatPrice(999)} par mois`)
   expect(h).toContain(`${formatPrice(499)}, paiement unique`)
   expect(h).toContain(`${formatInt(2500)} wikibidous`)
@@ -84,6 +84,13 @@ test('Pro par abonnement : « Tu es membre Pro. » et le portail', () => {
   expect(h).not.toContain('S&#x27;abonner')
 })
 
+test('abonnement impayé (past_due, pas Pro) : le portail, ni « S\'abonner » ni « Tu es membre Pro. »', () => {
+  const h = html(state({ is_pro: false, subscription: { ...sub, status: 'past_due' } }))
+  expect(h).toContain('Gérer mon abonnement')
+  expect(h).not.toContain('S&#x27;abonner')
+  expect(h).not.toContain('Tu es membre Pro.')
+})
+
 test('Pro de fixture sans abonnement ni VIP : l\'offre reste visible', () => {
   const h = html(state({ is_pro: true }))
   expect(h).toContain('S&#x27;abonner')
@@ -103,6 +110,7 @@ test('envoi en cours : bouton inactif, statut de redirection ; erreur en alerte'
   const sending = html(state(), { busy: 'wb_2500' })
   expect(sending).toMatch(/role="status"[^>]*>Redirection vers le paiement…</)
   expect(buttons(sending).every((b) => b.includes('aria-disabled="true"'))).toBe(true)
+  expect(html(state({ is_pro: true, subscription: sub }), { busy: 'portal' })).toMatch(/role="status"[^>]*>Redirection vers Stripe…</)
   const failed = html(state(), { error: 'Le paiement n\'a pas pu démarrer.' })
   expect(failed).toMatch(/role="alert"[^>]*>Le paiement n&#x27;a pas pu démarrer\.</)
   expect(failed).not.toContain('role="status"')

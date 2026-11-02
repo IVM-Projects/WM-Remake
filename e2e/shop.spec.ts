@@ -157,9 +157,11 @@ test('retour annulé : la boutique s\'ouvre sur « Paiement annulé : rien n\'a 
   await expect(page).toHaveURL(/\/pulls$/)
   await page.keyboard.press('Escape')
   await expect(shop(page)).toBeHidden()
+  // Ouverte sans ouvreur : le focus va au solde, jamais sur body.
+  await expect(balance(page)).toBeFocused()
 })
 
-for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }]] as const) {
+for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }], ['200 sans solde', { status: 200, contentType: 'application/json', body: '{"me":{}}' }]] as const) {
   test(`lecture en échec (${label}) : « — » dans l'en-tête, « Réessayer » dans la modale, puis tout rentre dans l'ordre`, async ({ page, login }) => {
     trash.push((await login({ balance: 120 })).uid)
     await routeOnce(page, '**/api/shop*', (r) => r.fulfill(reply))

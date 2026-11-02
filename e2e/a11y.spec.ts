@@ -208,11 +208,15 @@ from generate_series(1, 3) i`, { uid })
 })
 
 test('axe /pulls, boutique ouverte (offre Pro et paquet de wikibidous)', async ({ page, login }) => {
-  await login({ balance: 120 })
-  await page.goto('/pulls')
-  await page.locator('header button[title="Ouvrir la boutique"]').click()
-  await expect(page.getByRole('dialog', { name: 'Boutique' }).getByRole('button', { name: /^Acheter/ })).toBeVisible()
-  await expectNoSeriousViolations(page)
+  const { uid } = await login({ balance: 120 })
+  try {
+    await page.goto('/pulls')
+    await page.locator('header button[title="Ouvrir la boutique"]').click()
+    await expect(page.getByRole('dialog', { name: 'Boutique' }).getByRole('button', { name: /^Acheter/ })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
+  }
 })
 
 test('axe /pulls, boutique ouverte d\'un membre Pro (portail), en maintenance', async ({ page, login }) => {

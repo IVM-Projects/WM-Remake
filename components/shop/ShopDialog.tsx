@@ -11,6 +11,7 @@ import { api, apiOnce, userMessage } from '@/lib/api'
 import type { ShopItem } from '@/lib/shop'
 
 // Seules les pages hébergées de Stripe reçoivent le navigateur : une URL venue du serveur n'est jamais suivie telle quelle.
+// Si le compte Stripe adopte un jour un domaine personnalisé pour Checkout ou le portail, l'ajouter ici.
 const HOSTS = ['checkout.stripe.com', 'billing.stripe.com']
 function stripeUrl(r: { url?: unknown } | null): string | null {
   try {

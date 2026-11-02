@@ -199,7 +199,7 @@ test('vide : « Aucune notification. » ; la cloche et « Tout marquer comme lu 
   }
 })
 
-test('paiements (wm.stripe_apply par sql) : 2 500 wikibidous crédités → /collection, et les trois messages Pro → /settings', async ({ page, login }) => {
+test('paiements (lignes de public.notifications posées par sql) : 2 500 wikibidous crédités → /collection, et les trois messages Pro → /settings', async ({ page, login }) => {
   const { uid } = await login()
   trash.push(uid)
   sql(`insert into public.notifications (user_id, type, data) values

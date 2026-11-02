@@ -6,6 +6,7 @@ import { ShopDialog } from '@/components/shop/ShopDialog'
 import { toast } from '@/components/ui/toast'
 import { api } from '@/lib/api'
 import { formatInt } from '@/lib/format'
+import { CHECKOUT_SESSION } from '@/lib/schemas'
 import type { ShopState } from '@/lib/shop'
 
 type Shop = {
@@ -24,7 +25,6 @@ export function useShop(): Shop {
   return shop
 }
 
-const SESSION = /^cs_(test|live)_[A-Za-z0-9_]{1,200}$/
 const POLL_MS = 2000
 const POLL_UNTIL_MS = 30_000
 const CANCELLED = 'Paiement annulé : rien n\'a été débité.'
@@ -54,7 +54,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     try {
       const r = await api<ShopState | null>(session ? `/api/shop?session=${session}` : '/api/shop')
       // Un 2xx illisible est une lecture en échec.
-      if (r && typeof r === 'object' && r.me && r.rules) next = r
+      if (r && typeof r === 'object' && r.rules && typeof r.me?.balance === 'number') next = r
     } catch {}
     if (g === gen.current) {
       if (next) current.current = next
@@ -105,7 +105,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         return
       }
       const session = params.get('session')
-      if (!session || !SESSION.test(session)) {
+      if (!session || !CHECKOUT_SESSION.test(session)) {
         clean()
         return
       }
@@ -146,7 +146,14 @@ export function ShopProvider({ children }: { children: ReactNode }) {
           Paiement reçu, confirmation en cours…
         </p>
       )}
-      {open && <ShopDialog notice={notice} onClose={() => { setOpen(false); setNotice(null) }} />}
+      {open && <ShopDialog notice={notice} onClose={() => {
+        setOpen(false)
+        setNotice(null)
+        // Ouverte sans ouvreur (retour de Checkout) : à la fermeture le focus tomberait sur body, il va au solde.
+        setTimeout(() => {
+          if (!document.activeElement || document.activeElement === document.body) document.querySelector<HTMLElement>('header button[title="Ouvrir la boutique"]')?.focus()
+        })
+      }} />}
     </Ctx>
   )
 }

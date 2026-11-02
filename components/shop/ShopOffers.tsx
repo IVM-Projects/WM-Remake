@@ -68,7 +68,7 @@ export function ShopOffers({ state, busy, error, onBuy, onPortal }: Props) {
           Acheter
         </button>
       </section>
-      {busy !== null && <p role="status" className="text-sm font-medium">Redirection vers le paiement…</p>}
+      {busy !== null && <p role="status" className="text-sm font-medium">{busy === 'portal' ? 'Redirection vers Stripe…' : 'Redirection vers le paiement…'}</p>}
       {error && <p role="alert" className="text-sm font-medium text-red-400">{error}</p>}
       <div className="space-y-1 text-sm text-foreground/70">
         <p>Achat de contenu numérique fourni tout de suite : au paiement, tu renonces à ton droit de rétractation.</p>
