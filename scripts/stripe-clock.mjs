@@ -15,7 +15,8 @@ const USAGE = `Usage : STRIPE_SECRET_KEY=sk_test_... node scripts/stripe-clock.m
   advance --clock <id> --days <n> avance l'horloge de n jours et attend qu'elle soit prête
   fail --clock <id>               les prochains débits échouent (pm_card_chargeCustomerFail)
   cancel --clock <id>             résiliation en fin de période
-  delete --clock <id>             supprime l'horloge (Customer et abonnement avec)`
+  delete --clock <id>             supprime l'horloge (Customer et abonnement avec)
+Utilise un compte de démo neuf (un compte avec des achats existants fausse le contrôle).`
 
 export function assertTestKey(key) {
   if (!key) throw new Error('STRIPE_SECRET_KEY absente.')
@@ -66,10 +67,7 @@ async function clockSubscription(stripe, clock) {
 
 const commands = {
   async prices(stripe) {
-    const [pro, wb] = await Promise.all(['STRIPE_PRICE_PRO_MONTHLY', 'STRIPE_PRICE_WB_2500'].map((name) => {
-      if (!process.env[name]) throw new Error(`${name} absente.`)
-      return stripe.prices.retrieve(process.env[name])
-    }))
+    const [pro, wb] = await Promise.all([process.env.STRIPE_PRICE_PRO_MONTHLY, process.env.STRIPE_PRICE_WB_2500].map((id) => stripe.prices.retrieve(id)))
     console.log(`pro_monthly ${pro.id} ${pro.unit_amount} ${pro.currency} ${pro.recurring?.interval ?? '-'}`)
     console.log(`wb_2500 ${wb.id} ${wb.unit_amount} ${wb.currency} ${wb.recurring?.interval ?? '-'}`)
     const bad = checkPrices(pro, wb)
@@ -78,17 +76,17 @@ const commands = {
   },
 
   async start(stripe, { uid }) {
-    const price = process.env.STRIPE_PRICE_PRO_MONTHLY
-    if (!price) throw new Error('STRIPE_PRICE_PRO_MONTHLY absente.')
     const clock = await stripe.testHelpers.testClocks.create({ frozen_time: Math.floor(Date.now() / 1000), name: 'wm-demo' })
+    // Imprimé tout de suite : si la suite échoue, `delete --clock` reste possible.
+    console.log(`clock ${clock.id}`)
     const customer = await stripe.customers.create({
       test_clock: clock.id,
       metadata: { uid },
       payment_method: 'pm_card_visa',
       invoice_settings: { default_payment_method: 'pm_card_visa' },
     })
-    const sub = await stripe.subscriptions.create({ customer: customer.id, items: [{ price }], metadata: { uid } })
-    console.log(`clock ${clock.id}\ncustomer ${customer.id}\nsubscription ${sub.id}\nstatus ${sub.status}`)
+    const sub = await stripe.subscriptions.create({ customer: customer.id, items: [{ price: process.env.STRIPE_PRICE_PRO_MONTHLY }], metadata: { uid } })
+    console.log(`customer ${customer.id}\nsubscription ${sub.id}\nstatus ${sub.status}`)
   },
 
   async advance(stripe, { clock, days }) {
@@ -102,9 +100,10 @@ const commands = {
   async fail(stripe, { clock }) {
     const customer = await clockCustomer(stripe, clock)
     // Attachée sans débit : la carte n'échoue qu'aux prochains paiements.
-    await stripe.paymentMethods.attach('pm_card_chargeCustomerFail', { customer })
-    await stripe.customers.update(customer, { invoice_settings: { default_payment_method: 'pm_card_chargeCustomerFail' } })
-    console.log(`clock ${clock}\ncustomer ${customer}\ndefault_payment_method pm_card_chargeCustomerFail`)
+    // Le jeton de test donne un vrai PaymentMethod : c'est son id qui devient le défaut.
+    const pm = await stripe.paymentMethods.attach('pm_card_chargeCustomerFail', { customer })
+    await stripe.customers.update(customer, { invoice_settings: { default_payment_method: pm.id } })
+    console.log(`clock ${clock}\ncustomer ${customer}\ndefault_payment_method ${pm.id}`)
   },
 
   async cancel(stripe, { clock }) {
@@ -139,11 +138,19 @@ function parse(argv) {
   return { cmd, args }
 }
 
+// Variables de Price vérifiées avant tout client : aucune requête n'est partie si l'une manque.
+function assertPriceEnv(cmd) {
+  const needed = { prices: ['STRIPE_PRICE_PRO_MONTHLY', 'STRIPE_PRICE_WB_2500'], start: ['STRIPE_PRICE_PRO_MONTHLY'] }[cmd] ?? []
+  for (const name of needed) if (!process.env[name]) throw new Error(`${name} absente.`)
+}
+
 async function main(argv) {
   try {
     const { cmd, args } = parse(argv)
     // La clé est validée avant la création du client : une clé live ne part jamais.
-    const stripe = new Stripe(assertTestKey(process.env.STRIPE_SECRET_KEY), { apiVersion: STRIPE_API_VERSION })
+    const key = assertTestKey(process.env.STRIPE_SECRET_KEY)
+    assertPriceEnv(cmd)
+    const stripe = new Stripe(key, { apiVersion: STRIPE_API_VERSION })
     await commands[cmd](stripe, args)
   } catch (e) {
     // Un message du SDK peut citer la clé ou l'e-mail : seuls type, code et statut sont imprimés.

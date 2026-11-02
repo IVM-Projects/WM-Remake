@@ -44,9 +44,30 @@ describe('commande', () => {
     expect(r.stderr).toContain('Usage')
   })
 
-  it('valide les arguments avant la clé', () => {
-    expect(run(['start'], { STRIPE_SECRET_KEY: 'sk_test_x' }).status).toBe(1)
-    expect(run(['advance', '--clock', 'clock_x', '--days', '0'], { STRIPE_SECRET_KEY: 'sk_test_x' }).status).toBe(1)
+  it('valide les arguments avant tout client', () => {
+    const env = { STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_PRICE_PRO_MONTHLY: 'price_x' }
+    for (const [args, flag] of [[['start'], '--uid'], [['advance', '--clock', 'clock_x', '--days', '0'], '--days']] as const) {
+      const r = run([...args], env)
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain(flag)
+      expect(r.stderr).not.toContain('Erreur Stripe')
+    }
+  })
+
+  it('exige les variables de Price avant tout client, sans afficher la clé', () => {
+    const none = { STRIPE_SECRET_KEY: 'sk_test_bench_fake', STRIPE_PRICE_PRO_MONTHLY: '', STRIPE_PRICE_WB_2500: '' }
+    const cases = [
+      [['prices'], none, 'STRIPE_PRICE_PRO_MONTHLY'],
+      [['prices'], { ...none, STRIPE_PRICE_PRO_MONTHLY: 'price_x' }, 'STRIPE_PRICE_WB_2500'],
+      [['start', '--uid', '123e4567-e89b-12d3-a456-426614174000'], none, 'STRIPE_PRICE_PRO_MONTHLY'],
+    ] as const
+    for (const [args, env, name] of cases) {
+      const r = run([...args], env)
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain(`${name} absente.`)
+      expect(r.stdout + r.stderr).not.toContain('sk_test_bench_fake')
+      expect(r.stderr).not.toContain('Erreur Stripe')
+    }
   })
 })
 
@@ -71,6 +92,9 @@ describe('waitReady', () => {
   }
   it('attend ready', async () => {
     await expect(waitReady(fake(['advancing', 'advancing', 'ready']) as never, 'clock_x', { sleep: async () => {}, timeoutMs: 10_000 })).resolves.toBeUndefined()
+  })
+  it('échoue sur internal_failure', async () => {
+    await expect(waitReady(fake(['advancing', 'internal_failure']) as never, 'clock_x', { sleep: async () => {} })).rejects.toThrow('échec interne')
   })
   it('échoue clairement après le délai', async () => {
     let t = 0
