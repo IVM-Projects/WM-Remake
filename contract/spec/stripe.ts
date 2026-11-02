@@ -33,8 +33,8 @@ const hex = () => randomUUID().replaceAll('-', '')
 
 const db = (env: ContractEnv) => env.backend.databaseUrl
 const sql = (env: ContractEnv, query: string, vars: Record<string, string> = {}) => psql(db(env), query, vars)
-const checkout = (env: ContractEnv, uid: string | undefined, item: string) =>
-  send(env, 'POST', '/api/stripe/checkout', uid, { item }, { 'Idempotency-Key': randomUUID() })
+const checkout = (env: ContractEnv, uid: string | undefined, item: string, key = randomUUID(), extra: Record<string, unknown> = {}) =>
+  send(env, 'POST', '/api/stripe/checkout', uid, { item, ...extra }, { 'Idempotency-Key': key })
 const portal = (env: ContractEnv, uid: string) => send(env, 'POST', '/api/stripe/portal', uid)
 const customerOf = (env: ContractEnv, uid: string) => sql(env, `select customer_id from wm.stripe_customers where user_id = :'u'`, { u: uid })
 
@@ -137,11 +137,13 @@ export const stripeCheckout: RouteSpec = {
   cases: [
     noSession('POST', '/api/stripe/checkout'),
     {
-      name: 'wb_2500 → url de Checkout ; Customer créé une fois (clé G45, metadata.uid, email) puis réutilisé ; paramètres de G17',
+      name: 'wb_2500 → url de Checkout ; Customer créé une fois (clé G45, metadata.uid, email) puis réutilisé ; paramètres de G17 ; '
+        + 'clé d\'idempotence de la session tirée de l\'Idempotency-Key ; price et amount du client ignorés',
       run: (env) => withPlayers(env, async (player) => {
         const uid = player()
         await resetStripeRequests(env)
-        const { url } = await ok(await checkout(env, uid, 'wb_2500'), UrlReply)
+        const key = randomUUID()
+        const { url } = await ok(await checkout(env, uid, 'wb_2500', key), UrlReply)
         assert.match(url, /^https:\/\/checkout\.stripe\.com\//)
         const customer = customerOf(env, uid)
         assert.match(customer, /^cus_bench_[0-9a-f]{32}$/)
@@ -152,7 +154,8 @@ export const stripeCheckout: RouteSpec = {
           stripe_version: API_VERSION,
         })
         assert.match(created.idempotency_key ?? '', new RegExp(`^customer:${uid}:[0-9a-f]{16}$`))
-        assert.deepEqual([session.method, session.path, session.stripe_version], ['POST', '/v1/checkout/sessions', API_VERSION])
+        assert.deepEqual([session.method, session.path, session.stripe_version, session.idempotency_key],
+          ['POST', '/v1/checkout/sessions', API_VERSION, `checkout:${uid}:wb_2500:${key}`])
         const f = session.form
         assert.deepEqual({
           mode: f.mode, customer: f.customer, client_reference_id: f.client_reference_id, item: f['metadata[item]'], uid: f['metadata[uid]'],
@@ -164,9 +167,13 @@ export const stripeCheckout: RouteSpec = {
         assert.match(f.success_url, /\/pulls\?shop=success&session=\{CHECKOUT_SESSION_ID\}$/)
         assert.match(f.cancel_url, /\/pulls\?shop=cancel$/)
 
+        // Second achat, avec un prix et un montant forgés : jamais lus (seul l'article compte).
         await resetStripeRequests(env)
-        await ok(await checkout(env, uid, 'wb_2500'), UrlReply)
-        assert.deepEqual((await stripeRequests(env)).map((r) => r.path), ['/v1/checkout/sessions'])
+        await ok(await checkout(env, uid, 'wb_2500', randomUUID(), { price: 'price_evil', amount: 1 }), UrlReply)
+        const again = await stripeRequests(env)
+        assert.deepEqual(again.map((r) => r.path), ['/v1/checkout/sessions'])
+        assert.equal(again[0].form['line_items[0][price]'], STRIPE.priceWb)
+        assert.ok(!JSON.stringify(again).includes('price_evil'))
         assert.equal(customerOf(env, uid), customer)
       }),
     },
@@ -233,7 +240,7 @@ export const stripePortal: RouteSpec = {
       }),
     },
     {
-      name: 'avec Customer → url du Portail, return_url /settings ; joueur restreint → 200 aussi (G39) ; maintenance → 503',
+      name: 'avec Customer → url du Portail, return_url /settings ; joueur restreint, puis suspendu → 200 aussi (G39) ; maintenance → 503',
       run: (env) => withPlayers(env, async (player) => {
         const uid = player()
         const customer = `cus_bench_${hex()}`
@@ -246,6 +253,9 @@ export const stripePortal: RouteSpec = {
         assert.match(req.form.return_url, /\/settings$/)
 
         sanction(env, uid, 'restriction')
+        await ok(await portal(env, uid), UrlReply)
+        // POST : route() ne fait pas access_check, la suspension (refusée aux lectures) laisse aussi résilier.
+        sanction(env, uid, 'suspension')
         await ok(await portal(env, uid), UrlReply)
         await inMaintenance(env, async () => refused(await portal(env, uid), 503, MAINTENANCE, 'maintenance'))
       }),

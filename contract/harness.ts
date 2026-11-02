@@ -35,10 +35,15 @@ const TURNSTILE = { secret: 'test-turnstile', response: 'dev-bypass' }
 // Faux Stripe du banc (G36) : valeurs factices, la clé de test fait suivre STRIPE_API_URL (lib/stripe.ts).
 export const STRIPE = { key: 'sk_test_bench_fake', webhookSecret: 'whsec_test_bench_fake', pricePro: 'price_test_bench_pro', priceWb: 'price_test_bench_wb' }
 export type StripeRequest = { method: string; path: string; form: Record<string, string>; idempotency_key: string | null; stripe_version: string | null }
+// Journal illisible = échec bruyant, jamais une liste vide qui ferait passer « aucun appel Stripe ».
+async function stripeJournal(env: { backend: Pick<Backend, 'supabaseUrl'> }, method: 'GET' | 'DELETE'): Promise<Response> {
+  const res = await fetch(`${env.backend.supabaseUrl}/stripe/requests`, { method })
+  if (!res.ok) throw new Error(`journal du faux Stripe : ${method} ${res.status}`)
+  return res
+}
 export const stripeRequests = async (env: { backend: Pick<Backend, 'supabaseUrl'> }): Promise<StripeRequest[]> =>
-  (await fetch(`${env.backend.supabaseUrl}/stripe/requests`)).json() as Promise<StripeRequest[]>
-export const resetStripeRequests = async (env: { backend: Pick<Backend, 'supabaseUrl'> }): Promise<void> =>
-  void (await fetch(`${env.backend.supabaseUrl}/stripe/requests`, { method: 'DELETE' }))
+  (await stripeJournal(env, 'GET')).json() as Promise<StripeRequest[]>
+export const resetStripeRequests = async (env: { backend: Pick<Backend, 'supabaseUrl'> }): Promise<void> => void (await stripeJournal(env, 'DELETE'))
 // Ids neufs à chaque appel, jamais un compteur : une base de banc réutilisée garde les ids d'un run précédent (C8).
 const benchId = () => randomUUID().replaceAll('-', '')
 
