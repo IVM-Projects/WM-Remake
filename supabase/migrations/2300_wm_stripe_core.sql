@@ -142,9 +142,14 @@ begin
 end $$;
 
 -- Customer créé chez Stripe (G17, G45) : premier posé gagne ; rend celui du joueur (celui d'avant si une autre requête l'a posé).
+-- null = le Customer appartient déjà à un autre joueur ; l'appelant (Task 5, route) le traite comme une erreur 502, jamais comme « pas de
+-- Customer ».
 create or replace function wm.stripe_customer_set(p_uid uuid, p_customer_id text)
 returns text language plpgsql security definer set search_path = '' as $$
 begin
+  if not exists (select from public.profiles where id = p_uid) or exists (select from wm.deleted_accounts where user_id = p_uid) then
+    perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
+  end if;
   perform set_config('lock_timeout', '2s', true);
   insert into wm.stripe_customers (customer_id, user_id) values (p_customer_id, p_uid) on conflict do nothing;
   return (select customer_id from wm.stripe_customers where user_id = p_uid);

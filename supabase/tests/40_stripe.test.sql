@@ -74,7 +74,7 @@ do $$ declare bad text; begin
     and pg_get_constraintdef(c.oid) = v.def);
   assert bad is null, 'contraintes absentes ou différentes : ' || bad;
   assert (select count(*) from pg_constraint where conrelid in ('wm.stripe_events'::regclass, 'wm.stripe_customers'::regclass,
-    'wm.subscriptions'::regclass, 'wm.purchases'::regclass, 'wm.stripe_disputes'::regclass)) = 20, 'contraintes en trop';
+    'wm.subscriptions'::regclass, 'wm.purchases'::regclass, 'wm.stripe_disputes'::regclass) and contype <> 'n') = 20, 'contraintes en trop';
   select string_agg(v.n, ', ') into bad from (values
     ('subscriptions_user_idx', 'wm.subscriptions USING btree (user_id)'),
     ('purchases_user_idx', 'wm.purchases USING btree (user_id, created_at)'),
@@ -145,6 +145,10 @@ do $$ declare u uuid := tests.make_user('StrShop', 120); o uuid := tests.make_us
   assert r -> 'has_customer' = 'true' and r -> 'is_pro' = 'true', r::text;
   assert (select array_agg(k order by k) from jsonb_object_keys(r) k)
     = array['balance', 'has_customer', 'is_pro', 'is_vip', 'pack_cap', 'subscription'], 'clés de me';
+  -- Deux non terminaux (deux onglets, G41) : le plus récent par event_created.
+  perform pg_temp.sub('sub_bench_shop_two', u, 'past_due', now() - interval '1 hour');
+  assert wm.shop_state(u) -> 'me' -> 'subscription' ->> 'status' = 'past_due', 'deux non terminaux';
+  delete from wm.subscriptions where id = 'sub_bench_shop_two';
   -- Seule la canceled : rendue.
   perform pg_temp.sub('sub_bench_shop_o', o, 'canceled');
   assert wm.shop_state(o) -> 'me' -> 'subscription' ->> 'status' = 'canceled', 'terminale seule';
@@ -190,7 +194,7 @@ do $$ declare u uuid := tests.make_user('StrCo'); w uuid := tests.make_user('Str
   update auth.users set email = 'neuf@test.local' where id = w;
   assert wm.stripe_checkout_prepare(w, 'wb_2500') ->> 'email' = 'neuf@test.local', 'e-mail de auth.users';
   update wm.config set value = 'true' where key = 'maintenance';
-  assert pg_temp.err(format(q, w, 'wb_2500')) ->> 'code' = 'maintenance', 'maintenance';
+  assert pg_temp.err(format(q, w, 'wb_2500')) = '{"status":503,"code":"maintenance","error":"Maintenance en cours, reviens dans quelques minutes.","message":"Maintenance en cours, reviens dans quelques minutes."}', 'maintenance';
   update wm.config set value = 'false' where key = 'maintenance';
   insert into wm.sanctions (user_id, kind, reason) values (r, 'restriction', 'test');
   e := pg_temp.err(format(q, r, 'wb_2500'));
@@ -203,11 +207,17 @@ do $$ declare u uuid := tests.make_user('StrCo'); w uuid := tests.make_user('Str
 end $$;
 
 -- stripe_customer_set (G17, G45) : premier posé gagne.
-do $$ declare u uuid := tests.make_user('StrCus'); begin
+do $$ declare u uuid := tests.make_user('StrCus'); d uuid := tests.make_user('StrCusD'); q text := 'select wm.stripe_customer_set(%L, %L)';
+  e jsonb := '{"status":401,"code":"unauthorized","error":"Session expirée, reconnecte-toi.","message":"Session expirée, reconnecte-toi."}';
+  begin
   assert wm.stripe_customer_set(u, 'cus_bench_a') = 'cus_bench_a', 'premier';
   assert wm.stripe_customer_set(u, 'cus_bench_b') = 'cus_bench_a', 'second';
   assert (select count(*) from wm.stripe_customers where user_id = u) = 1
     and not exists (select from wm.stripe_customers where customer_id = 'cus_bench_b'), 'une seule ligne';
+  insert into wm.deleted_accounts (user_id) values (d);
+  assert pg_temp.err(format(q, d, 'cus_bench_d')) = e, 'supprimé';
+  assert pg_temp.err(format(q, gen_random_uuid(), 'cus_bench_x')) = e, 'profil absent';
+  assert not exists (select from wm.stripe_customers where customer_id in ('cus_bench_d', 'cus_bench_x')), 'aucune écriture';
 end $$;
 
 -- stripe_portal_prepare (G39) : sans wm.actor, une restriction passe.
@@ -222,8 +232,10 @@ do $$ declare u uuid := tests.make_user('StrPo'); d uuid := tests.make_user('Str
   assert pg_temp.err(format(q, u)) = '{"status":503,"code":"maintenance","error":"Maintenance en cours, reviens dans quelques minutes.","message":"Maintenance en cours, reviens dans quelques minutes."}', 'maintenance';
   update wm.config set value = 'false' where key = 'maintenance';
   insert into wm.deleted_accounts (user_id) values (d);
-  assert pg_temp.err(format(q, d)) ->> 'status' = '401', 'supprimé';
-  assert pg_temp.err(format(q, gen_random_uuid())) ->> 'status' = '401', 'profil absent';
+  assert pg_temp.err(format(q, d))
+    = '{"status":401,"code":"unauthorized","error":"Session expirée, reconnecte-toi.","message":"Session expirée, reconnecte-toi."}', 'supprimé';
+  assert pg_temp.err(format(q, gen_random_uuid()))
+    = '{"status":401,"code":"unauthorized","error":"Session expirée, reconnecte-toi.","message":"Session expirée, reconnecte-toi."}', 'profil absent';
 end $$;
 
 -- grace_status (C6) : dotations non réclamées, taille de la plus ancienne (celle que claim_grace prend).
