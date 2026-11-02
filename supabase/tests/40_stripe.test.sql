@@ -24,6 +24,32 @@ create function pg_temp.sub(p_id text, p_uid uuid, p_status text, p_created time
   insert into wm.subscriptions (id, user_id, customer_id, status, event_created) values (p_id, p_uid, 'cus_bench_' || p_id, p_status, p_created)
 $$;
 
+-- Événement et objets tels que le webhook les passe à stripe_apply (2310) ; le Customer d'un joueur est cus_bench_<uid sans tirets>.
+create function pg_temp.ev(p_id text, p_type text, p_created bigint, p_object jsonb) returns jsonb language sql as $$
+  select jsonb_build_object('id', p_id, 'object', 'event', 'type', p_type, 'created', p_created, 'livemode', false,
+    'data', jsonb_build_object('object', p_object))
+$$;
+create function pg_temp.cus(p_uid uuid) returns text language sql as $$ select 'cus_bench_' || replace(p_uid::text, '-', '') $$;
+create function pg_temp.sub(p_id text, p_uid uuid, p_status text, p_period_end bigint, p_cancel boolean default false) returns jsonb
+language sql as $$
+  select jsonb_build_object('id', p_id, 'object', 'subscription', 'customer', pg_temp.cus(p_uid), 'status', p_status,
+    'cancel_at_period_end', p_cancel, 'cancel_at', case when p_cancel then p_period_end end, 'canceled_at', null,
+    'metadata', jsonb_build_object('uid', p_uid), 'items', jsonb_build_object('data', jsonb_build_array(
+      jsonb_build_object('current_period_end', p_period_end, 'price', jsonb_build_object('id', 'price_test_bench_pro')))))
+$$;
+-- Session Checkout : payment = wb_2500 à 499 cents, subscription = pro_monthly à 999 cents.
+create function pg_temp.cs(p_id text, p_uid uuid, p_mode text, p_paid text default 'paid') returns jsonb language sql as $$
+  select jsonb_build_object('id', p_id, 'object', 'checkout.session', 'mode', p_mode, 'payment_status', p_paid, 'client_reference_id', p_uid,
+    'customer', pg_temp.cus(p_uid), 'metadata', jsonb_build_object('uid', p_uid, 'item', case p_mode when 'payment' then 'wb_2500' else 'pro_monthly' end),
+    'amount_total', case p_mode when 'payment' then 499 else 999 end, 'currency', 'cad', 'consent', jsonb_build_object('terms_of_service', 'accepted'))
+$$;
+create function pg_temp.ap(p_event jsonb) returns text language sql as $$ select wm.stripe_apply(p_event) ->> 'outcome' $$;
+create function pg_temp.pro(p_uid uuid) returns boolean language sql as $$ select is_pro from public.profiles where id = p_uid $$;
+create function pg_temp.n(p_uid uuid, p_type text) returns bigint language sql as $$
+  select count(*) from public.notifications where user_id = p_uid and type = p_type
+$$;
+create function pg_temp.bal(p_uid uuid) returns int language sql as $$ select wikibidous_balance from public.profiles where id = p_uid $$;
+
 select pg_temp.inv('début de 40');
 
 -- Config shop (G28) et sa note ; rejeu de 2300, deux fois : mêmes valeurs, une valeur posée survit.
@@ -38,6 +64,16 @@ do $$ begin
   assert (select value from wm.config where key = 'shop') = '{"wb_2500": 10}'::jsonb, 'valeur posée écrasée par le rejeu';
   assert (select count(*) from wm.config where key = 'shop') = 1, 'une ligne shop';
   update wm.config set value = '{"wb_2500": 2500}' where key = 'shop';
+end $$;
+
+-- Rejeu de 2310 (stripe_uid, stripe_apply), deux fois : create or replace seulement, rien d'autre ne bouge.
+\ir ../migrations/2310_wm_stripe_apply.sql
+\ir ../migrations/2310_wm_stripe_apply.sql
+do $$ begin
+  assert (select count(*) from pg_proc where pronamespace = 'wm'::regnamespace and proname in ('stripe_uid', 'stripe_apply')) = 2, '2310';
+  assert (select array_agg(format('%s:%s:%s:%s', proname, prosecdef, provolatile, proconfig) order by proname)
+    from pg_proc where pronamespace = 'wm'::regnamespace and proname in ('stripe_uid', 'stripe_apply'))
+    = array['stripe_apply:t:v:{"search_path=\"\""}', 'stripe_uid:t:s:{"search_path=\"\""}'], 'réglages des fonctions';
 end $$;
 
 -- Colonnes, contraintes et index (G27), définitions complètes.
@@ -267,9 +303,335 @@ do $$ declare v uuid := tests.make_user('StrVip'); c uuid; k public.user_cards; 
   perform pg_temp.inv('VIP');
 end $$;
 
--- lock_timeout avant la première écriture (P5).
-do $$ declare bad text := tests.lock_timeout_violations(array['stripe_customer_set'], array['insert into wm.stripe_customers']); begin
+-- Review Focus, double crédit (D:625, G18, G29) : le même événement rejoué, puis completed + async_payment_succeeded d'une même session
+-- → un seul +2 500 sous stripe:<session_id>, un achat, une wb_purchased.
+do $$ declare a uuid := tests.make_user('StrApC', 100); T bigint := extract(epoch from now())::bigint; e jsonb; begin
+  e := pg_temp.ev('evt_bench_c1', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_1', a, 'payment'));
+  assert wm.stripe_apply(e) = '{"duplicate": false, "outcome": "applied"}', 'premier';
+  assert pg_temp.bal(a) = 2600, 'solde';
+  assert (select jsonb_agg(jsonb_build_object('delta', delta, 'reason', reason, 'ref', ref, 'balance_after', balance_after))
+    from wm.wb_ledger where user_id = a and reason <> 'opening')
+    = '[{"delta": 2500, "reason": "stripe", "ref": "stripe:cs_test_bench_1", "balance_after": 2600}]', 'grand livre';
+  assert (select jsonb_agg(to_jsonb(p) - 'created_at') from wm.purchases p where user_id = a) = jsonb_build_array(jsonb_build_object(
+    'session_id', 'cs_test_bench_1', 'user_id', a, 'item', 'wb_2500', 'amount', 499, 'currency', 'cad', 'consent', 'accepted', 'wb', 2500)),
+    'achat';
+  assert (select jsonb_agg(jsonb_build_object('type', type, 'data', data)) from public.notifications where user_id = a)
+    = '[{"type": "wb_purchased", "data": {"amount": 2500, "session_id": "cs_test_bench_1"}}]', 'notification';
+  assert (select to_jsonb(s) - 'received_at' from wm.stripe_events s where id = 'evt_bench_c1') = jsonb_build_object('id', 'evt_bench_c1',
+    'type', 'checkout.session.completed', 'created', to_timestamp(T), 'livemode', false, 'outcome', 'applied'), 'ligne stripe_events';
+  assert (select user_id from wm.stripe_customers where customer_id = pg_temp.cus(a)) = a, 'lien Customer';
+  -- Rejeu du même event.id : rien.
+  assert wm.stripe_apply(e) = '{"duplicate": true, "outcome": null}', 'rejeu';
+  -- async_payment_succeeded de la même session (autre event.id) : appliqué, aucun second crédit.
+  assert wm.stripe_apply(pg_temp.ev('evt_bench_c2', 'checkout.session.async_payment_succeeded', T + 5,
+    pg_temp.cs('cs_test_bench_1', a, 'payment'))) = '{"duplicate": false, "outcome": "applied"}', 'async';
+  assert pg_temp.bal(a) = 2600 and (select count(*) from wm.wb_ledger where user_id = a and reason = 'stripe') = 1
+    and (select count(*) from wm.purchases where user_id = a) = 1 and pg_temp.n(a, 'wb_purchased') = 1
+    and (select count(*) from public.notifications where user_id = a) = 1, 'second crédit';
+  perform pg_temp.inv('double crédit');
+end $$;
+
+-- Paiement non abouti (G29) : pending sans crédit ; async_payment_succeeded payé ensuite → crédit unique.
+do $$ declare a uuid := tests.make_user('StrApU'); T bigint := extract(epoch from now())::bigint; begin
+  assert pg_temp.ap(pg_temp.ev('evt_bench_u1', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_u', a, 'payment', 'unpaid')))
+    = 'pending', 'non payé';
+  assert (select outcome from wm.stripe_events where id = 'evt_bench_u1') = 'pending', 'outcome stocké';
+  assert pg_temp.bal(a) = 0 and not exists (select from wm.purchases where user_id = a)
+    and not exists (select from wm.wb_ledger where user_id = a and reason = 'stripe') and pg_temp.n(a, 'wb_purchased') = 0, 'rien';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_u2', 'checkout.session.async_payment_succeeded', T + 60,
+    pg_temp.cs('cs_test_bench_u', a, 'payment'))) = 'applied', 'payé';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_u3', 'checkout.session.async_payment_succeeded', T + 61,
+    pg_temp.cs('cs_test_bench_u', a, 'payment'))) = 'applied', 'payé, seconde livraison';
+  assert pg_temp.bal(a) = 2500 and (select count(*) from wm.wb_ledger where user_id = a and reason = 'stripe') = 1
+    and (select count(*) from wm.purchases where user_id = a) = 1 and pg_temp.n(a, 'wb_purchased') = 1, 'crédit unique';
+  perform pg_temp.inv('non payé');
+end $$;
+
+-- Mode abonnement (G29) : achat pro_monthly (wb 0), lien Customer, Pro inchangé (il vient des événements d'abonnement).
+do $$ declare a uuid := tests.make_user('StrApM'); T bigint := extract(epoch from now())::bigint; begin
+  assert pg_temp.ap(pg_temp.ev('evt_bench_m1', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_m', a, 'subscription')))
+    = 'applied', 'abonnement';
+  assert (select jsonb_agg(to_jsonb(p) - 'created_at') from wm.purchases p where user_id = a) = jsonb_build_array(jsonb_build_object(
+    'session_id', 'cs_test_bench_m', 'user_id', a, 'item', 'pro_monthly', 'amount', 999, 'currency', 'cad', 'consent', 'accepted', 'wb', 0)),
+    'achat pro_monthly';
+  assert not pg_temp.pro(a) and pg_temp.bal(a) = 0 and not exists (select from wm.wb_ledger where user_id = a)
+    and not exists (select from public.notifications where user_id = a), 'rien d''autre';
+  assert (select user_id from wm.stripe_customers where customer_id = pg_temp.cus(a)) = a, 'lien Customer';
+  perform pg_temp.inv('mode abonnement');
+end $$;
+
+-- Review Focus, Pro allumé (G4, G5) : subscription.created active avant tout Checkout et sans lien Customer, résolu par metadata.uid.
+do $$ declare a uuid := tests.make_user('StrOnA'); b uuid := tests.make_user('StrOnB'); T bigint := extract(epoch from now())::bigint;
+  P bigint := T + 30 * 86400; begin
+  assert not exists (select from wm.stripe_customers where user_id = a), 'aucun lien avant';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_p1', 'customer.subscription.created', T, pg_temp.sub('sub_bench_p1', a, 'active', P)))
+    = 'applied', 'created';
+  assert pg_temp.pro(a), 'Pro allumé';
+  assert (select jsonb_agg(jsonb_build_object('type', type, 'data', data)) from public.notifications where user_id = a)
+    = '[{"type": "pro_started", "data": {"subscription_id": "sub_bench_p1"}}]', 'pro_started';
+  assert (select to_jsonb(s) - 'updated_at' from wm.subscriptions s where id = 'sub_bench_p1') = jsonb_build_object('id', 'sub_bench_p1',
+    'user_id', a, 'customer_id', pg_temp.cus(a), 'status', 'active', 'price_id', 'price_test_bench_pro', 'current_period_end',
+    to_timestamp(P), 'cancel_at_period_end', false, 'cancel_at', null, 'canceled_at', null, 'latest_invoice_status', null,
+    'latest_invoice_at', null, 'event_created', to_timestamp(T)), 'ligne subscriptions';
+  assert (select user_id from wm.stripe_customers where customer_id = pg_temp.cus(a)) = a, 'lien Customer posé';
+  -- Le Checkout arrive ensuite : achat, Pro gardé, aucune notification de plus.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_p1b', 'checkout.session.completed', T + 1, pg_temp.cs('cs_test_bench_p1', a, 'subscription')))
+    = 'applied', 'Checkout après';
+  assert pg_temp.pro(a) and (select count(*) from public.notifications where user_id = a) = 1, 'Pro gardé';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_p2', 'customer.subscription.created', T, pg_temp.sub('sub_bench_p2', b, 'trialing', P)))
+    = 'applied', 'trialing';
+  assert pg_temp.pro(b) and pg_temp.n(b, 'pro_started') = 1, 'trialing → Pro';
+  perform pg_temp.inv('Pro allumé');
+end $$;
+
+-- Review Focus, Pro éteint (G4, G5, G44) : past_due, retour à active, cancel_at_period_end, deleted ; un instantané plus ancien est
+-- stale ; un même-seconde est réappliqué sur un statut non terminal (G44) ; chaque statut → is_pro ; is_vip jamais touché.
+do $$ declare a uuid := tests.make_user('StrOffA'); d uuid := tests.make_user('StrOffD'); T bigint := extract(epoch from now())::bigint;
+  P bigint := T + 30 * 86400; r jsonb; s text; begin
+  assert pg_temp.ap(pg_temp.ev('evt_bench_o1', 'customer.subscription.created', T, pg_temp.sub('sub_bench_off', a, 'active', P)))
+    = 'applied', 'o1';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_o2', 'customer.subscription.updated', T + 10, pg_temp.sub('sub_bench_off', a, 'past_due', P)))
+    = 'applied', 'o2';
+  assert not pg_temp.pro(a) and pg_temp.n(a, 'pro_ended') = 1, 'past_due → pas Pro';
+  assert (select jsonb_agg(data) from public.notifications where user_id = a and type = 'pro_ended') = '[{"subscription_id": "sub_bench_off"}]',
+    'données de pro_ended';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_o3', 'customer.subscription.updated', T + 20, pg_temp.sub('sub_bench_off', a, 'active', P)))
+    = 'applied', 'o3';
+  assert pg_temp.pro(a) and pg_temp.n(a, 'pro_started') = 2, 'active revenu';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_o4', 'customer.subscription.updated', T + 30, pg_temp.sub('sub_bench_off', a, 'active', P, true)))
+    = 'applied', 'o4';
+  assert pg_temp.pro(a) and (select cancel_at_period_end and cancel_at = to_timestamp(P) from wm.subscriptions where id = 'sub_bench_off'),
+    'cancel_at_period_end garde Pro';
+  -- Même seconde, statut stocké non terminal : réappliqué.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_o4b', 'customer.subscription.updated', T + 30, pg_temp.sub('sub_bench_off', a, 'active', P)))
+    = 'applied', 'même seconde réappliquée';
+  assert (select not cancel_at_period_end and cancel_at is null from wm.subscriptions where id = 'sub_bench_off'), 'réappliqué';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_o5', 'customer.subscription.deleted', T + 40, pg_temp.sub('sub_bench_off', a, 'canceled', P)))
+    = 'applied', 'deleted';
+  assert not pg_temp.pro(a) and pg_temp.n(a, 'pro_ended') = 2, 'deleted → pas Pro';
+  r := (select to_jsonb(x) from wm.subscriptions x where id = 'sub_bench_off');
+  assert pg_temp.ap(pg_temp.ev('evt_bench_o6', 'customer.subscription.updated', T + 30, pg_temp.sub('sub_bench_off', a, 'active', P)))
+    = 'stale', 'plus ancien';
+  assert (select outcome from wm.stripe_events where id = 'evt_bench_o6') = 'stale', 'stale stocké';
+  assert not pg_temp.pro(a) and (select to_jsonb(x) from wm.subscriptions x where id = 'sub_bench_off') = r, 'ligne inchangée';
+  assert (select count(*) from public.notifications where user_id = a) = 4, 'aucune notification de plus';
+  -- Chaque statut (G4), sur un VIP : is_vip n'est ni lu ni écrit.
+  update public.profiles set is_vip = true where id = d;
+  foreach s in array array['active', 'trialing', 'past_due', 'canceled', 'unpaid', 'incomplete', 'incomplete_expired', 'paused'] loop
+    assert pg_temp.ap(pg_temp.ev('evt_bench_st_' || s || '_1', 'customer.subscription.created', T, pg_temp.sub('sub_bench_st_' || s, d,
+      'active', P))) = 'applied' and pg_temp.pro(d), s || ' : active d''abord';
+    assert pg_temp.ap(pg_temp.ev('evt_bench_st_' || s || '_2', 'customer.subscription.updated', T + 1, pg_temp.sub('sub_bench_st_' || s, d,
+      s, P))) = 'applied', s;
+    assert pg_temp.pro(d) = (s in ('active', 'trialing')), s || ' → is_pro';
+    assert pg_temp.ap(pg_temp.ev('evt_bench_st_' || s || '_3', 'customer.subscription.deleted', T + 2, pg_temp.sub('sub_bench_st_' || s, d,
+      'canceled', P))) = 'applied' and not pg_temp.pro(d), s || ' : deleted';
+  end loop;
+  assert (select is_vip from public.profiles where id = d), 'is_vip écrasé';
+  assert (select prosrc from pg_proc where oid = to_regproc('wm.stripe_apply')) not like '%is_vip%', 'is_vip lu ou écrit';
+  perform pg_temp.inv('Pro éteint');
+end $$;
+
+-- Review Focus, départage à égalité de seconde (G44).
+do $$ declare a uuid := tests.make_user('StrTieA'); b uuid := tests.make_user('StrTieB'); c uuid := tests.make_user('StrTieC');
+  e uuid := tests.make_user('StrTieE'); T bigint := extract(epoch from now())::bigint; P bigint := T + 30 * 86400; begin
+  -- created incomplete et updated active d'un même Checkout, même seconde, reçus à l'envers.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t1u', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_t1', a, 'active', P)))
+    = 'applied', 't1 updated';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t1c', 'customer.subscription.created', T, pg_temp.sub('sub_bench_t1', a, 'incomplete', P)))
+    = 'stale', 't1 created';
+  assert (select status from wm.subscriptions where id = 'sub_bench_t1') = 'active' and pg_temp.pro(a), 't1 active';
+  -- deleted puis updated active à la même seconde : reste canceled.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t2c', 'customer.subscription.created', T - 100, pg_temp.sub('sub_bench_t2', b, 'active', P)))
+    = 'applied', 't2 created';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t2d', 'customer.subscription.deleted', T, pg_temp.sub('sub_bench_t2', b, 'canceled', P)))
+    = 'applied', 't2 deleted';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t2u', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_t2', b, 'active', P)))
+    = 'stale', 't2 updated';
+  assert (select status from wm.subscriptions where id = 'sub_bench_t2') = 'canceled' and not pg_temp.pro(b), 't2 canceled';
+  -- incomplete_expired puis active à la même seconde : reste incomplete_expired.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t3x', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_t3', c, 'incomplete_expired', P)))
+    = 'applied', 't3 expired';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t3a', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_t3', c, 'active', P)))
+    = 'stale', 't3 active';
+  assert (select status from wm.subscriptions where id = 'sub_bench_t3') = 'incomplete_expired' and not pg_temp.pro(c), 't3';
+  -- active, active puis past_due à la même seconde : chacun réappliqué, past_due final.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t4a', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_t4', e, 'active', P)))
+    = 'applied', 't4 a';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t4b', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_t4', e, 'active', P)))
+    = 'applied', 't4 b';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t4p', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_t4', e, 'past_due', P)))
+    = 'applied', 't4 past_due';
+  assert (select status from wm.subscriptions where id = 'sub_bench_t4') = 'past_due' and not pg_temp.pro(e), 't4';
+  -- incomplete sur incomplete à la même seconde : réappliqué.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t5a', 'customer.subscription.created', T, pg_temp.sub('sub_bench_t5', e, 'incomplete', P)))
+    = 'applied', 't5 a';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_t5b', 'customer.subscription.updated', T, pg_temp.sub('sub_bench_t5', e, 'incomplete', P, true)))
+    = 'applied', 't5 b';
+  perform pg_temp.inv('départage');
+end $$;
+
+-- Objet incomplet (G29) : amount_total et currency nuls → achat à 0 et '', crédit unique, aucune exception.
+do $$ declare a uuid := tests.make_user('StrApI'); T bigint := extract(epoch from now())::bigint;
+  o jsonb := pg_temp.cs('cs_test_bench_inc', a, 'payment') || '{"amount_total": null, "currency": null}'; begin
+  assert pg_temp.ap(pg_temp.ev('evt_bench_i1', 'checkout.session.completed', T, o)) = 'applied', 'incomplet';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_i2', 'checkout.session.async_payment_succeeded', T, o)) = 'applied', 'incomplet, async';
+  assert (select jsonb_agg(jsonb_build_object('amount', amount, 'currency', currency, 'wb', wb)) from wm.purchases where user_id = a)
+    = '[{"amount": 0, "currency": "", "wb": 2500}]', 'achat';
+  assert pg_temp.bal(a) = 2500 and (select count(*) from wm.wb_ledger where user_id = a and reason = 'stripe') = 1, 'crédit unique';
+  -- Sans objet ni id de session : ignoré, jamais une exception rejouée.
+  assert pg_temp.ap('{"id": "evt_bench_i3", "type": "checkout.session.completed", "created": 1}') = 'ignored', 'sans objet';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_i4', 'customer.subscription.updated', T, '{}')) = 'ignored', 'abonnement sans id';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_i5', 'charge.dispute.created', T, '{}')) = 'ignored', 'litige sans id';
+  perform pg_temp.inv('objet incomplet');
+end $$;
+
+-- Résolution du joueur (stripe_uid, G29) : uuid en forme et existant, dans l'ordre, sinon le Customer relié ; jamais d'exception de cast.
+do $$ declare a uuid := tests.make_user('StrUidA'); b uuid := tests.make_user('StrUidB'); T bigint := extract(epoch from now())::bigint;
+  P bigint := T + 30 * 86400; x uuid := gen_random_uuid(); o jsonb; begin
+  assert wm.stripe_uid(array['abc', null, x::text, a::text, b::text], null) = a, 'premier existant';
+  assert wm.stripe_uid(array[upper(a::text)], null) is null, 'majuscules';
+  assert wm.stripe_uid(array[]::text[], null) is null and wm.stripe_uid(null, null) is null, 'vide';
+  insert into wm.stripe_customers (customer_id, user_id) values (pg_temp.cus(b), b);
+  assert wm.stripe_uid(array['abc'], pg_temp.cus(b)) = b and wm.stripe_uid(array[a::text], pg_temp.cus(b)) = a, 'Customer en dernier';
+  o := jsonb_set(pg_temp.sub('sub_bench_r1', x, 'active', P), '{metadata,uid}', '"abc"');
+  assert pg_temp.ap(pg_temp.ev('evt_bench_r1', 'customer.subscription.created', T, o)) = 'unresolved', 'abc';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_r2', 'customer.subscription.created', T, pg_temp.sub('sub_bench_r2', x, 'active', P)))
+    = 'unresolved', 'uuid inexistant';
+  assert (select outcome from wm.stripe_events where id = 'evt_bench_r2') = 'unresolved', 'unresolved stocké';
+  assert not exists (select from wm.subscriptions where id in ('sub_bench_r1', 'sub_bench_r2')), 'rien écrit';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_r3', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_r3', x, 'payment')))
+    = 'unresolved', 'Checkout introuvable';
+  assert not exists (select from wm.purchases where session_id = 'cs_test_bench_r3'), 'aucun achat';
+  -- client_reference_id illisible : metadata.uid prend le relais.
+  o := jsonb_set(pg_temp.cs('cs_test_bench_r4', a, 'payment'), '{client_reference_id}', '"abc"');
+  assert pg_temp.ap(pg_temp.ev('evt_bench_r4', 'checkout.session.completed', T, o)) = 'applied' and pg_temp.bal(a) = 2500, 'metadata.uid';
+  -- Abonnement résolu par le seul Customer relié.
+  o := jsonb_set(pg_temp.sub('sub_bench_r5', b, 'active', P), '{metadata}', '{}');
+  assert pg_temp.ap(pg_temp.ev('evt_bench_r5', 'customer.subscription.created', T, o)) = 'applied' and pg_temp.pro(b), 'par Customer';
+  -- Une ligne connue garde son joueur, même si metadata.uid change.
+  o := pg_temp.sub('sub_bench_r5', a, 'canceled', P);
+  assert pg_temp.ap(pg_temp.ev('evt_bench_r6', 'customer.subscription.deleted', T + 1, o)) = 'applied', 'uid retouché';
+  assert (select user_id from wm.subscriptions where id = 'sub_bench_r5') = b and not pg_temp.pro(b), 'joueur gardé';
+  perform pg_temp.inv('résolution');
+end $$;
+
+-- Factures (G29, C5) : latest_invoice_* de l'abonnement s'il existe et si plus récent ; échec → pro_payment_failed.
+do $$ declare a uuid := tests.make_user('StrInv'); T bigint := extract(epoch from now())::bigint; P bigint := T + 30 * 86400; i jsonb;
+  begin
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f0', 'customer.subscription.created', T, pg_temp.sub('sub_bench_1', a, 'active', P))) = 'applied';
+  i := jsonb_build_object('id', 'in_bench_1', 'object', 'invoice', 'customer', pg_temp.cus(a), 'created', T, 'parent',
+    jsonb_build_object('subscription_details', jsonb_build_object('subscription', 'sub_bench_1', 'metadata', jsonb_build_object('uid', a))));
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f1', 'invoice.payment_failed', T + 5, i)) = 'applied', 'échec';
+  assert (select latest_invoice_status = 'payment_failed' and latest_invoice_at = to_timestamp(T) and status = 'active'
+    from wm.subscriptions where id = 'sub_bench_1'), 'payment_failed';
+  assert (select jsonb_agg(data) from public.notifications where user_id = a and type = 'pro_payment_failed')
+    = '[{"subscription_id": "sub_bench_1", "invoice_id": "in_bench_1"}]', 'pro_payment_failed';
+  assert pg_temp.pro(a), 'Pro inchangé par une facture';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f2', 'invoice.paid', T + 105, i || jsonb_build_object('id', 'in_bench_2', 'created', T + 100)))
+    = 'applied', 'payée';
+  assert (select latest_invoice_status = 'paid' and latest_invoice_at = to_timestamp(T + 100) from wm.subscriptions where id = 'sub_bench_1'),
+    'paid';
+  -- Un échec plus ancien, reçu après : ni écrit ni notifié.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f3', 'invoice.payment_failed', T + 106, i || jsonb_build_object('id', 'in_bench_0', 'created', T - 100)))
+    = 'applied', 'échec ancien';
+  assert (select latest_invoice_status from wm.subscriptions where id = 'sub_bench_1') = 'paid' and pg_temp.n(a, 'pro_payment_failed') = 1,
+    'échec ancien ignoré';
+  -- Abonnement inconnu : appliqué, rien écrit.
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f4', 'invoice.payment_failed', T + 107, jsonb_set(i, '{parent,subscription_details,subscription}',
+    '"sub_bench_inconnu"'))) = 'applied', 'abonnement inconnu';
+  assert pg_temp.n(a, 'pro_payment_failed') = 1 and not exists (select from wm.subscriptions where id = 'sub_bench_inconnu'), 'rien écrit';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_f5', 'invoice.paid', T + 108, jsonb_set(jsonb_set(i, '{parent,subscription_details,metadata,uid}',
+    to_jsonb(gen_random_uuid())), '{customer}', '"cus_bench_inconnu"'))) = 'unresolved', 'facture introuvable';
+  perform pg_temp.inv('factures');
+end $$;
+
+-- Litiges (G8, G29) : upsert gardé par event.created.
+do $$ declare T bigint := extract(epoch from now())::bigint; dp jsonb := jsonb_build_object('id', 'dp_bench_1', 'object', 'dispute',
+  'charge', 'ch_bench_1', 'amount', 499, 'currency', 'cad', 'reason', 'fraudulent', 'status', 'needs_response', 'created', T - 3600); begin
+  assert pg_temp.ap(pg_temp.ev('evt_bench_d1', 'charge.dispute.created', T, dp)) = 'applied', 'created';
+  assert (select to_jsonb(d) - 'updated_at' from wm.stripe_disputes d where id = 'dp_bench_1') = jsonb_build_object('id', 'dp_bench_1',
+    'charge_id', 'ch_bench_1', 'amount', 499, 'currency', 'cad', 'reason', 'fraudulent', 'status', 'needs_response',
+    'created_at', to_timestamp(T - 3600), 'event_created', to_timestamp(T)), 'ligne';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_d2', 'charge.dispute.closed', T + 50, dp || '{"status": "lost"}')) = 'applied', 'closed';
+  assert (select status = 'lost' and event_created = to_timestamp(T + 50) from wm.stripe_disputes where id = 'dp_bench_1'), 'lost';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_d3', 'charge.dispute.created', T + 10, dp)) = 'applied', 'created ancien';
+  assert (select status = 'lost' and event_created = to_timestamp(T + 50) from wm.stripe_disputes where id = 'dp_bench_1'), 'garde';
+  assert (select count(*) from wm.stripe_disputes where id = 'dp_bench_1') = 1, 'une ligne';
+end $$;
+
+-- Ignorés (G29, D:104) : type inconnu consigné ; livemode vrai sans effet.
+do $$ declare a uuid := tests.make_user('StrIgn'); T bigint := extract(epoch from now())::bigint; begin
+  assert pg_temp.ap(pg_temp.ev('evt_bench_g1', 'customer.created', T, '{"id": "cus_bench_g1", "object": "customer"}')) = 'ignored', 'inconnu';
+  assert (select to_jsonb(s) - 'received_at' from wm.stripe_events s where id = 'evt_bench_g1') = jsonb_build_object('id', 'evt_bench_g1',
+    'type', 'customer.created', 'created', to_timestamp(T), 'livemode', false, 'outcome', 'ignored'), 'consigné';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_g2', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_live', a, 'payment'))
+    || '{"livemode": true}') = 'ignored', 'livemode';
+  assert (select livemode from wm.stripe_events where id = 'evt_bench_g2'), 'livemode stocké';
+  assert pg_temp.bal(a) = 0 and not exists (select from wm.purchases where user_id = a)
+    and not exists (select from wm.stripe_customers where user_id = a), 'livemode sans effet';
+  perform pg_temp.inv('ignorés');
+end $$;
+
+-- Refus : événement invalide (400) ; maintenance (503) sans ligne stripe_events, le rejeu ensuite passe.
+do $$ declare a uuid := tests.make_user('StrRef'); T bigint := extract(epoch from now())::bigint; e jsonb;
+  bad jsonb := '{"status":400,"code":"invalid_request","error":"Événement invalide","message":"Événement invalide"}'; begin
+  assert pg_temp.err('select wm.stripe_apply(''{}'')') = bad, '{}';
+  assert pg_temp.err('select wm.stripe_apply(null)') = bad, 'null';
+  assert pg_temp.err('select wm.stripe_apply(''{"type": "x", "created": 1}'')') = bad, 'sans id';
+  assert pg_temp.err('select wm.stripe_apply(''{"id": "evt_bench_v1", "created": 1}'')') = bad, 'sans type';
+  assert pg_temp.err('select wm.stripe_apply(''{"id": "evt_bench_v1", "type": "x"}'')') = bad, 'sans created';
+  assert pg_temp.err('select wm.stripe_apply(''{"id": "evt_bench_v1", "type": "x", "created": "abc"}'')') = bad, 'created illisible';
+  assert pg_temp.err('select wm.stripe_apply(''{"id": "xx_bench_v1", "type": "x", "created": 1}'')') = bad, 'id hors evt_';
+  assert not exists (select from wm.stripe_events where id = 'evt_bench_v1'), 'aucune ligne';
+  e := pg_temp.ev('evt_bench_mt', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_mt', a, 'payment'));
+  update wm.config set value = 'true' where key = 'maintenance';
+  assert pg_temp.err(format('select wm.stripe_apply(%L)', e)) = '{"status":503,"code":"maintenance","error":"Maintenance en cours, reviens dans quelques minutes.","message":"Maintenance en cours, reviens dans quelques minutes."}', 'maintenance';
+  update wm.config set value = 'false' where key = 'maintenance';
+  assert not exists (select from wm.stripe_events where id = 'evt_bench_mt') and pg_temp.bal(a) = 0, 'rien en maintenance';
+  assert pg_temp.ap(e) = 'applied' and pg_temp.bal(a) = 2500, 'rejeu après la maintenance';
+  perform pg_temp.inv('refus');
+end $$;
+
+-- Pierre tombale (G35, G38) : état d'abonnement, crédit inerte, stripe_pending recalculé, aucune notification.
+do $$ declare a uuid := tests.make_user('StrTomb'); T bigint := extract(epoch from now())::bigint; P bigint := T + 30 * 86400; begin
+  insert into wm.deleted_accounts (user_id) values (a);
+  assert not (select stripe_pending from wm.deleted_accounts where user_id = a), 'avant';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_x1', 'customer.subscription.created', T, pg_temp.sub('sub_bench_x1', a, 'active', P)))
+    = 'applied', 'created';
+  assert (select stripe_pending from wm.deleted_accounts where user_id = a) and pg_temp.pro(a), 'stripe_pending posé';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_x2', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_x2', a, 'payment')))
+    = 'applied' and pg_temp.bal(a) = 2500, 'crédit inerte';
+  assert pg_temp.ap(pg_temp.ev('evt_bench_x3', 'customer.subscription.deleted', T + 10, pg_temp.sub('sub_bench_x1', a, 'canceled', P)))
+    = 'applied', 'deleted';
+  assert not (select stripe_pending from wm.deleted_accounts where user_id = a) and not pg_temp.pro(a), 'stripe_pending levé';
+  assert not exists (select from public.notifications where user_id = a), 'aucune notification';
+  perform pg_temp.inv('pierre tombale');
+end $$;
+
+-- Erreur injectée (D:628) : l'effet échoue → aucune ligne stripe_events ni de grand livre (même transaction) ; Stripe réessaie et passe.
+do $$ declare a uuid := tests.make_user('StrBoom'); T bigint := extract(epoch from now())::bigint; e jsonb; raised boolean := false; begin
+  e := pg_temp.ev('evt_bench_b1', 'checkout.session.completed', T, pg_temp.cs('cs_test_bench_b1', a, 'payment'));
+  create trigger zz_boom after insert on wm.purchases for each row when (new.session_id = 'cs_test_bench_b1') execute function tests.boom();
+  begin
+    perform wm.stripe_apply(e);
+  exception when sqlstate 'XX000' then
+    raised := true;
+  end;
+  drop trigger zz_boom on wm.purchases;
+  assert raised, 'erreur avalée';
+  assert not exists (select from wm.stripe_events where id = 'evt_bench_b1') and not exists (select from wm.wb_ledger where user_id = a)
+    and not exists (select from wm.purchases where user_id = a) and pg_temp.bal(a) = 0, 'effet partiel';
+  assert pg_temp.ap(e) = 'applied' and pg_temp.bal(a) = 2500, 'relance';
+  perform pg_temp.inv('erreur injectée');
+end $$;
+
+-- lock_timeout avant la première écriture (P5) ; stripe_apply : la ligne stripe_events est le premier verrou, avant le profil (C4).
+do $$ declare bad text := tests.lock_timeout_violations(array['stripe_customer_set'], array['insert into wm.stripe_customers']);
+  s text := (select prosrc from pg_proc where oid = to_regproc('wm.stripe_apply')); begin
   assert bad is null, 'lock_timeout absent ou tardif : ' || bad;
+  bad := tests.lock_timeout_violations(array['stripe_apply'], array['insert into wm.stripe_events', 'wm.lock_user(']);
+  assert bad is null, 'lock_timeout absent ou tardif : ' || bad;
+  assert strpos(s, 'insert into wm.stripe_events') between 1 and strpos(s, 'wm.lock_user(') - 1, 'stripe_events après le profil';
 end $$;
 
 select pg_temp.inv('fin de 40');
