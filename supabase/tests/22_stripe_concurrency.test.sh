@@ -11,7 +11,8 @@
 #    faux dans les quatre cas (garde G5, départage G44).
 # 5. Suppression contre abonnement créé (G35) : account_delete(D) et customer.subscription.created active de D, dix tours, ordre alterné →
 #    stripe_pending vrai à chaque tour, aucune notification chez D.
-# 6. admin_stripe_cancel doublé (même p_idem, deux sessions) → la seconde servie après 0,5 s au même corps, une ligne d'audit.
+# 6. admin_stripe_cancel doublé (même p_idem, deux sessions) → la seconde, vue en attente de la clé de la première, servie au même corps,
+#    une ligne d'audit.
 # 7. stripe_cancel_done contre un second abonnement d'une pierre tombale (G35, G41) : la résiliation tenue puis stripe_apply, et l'inverse
 #    → stripe_pending vrai (la ligne prise avant l'exists : aucune mise à jour perdue).
 # 8. Suppression contre crédit de 2 500 WB (G38), dans les deux ordres → +2 500 une fois, aucune notification chez D ; l'achat dans
@@ -27,7 +28,7 @@ cleanup() {
   # d'abord (clé NO ACTION vers public.cards), l'audit et les clés d'idempotence (sans clé étrangère), les événements et litiges du tag,
   # puis les joueurs, leurs lignes Stripe, ventes et copies avec eux, puis les cartes.
   local ids
-  ids="{$(paste -sd, "$tmp/users" 2>/dev/null || true)}"
+  ids="{$(grep -sh . "$tmp/users" | paste -sd, - || true)}"  # fichier absent ou vide : aucun joueur
   q -c "select set_config('wm.allow_tombstone_delete', 'on', false)" \
     -c "select wm.pool_remove(id) from public.cards where wikipedia_title like '$tag %'" \
     -c "delete from wm.staff_actions where staff_id = any ('$ids'::uuid[]) or target_id = any ('$ids'::text[])" \
@@ -42,7 +43,12 @@ trap cleanup EXIT
 fail() { echo "$1" >&2; shift; (( $# == 0 )) || cat "$@" >&2; exit 1; }  # $2… : sorties d'erreur à montrer
 
 # Joueur « ${tag}_$1 » au solde $2 (0 par défaut), noté pour le nettoyage. trader : vérifié (marché).
-player() { local u; u="$(q -c "select tests.make_user('${tag}_$1', ${2:-0})")"; echo "$u" >>"$tmp/users"; echo "$u"; }
+# Échoue bruyamment (jamais d'id vide noté) : $(…) ne propage pas set -e, d'où le || fail.
+player() {
+  local u
+  u="$(q -c "select tests.make_user('${tag}_$1', ${2:-0})")" && [[ -n $u ]] || fail "joueur ${tag}_$1 non créé"
+  echo "$u" >>"$tmp/users"; echo "$u"
+}
 trader() { local u; u="$(player "$@")"; q -c "select wm.set_human_verified('$u')" >/dev/null; echo "$u"; }
 # Carte R du tag au pool, titrée « $tag $1 » ; rend son id.
 card() {
@@ -57,14 +63,11 @@ bg() { q -v VERBOSITY=verbose -c "set role service_role; $2" >/dev/null 2>"$tmp/
 # Même chose, la sortie gardée dans $tmp/$1.out.
 bgo() { q -v VERBOSITY=verbose -c "set role service_role; $2" >"$tmp/$1.out" 2>"$tmp/$1" & pids+=($!); }
 waitall() { fails=0; for p in "${pids[@]}"; do wait "$p" || fails=$((fails + 1)); done; pids=(); }
-# Aucun interblocage ni attente de verrou échue ; chaque sortie d'erreur non vide des fichiers $2… contient un refus du motif $1.
-refusals() {
-  local pat="$1"; shift
+# Aucun interblocage ni attente de verrou échue (dit d'abord), puis aucune erreur ni aucun avertissement dans les fichiers $@.
+quiet() {
   ! grep -qE '40P01|55P03' "$@" || fail "interblocage ou verrou échu" $(grep -lE '40P01|55P03' "$@")
-  for f in "$@"; do [[ ! -s $f ]] || grep -qE "$pat" "$f" || fail "refus inattendu dans ${f##*/}" "$f"; done
+  for f in "$@"; do [[ ! -s $f ]] || fail "sortie d'erreur dans ${f##*/}" "$f"; done
 }
-# Aucune erreur ni aucun avertissement.
-quiet() { for f in "$@"; do [[ ! -s $f ]] || fail "sortie d'erreur dans ${f##*/}" "$f"; done; }
 # Attend le PgSleep du bloqueur ; mort avant, il échoue avec sa sortie d'erreur $1, si elle est donnée.
 sleeping() {
   until [[ "$(q -c "select count(*) from pg_stat_activity where wait_event = 'PgSleep'")" == 1 ]]; do
@@ -105,11 +108,10 @@ released() {
   (( max >= $2 )) || fail "$1 : contention insuffisante, $max appels en attente ($2 au moins)"
   (( max >= 2 )) || echo "22_stripe_concurrency : $1 : avertissement, un seul appel vu en attente" >&2
 }
-ms() { echo $(( (${EPOCHREALTIME/[.,]/} - ${t0/[.,]/}) / 1000 )); }  # depuis t0=$EPOCHREALTIME
 waiting() { q -c "select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query like 'set role service_role;%'"; }
-# Lance $2 par bg (fichier $1), puis attend que ${3:-1} appels attendent un verrou avant de rendre la main.
+# Lance $2 par bgo (fichiers $1 et $1.out), puis attend que ${3:-1} appels attendent un verrou avant de rendre la main.
 first() {
-  bg "$1" "$2"
+  bgo "$1" "$2"
   local p="${pids[-1]}"
   until (( $(waiting) >= ${3:-1} )); do
     kill -0 "$p" 2>/dev/null || fail "$1 jamais en attente d'un verrou" "$tmp/$1"
@@ -161,7 +163,6 @@ hold s1 "perform from public.profiles where id = '$a' for update" 2
 for k in 1 2; do bgo "1-$k" "$(apply 1 checkout.session.completed "$T" "$(cs 1 "$a")")"; done
 released s1 2
 waitall
-refusals . "$tmp/1-1" "$tmp/1-2"
 quiet "$tmp/1-1" "$tmp/1-2"
 got="$(cat "$tmp/1-1.out" "$tmp/1-2.out" | grep -c '^{"outcome": "applied", "duplicate": false}$') \
 $(cat "$tmp/1-1.out" "$tmp/1-2.out" | grep -c '^{"outcome": null, "duplicate": true}$') $(bal "$a") $(paid "$a") $(inv)"
@@ -174,7 +175,6 @@ bgo 2c "$(apply 2c checkout.session.completed "$T" "$(cs 2 "$a")")"
 bgo 2s "$(apply 2s checkout.session.async_payment_succeeded "$((T + 1))" "$(cs 2 "$a")")"
 released s2 2
 waitall
-refusals . "$tmp/2c" "$tmp/2s"
 quiet "$tmp/2c" "$tmp/2s"
 got="$(cat "$tmp/2c.out" "$tmp/2s.out" | grep -c '^{"outcome": "applied", "duplicate": false}$') $(bal "$a") $(paid "$a") $(inv)"
 [[ $got == "2 2500 1 1 1 []" ]] || fail "completed et async_payment_succeeded : applied, solde, achats, lignes stripe, wb_purchased, invariants : $got"
@@ -185,7 +185,6 @@ hold s3 "perform from public.profiles where id = '$a' for update" 10
 for k in $(seq 10); do bgo "3-$k" "$(apply 3 checkout.session.completed "$T" "$(cs 3 "$a")")"; done
 released s3 5
 waitall
-refusals . "$tmp"/3-{1..10}
 quiet "$tmp"/3-{1..10}
 got="$(cat "$tmp"/3-{1..10}.out | grep -c '"duplicate": false') $(cat "$tmp"/3-{1..10}.out | grep -c '^{"outcome": null, "duplicate": true}$') \
 $(bal "$a") $(paid "$a") $(inv)"
@@ -204,7 +203,6 @@ for pass in "updated 5" "deleted 5" "updated 0" "deleted 0"; do
   if [[ $lead == updated ]]; then first "${k}u" "$up"; bg "${k}d" "$dl"; else first "${k}d" "$dl"; bg "${k}u" "$up"; fi
   released "s$k" 2
   waitall
-  refusals . "$tmp/${k}u" "$tmp/${k}d"
   quiet "$tmp/${k}u" "$tmp/${k}d"
   got="$(sub_state "$k") $(inv)"
   [[ $got == "canceled false []" ]] || fail "instantanés croisés ($lead d'abord, écart $gap s) : statut, is_pro, invariants : $got"
@@ -219,7 +217,6 @@ for i in $(seq 10); do
   if (( i % 2 == 0 )); then first "5d$i" "$(del "$d")"; bg "5a$i" "$cr"; else first "5a$i" "$cr"; bg "5d$i" "$(del "$d")"; fi
   released s5 2
   waitall
-  refusals . "$tmp/5d$i" "$tmp/5a$i"
   quiet "$tmp/5d$i" "$tmp/5a$i"
   got="$(pending "$d") $(notes "$d") $(sub_state "5-$i") $(deleted "$d") $(inv)"
   [[ $got == "t 0 active true 1 []" ]] || fail "suppression contre abonnement créé, tour $i : stripe_pending, notifications de D, statut, is_pro,
@@ -234,14 +231,11 @@ dup="select wm.admin_stripe_cancel('$adm', '$d', 'résiliation de test', 'k-dup'
 q -v VERBOSITY=verbose -c "set role service_role; begin; $dup; select pg_sleep(1); commit;" >"$tmp/6s1" 2>"$tmp/6s1.err" &
 blocker=$!
 sleeping "$tmp/6s1.err"
-t0=$EPOCHREALTIME
-got="$(q -v VERBOSITY=verbose -c "set role service_role; $dup" 2>"$tmp/6s2.err")" || fail "résiliation doublée : seconde session en erreur" "$tmp/6s2.err"
-dt="$(ms)"
+first 6s2 "$dup"  # vue en attente de la clé tenue : la contention est prouvée sans chronomètre
 wait "$blocker" || fail "résiliation doublée : première session en erreur" "$tmp/6s1.err"
-echo "22_stripe_concurrency : résiliation doublée : seconde session servie en $dt ms" >&2
-refusals . "$tmp/6s1.err" "$tmp/6s2.err"
-quiet "$tmp/6s1.err" "$tmp/6s2.err"
-(( dt >= 500 )) || fail "résiliation doublée : seconde session servie en $dt ms (500 au moins)"
+waitall
+quiet "$tmp/6s1.err" "$tmp/6s2"
+got="$(cat "$tmp/6s2.out")"
 [[ "$(cat "$tmp/6s1")" == "$got" && $got == *"\"subscription_ids\": [\"sub_bench_${tag}_6\"]"* ]] || fail "résiliation doublée : $got, puis $(cat "$tmp/6s1")"
 got="$(q -c "select count(*) from wm.staff_actions where action = 'stripe_cancel' and target_id = '$d'") $(pending "$d") $(inv)"
 [[ $got == "1 t []" ]] || fail "résiliation doublée : lignes d'audit, stripe_pending, invariants : $got"
@@ -257,10 +251,9 @@ for pass in resiliation abonnement; do
   run "$(del "$d")"
   done_="select wm.stripe_cancel_done('$d', array['sub_bench_${tag}_${k}1'])"
   cr="$(apply "${k}2" customer.subscription.created "$((T + 1))" "$(sub "${k}2" "$d" active)")"
-  if [[ $pass == resiliation ]]; then held "${k}h" "$done_"; first "${k}b" "$cr"; else held "${k}h" "$cr"; first "${k}b" "$done_"; fi
+  if [[ $pass == resiliation ]]; then held "${k}h" "$done_" 1.5; first "${k}b" "$cr"; else held "${k}h" "$cr" 1.5; first "${k}b" "$done_"; fi
   wait "$blocker" || fail "résiliation contre second abonnement ($pass) : transaction tenue en erreur" "$tmp/${k}h"
   waitall
-  refusals . "$tmp/${k}h" "$tmp/${k}b"
   quiet "$tmp/${k}h" "$tmp/${k}b"
   got="$(pending "$d") $(sub_state "${k}2") $(inv)"
   [[ $got == "t active true []" ]] || fail "résiliation contre second abonnement ($pass d'abord) : stripe_pending, statut, is_pro, invariants : $got"
@@ -276,7 +269,6 @@ for pass in credit suppression; do
   if [[ $pass == credit ]]; then first "${k}a" "$cr"; bg "${k}d" "$(del "$d")"; else first "${k}d" "$(del "$d")"; bg "${k}a" "$cr"; fi
   released "s$k" 2
   waitall
-  refusals . "$tmp/${k}a" "$tmp/${k}d"
   quiet "$tmp/${k}a" "$tmp/${k}d"
   got="$(bal "$d") $(paid "$d") $(notes "$d") $(deleted "$d") $(q -c "select count(*) from jsonb_array_elements(wm.staff_dashboard('$adm')
     -> 'purchases_on_deleted_list') e where e ->> 'session_id' = 'cs_test_bench_${tag}_$k'") $(inv)"
@@ -286,7 +278,7 @@ for pass in credit suppression; do
 done
 
 # 9. place_bid contre stripe_apply du même joueur : la mise tient la vente puis attend P ; stripe_apply tient sa ligne stripe_events puis
-# attend P. Un seul verrou commun, aucun cycle.
+# attend P. Un seul verrou commun, aucun cycle. Garde de non-régression : ne rougit que sur un interblocage ou un crédit perdu.
 s="$(trader 9s)"
 for pass in mise credit; do
   k="9${pass:0:1}"
@@ -299,7 +291,6 @@ for pass in mise credit; do
   if [[ $pass == mise ]]; then first "${k}b" "$bid"; bg "${k}a" "$cr"; else first "${k}a" "$cr"; bg "${k}b" "$bid"; fi
   released "s$k" 2
   waitall
-  refusals . "$tmp/${k}b" "$tmp/${k}a"
   quiet "$tmp/${k}b" "$tmp/${k}a"
   got="$(bal "$u") $(paid "$u") $(q -c "select (current_bidder_id = '$u') || ' ' || current_bid from public.auctions where id = '$au'") $(inv)"
   [[ $got == "2580 1 1 1 true 20 []" ]] || fail "mise contre crédit ($pass d'abord) : solde, achats, lignes stripe, wb_purchased, P meneur,
