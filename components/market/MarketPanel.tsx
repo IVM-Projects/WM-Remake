@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { api, userMessage } from '@/lib/api'
+import { useShop } from '@/components/shop/ShopProvider'
+import { link } from '@/components/ui/button'
+import { api, ApiError, userMessage } from '@/lib/api'
 import { formatDateTime, formatInt, wikibidous } from '@/lib/format'
 import { RARITY, rarityOf, type RarityCode } from '@/lib/rarity'
 
@@ -14,6 +16,9 @@ const muted = 'text-sm text-[var(--color-foreground)]/70'
 export function MarketPanel({ cardId }: { cardId: string }) {
   const [summary, setSummary] = useState<Summary | string | null>(null)
   const [sales, setSales] = useState<Sale[] | string | null>(null)
+  // 403 pro_required : le message du serveur, puis le lien vers l'abonnement.
+  const [locked, setLocked] = useState(false)
+  const { openShop } = useShop()
   useEffect(() => {
     let live = true
     const path = `/api/marketplace/cards/${cardId}/sales`
@@ -23,7 +28,11 @@ export function MarketPanel({ cardId }: { cardId: string }) {
     )
     api<{ recent: Sale[] }>(path).then(
       (r) => { if (live) setSales(r.recent) },
-      (e) => { if (live) setSales(userMessage(e, 'Les ventes n\'ont pas pu être lues.')) },
+      (e) => {
+        if (!live) return
+        setLocked(e instanceof ApiError && (e.body as { code?: unknown } | null)?.code === 'pro_required')
+        setSales(userMessage(e, 'Les ventes n\'ont pas pu être lues.'))
+      },
     )
     return () => { live = false }
   }, [cardId])
@@ -46,7 +55,10 @@ export function MarketPanel({ cardId }: { cardId: string }) {
       <section className="space-y-2">
         <h3 className="text-xs font-bold tracking-wider text-[var(--color-foreground)]/60">VENTES RÉCENTES</h3>
         {sales === null ? null : typeof sales === 'string' ? (
-          <p className={muted}>{sales}</p>
+          <>
+            <p className={muted}>{sales}</p>
+            {locked && <button type="button" onClick={openShop} className={link}>Voir l&apos;abonnement</button>}
+          </>
         ) : sales.length ? (
           <ul aria-label="Ventes récentes" className="space-y-1 text-sm">
             {sales.map((s) => (

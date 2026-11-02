@@ -39,3 +39,7 @@ export const formatTime = (iso: string): string => time.format(new Date(iso))
 // Date en toutes lettres fr-FR (« 21 octobre 2026 ») : séparateur de jour du fil de /dms, heure locale du joueur.
 const longDate = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long' })
 export const formatLongDate = (iso: string): string => longDate.format(new Date(iso))
+
+// Période d'une régénération (secondes de wm.config) : « toutes les 10 minutes », « toutes les minutes », « toutes les 90 secondes ».
+export const every = (s: number): string =>
+  s % 60 !== 0 ? `toutes les ${formatInt(s)} secondes` : s === 60 ? 'toutes les minutes' : `toutes les ${formatInt(s / 60)} minutes`

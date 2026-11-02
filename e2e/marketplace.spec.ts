@@ -979,6 +979,14 @@ test('onglet « Marché » de la modale : résumé pour tous ; joueur gratuit �
   await expect(dialog.getByText('Marché · Commune : 12 wikibidous (1 vente)', { exact: true })).toBeVisible()
   await expect(dialog.getByText('Fonction réservée aux membres Pro', { exact: true })).toBeVisible()
   await expect(dialog.getByText('Arrive bientôt')).toHaveCount(0)
+  // Le lien ouvre la boutique par-dessus la modale de la carte ; Échap ne ferme que la boutique.
+  await dialog.getByRole('button', { name: 'Voir l\'abonnement' }).click()
+  const shop = page.getByRole('dialog', { name: 'Boutique' })
+  await expect(shop).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(shop).toBeHidden()
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Voir l\'abonnement' })).toBeFocused()
 
   const pro = await login({ pro: true })
   trash.uids.push(pro.uid)
@@ -987,4 +995,5 @@ test('onglet « Marché » de la modale : résumé pour tous ; joueur gratuit �
   await expect(dialog.getByText('Marché · Commune : 12 wikibidous (1 vente)', { exact: true })).toBeVisible()
   await expect(dialog.getByRole('list', { name: 'Ventes récentes' }).getByRole('listitem')).toHaveText([/^Commune · 12 wikibidous · /])
   await expect(dialog.getByText('Fonction réservée aux membres Pro', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Voir l\'abonnement' })).toHaveCount(0)
 })

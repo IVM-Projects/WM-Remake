@@ -5,6 +5,8 @@ import { ImageCredit } from './ImageCredit'
 
 // Sans DOM (R18) : balisage initial seulement ; Échap, défausse et retrait d'étiquette sont couverts en e2e (Task 14).
 vi.mock('@/lib/prefs', () => ({ usePrefs: () => ({ sounds: true, hideSensitive: true, ready: true }) }))
+// MarketPanel ouvre la boutique (lien d'un 403 pro_required) : sans fournisseur ici.
+vi.mock('@/components/shop/ShopProvider', () => ({ useShop: () => ({ openShop: () => {} }) }))
 // Onglet de départ : sans DOM, aucun clic ; « market » rend l'onglet Marché (seul useState('details') est touché).
 const start = vi.hoisted(() => ({ tab: 'details' }))
 vi.mock('react', async (orig) => {

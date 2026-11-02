@@ -241,6 +241,26 @@ insert into wm.subscriptions (id, user_id, customer_id, status, event_created) v
   }
 })
 
+test('axe /pulls à 360 px, stock vide d\'un joueur gratuit avec un paquet offert : bannière, liens et « Paquets offerts », sans défilement horizontal', async ({ page, login }) => {
+  const { uid } = await login({ humanVerified: true })
+  try {
+    sql(`update public.profiles set packs_remaining = 0, packs_last_regen_at = now() where id = :'uid';
+insert into wm.grace_grants (user_id, size, reason) values (:'uid', 3, 'a11y')`, { uid })
+    await page.setViewportSize({ width: 360, height: 640 })
+    await page.goto('/pulls')
+    await expect(page.getByText('Avec Pro, un paquet revient toutes les 3 minutes.')).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Paquets offerts' }).getByRole('button', { name: 'Récupérer le paquet offert' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+    // Cibles de 44 px.
+    for (const b of [page.getByRole('button', { name: 'Voir l\'abonnement' }).first(), page.getByRole('button', { name: 'Récupérer le paquet offert' })]) {
+      expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(43.99)
+    }
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
+  }
+})
+
 test('axe /pulls en révélation', async ({ page, login }) => {
   await login({ humanVerified: true })
   await page.goto('/pulls')
