@@ -6,11 +6,10 @@ import { ghost, primary } from '@/components/ui/button'
 import { Loading } from '@/components/ui/Loading'
 import { ReadError, Section } from '@/components/ui/Section'
 import { api, userMessage } from '@/lib/api'
-import { liveSubscription, stripeUrl, type ShopState } from '@/lib/shop'
+import { liveSubscription, PORTAL_FAILED, stripeUrl, type ShopState } from '@/lib/shop'
 
 type Me = ShopState['me']
 
-const PORTAL_FAILED = 'Le portail de gestion n\'a pas pu s\'ouvrir.'
 const PAST_DUE = 'Le dernier paiement a échoué : ton abonnement Pro est suspendu. Mets à jour ton moyen de paiement.'
 
 // 2xx sans `me` lisible : une lecture en échec.
@@ -25,7 +24,7 @@ const dateFr = (iso: string | null | undefined): string | null => {
 }
 
 // Phrase d'état (G4, G20) : l'abonnement d'abord, les avantages de l'équipe ensuite.
-function statusText(me: Me): string {
+export function statusText(me: Me): string {
   const s = me.subscription
   if (!s || !liveSubscription(s)) return me.is_vip ? 'Avantages Pro accordés par l\'équipe.' : 'Tu n\'as pas d\'abonnement.'
   if (s.status === 'past_due' || s.status === 'unpaid') return PAST_DUE

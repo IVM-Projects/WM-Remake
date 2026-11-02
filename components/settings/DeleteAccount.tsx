@@ -20,6 +20,8 @@ const CONSEQUENCES = [
 ]
 
 const STRIPE_CANCEL = 'Ton abonnement Pro sera résilié tout de suite, sans remboursement.'
+// Durée du toast et de l'attente avant /login quand la résiliation chez Stripe reste à finir : le message est lisible jusqu'au départ.
+const PENDING_MS = 5000
 const STRIPE_PENDING = 'La résiliation de ton abonnement sera terminée par l\'équipe.'
 
 // « Supprimer mon compte » (G1) : irréversible, confirmé par la saisie du pseudo (S:81).
@@ -80,8 +82,8 @@ function ConfirmModal({ username, onClose }: { username: string; onClose: () => 
     await createBrowserSupabase().auth.signOut({ scope: 'local' }).catch(() => null)
     // La résiliation chez Stripe a échoué : le mot reste lisible avant de quitter la page.
     if (done?.stripe_pending === true) {
-      toast(STRIPE_PENDING, 6000)
-      await new Promise((r) => setTimeout(r, 3000))
+      toast(STRIPE_PENDING, PENDING_MS)
+      await new Promise((r) => setTimeout(r, PENDING_MS))
     }
     window.location.replace('/login')
   }

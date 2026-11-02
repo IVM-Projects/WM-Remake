@@ -8,10 +8,9 @@ import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { api, apiOnce, userMessage } from '@/lib/api'
-import { stripeUrl, type ShopItem } from '@/lib/shop'
+import { PORTAL_FAILED, stripeUrl, type ShopItem } from '@/lib/shop'
 
 const CHECKOUT_FAILED = 'Le paiement n\'a pas pu démarrer.'
-const PORTAL_FAILED = 'Le portail de gestion n\'a pas pu s\'ouvrir.'
 
 // Modale boutique (G21) : enveloppe de ShopOffers, qui lit la boutique partagée et porte les envois vers Stripe.
 export function ShopDialog({ onClose, notice = null }: { onClose: () => void; notice?: string | null }) {

@@ -715,7 +715,7 @@ test('suppression d\'un abonné : la modale annonce la résiliation immédiate ;
     await dialog.getByLabel('Tape ton pseudo pour confirmer').fill(me.username)
     await dialog.getByLabel('Tape ton pseudo pour confirmer').press('Enter')
     await expect(page.locator('#wm-toasts').getByText('La résiliation de ton abonnement sera terminée par l\'équipe.')).toBeVisible()
-    await expect(page).toHaveURL(/\/login$/)
+    await expect(page).toHaveURL(/\/login$/, { timeout: 15_000 })
     expect(sql(`select stripe_pending from wm.deleted_accounts where user_id = :'u'`, { u: me.uid })).toBe('t')
   } finally {
     sql(`select set_config('wm.allow_tombstone_delete', 'on', false);

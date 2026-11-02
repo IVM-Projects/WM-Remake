@@ -22,6 +22,8 @@ export function stripeUrl(r: { url?: unknown } | null): string | null {
   }
 }
 
+export const PORTAL_FAILED = 'Le portail de gestion n\'a pas pu s\'ouvrir.'
+
 // Abonnement non terminal (liste de G9, sans les deux statuts finaux) : il bloque un second Checkout et se résilie à la suppression du compte.
 export const liveSubscription = (s: { status?: unknown } | null | undefined): boolean =>
   typeof s?.status === 'string' && s.status !== 'canceled' && s.status !== 'incomplete_expired'
