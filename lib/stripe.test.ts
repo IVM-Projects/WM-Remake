@@ -93,17 +93,32 @@ describe('stripeClient et apiTarget', () => {
     expect(ctor.mock.lastCall?.[1]).toMatchObject({ host: '127.0.0.1', port: '54321', protocol: 'http' })
   })
 
-  it('clé live → STRIPE_API_URL ignorée (hôte Stripe), api_url_ignored journalisé une fois, sans l\'URL', () => {
+  it('clé live (ou toute clé hors sk_test_/rk_test_) → aucun client, STRIPE_API_URL posée ou non, live_key_refused journalisé une fois, '
+    + 'sans la clé ni l\'URL', () => {
     vi.stubEnv('STRIPE_SECRET_KEY', 'sk_live_bench_fake')
     vi.stubEnv('STRIPE_API_URL', 'http://evil-host.test:8080')
-    S.stripeClient()
-    S.stripeClient()
-    expect(ctor.mock.calls).toStrictEqual([
-      ['sk_live_bench_fake', { apiVersion: '2026-10-28.endive', maxNetworkRetries: 1, timeout: 10_000 }],
-      ['sk_live_bench_fake', { apiVersion: '2026-10-28.endive', maxNetworkRetries: 1, timeout: 10_000 }],
-    ])
-    expect(vi.mocked(console.error).mock.calls).toStrictEqual([['{"stripe":"api_url_ignored"}']])
-    expect(logs()).not.toContain('evil-host')
+    expect(S.stripeClient()).toBeNull()
+    vi.stubEnv('STRIPE_API_URL', '')
+    expect(S.stripeClient()).toBeNull()
+    for (const key of ['rk_live_bench_fake', 'pk_test_bench_fake', 'sk_bench_fake']) {
+      vi.stubEnv('STRIPE_SECRET_KEY', key)
+      expect(S.stripeClient(), key).toBeNull()
+    }
+    expect(ctor).not.toHaveBeenCalled()
+    expect(vi.mocked(console.error).mock.calls).toStrictEqual([['{"stripe":"live_key_refused"}']])
+    expect(logs()).not.toMatch(/evil-host|_bench_fake/)
+  })
+
+  it('clé live → checkout et portail 503 stripe_disabled sans appel Stripe, résiliation fausse (stripe_cancel_done non appelée)', async () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'sk_live_bench_fake')
+    rpcs({ stripe_checkout_prepare: ok({ customer_id: 'cus_bench_1', email: EMAIL }), stripe_portal_prepare: ok({ customer_id: 'cus_bench_1' }),
+      stripe_cancel_targets: ok({ subscription_ids: ['sub_bench_1'] }) })
+    expect(body(await S.checkoutCall(ORIGIN)({ p_uid: UID, p_item: 'wb_2500' })).body.code).toBe('stripe_disabled')
+    expect(body(await S.portalCall(ORIGIN)({ p_uid: UID })).body.code).toBe('stripe_disabled')
+    expect(await S.cancelSubscription('sub_bench_1')).toBe(false)
+    expect(await S.cancelSubscriptionsFor(UID)).toBe(false)
+    expect(ctor).not.toHaveBeenCalled()
+    expect(rpc.mock.calls.map((c) => c[0])).not.toContain('stripe_cancel_done')
   })
 
   it('sans STRIPE_SECRET_KEY → null, aucun client', () => {

@@ -12,12 +12,16 @@ import { Loading } from '@/components/ui/Loading'
 import { toast } from '@/components/ui/toast'
 import { api, apiOnce } from '@/lib/api'
 import { formatDateTime, formatInt } from '@/lib/format'
-import { formatPrice } from '@/lib/shop'
+import { formatPrice, SHOP } from '@/lib/shop'
 
-const COUNTS = ['open_reports', 'image_reports', 'auto_hidden_cards', 'active_sanctions', 'removed_cards', 'auth_pending', 'stripe_disputes_open', 'stripe_pending'] as const
+const COUNTS = ['open_reports', 'image_reports', 'auto_hidden_cards', 'active_sanctions', 'removed_cards', 'auth_pending', 'stripe_disputes_open', 'stripe_pending',
+  'purchases_on_deleted'] as const
 const readable = (d: Dashboard | null): Dashboard | null => (
-  d && COUNTS.every((k) => Number.isFinite(d[k])) && d.health && typeof d.health === 'object' && Array.isArray(d.stripe_disputes) && Array.isArray(d.stripe_pending_users) ? d : null
+  d && COUNTS.every((k) => Number.isFinite(d[k])) && d.health && typeof d.health === 'object' && Array.isArray(d.stripe_disputes) && Array.isArray(d.stripe_pending_users)
+    && Array.isArray(d.purchases_on_deleted_list) ? d : null
 )
+// Identifiant de session Checkout raccourci (assez pour le retrouver dans Stripe).
+const shortId = (s: string) => (s.length > 20 ? `${s.slice(0, 8)}…${s.slice(-8)}` : s)
 const unmeasured = 'non mesuré'
 const secs = (n: number | null | undefined) => (typeof n === 'number' ? `${formatInt(n)} s` : unmeasured)
 
@@ -49,6 +53,7 @@ export function DashboardClient({ role }: { role: StaffRole }) {
     ...(data.auth_pending > 0 ? [['Suppressions GoTrue en attente', data.auth_pending, '/admin/users', true] as [string, number, string, boolean]] : []),
     ...(data.stripe_disputes_open > 0 ? [['Litiges Stripe ouverts', data.stripe_disputes_open, '#admin-disputes', false] as [string, number, string, boolean]] : []),
     ...(data.stripe_pending > 0 ? [['Résiliations Stripe en attente', data.stripe_pending, '#admin-stripe-pending', false] as [string, number, string, boolean]] : []),
+    ...(data.purchases_on_deleted > 0 ? [['Achats sur comptes supprimés', data.purchases_on_deleted, '#admin-deleted-purchases', false] as [string, number, string, boolean]] : []),
   ] : []
   const h = data?.health
 
@@ -110,6 +115,24 @@ export function DashboardClient({ role }: { role: StaffRole }) {
                         Résilier
                       </button>
                     )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {/* Crédit inerte sur une pierre tombale (G38) : lecture seule, aucun identifiant de joueur affiché ; le remboursement se fait dans Stripe. */}
+          {data.purchases_on_deleted_list.length > 0 && (
+            <section aria-labelledby="admin-deleted-purchases" className="card-frame space-y-3 p-4">
+              <h2 id="admin-deleted-purchases" tabIndex={-1} className="text-lg font-bold outline-none">Paiements reçus après la suppression du compte</h2>
+              <p className="text-sm">Ces achats n&apos;ont crédité personne : à examiner dans Stripe.</p>
+              {data.purchases_on_deleted > data.purchases_on_deleted_list.length && (
+                <p className="text-sm text-[var(--color-foreground)]/70">Les {formatInt(data.purchases_on_deleted_list.length)} plus récents sur {formatInt(data.purchases_on_deleted)}.</p>
+              )}
+              <ul className="divide-y divide-[var(--color-border)]">
+                {data.purchases_on_deleted_list.map((p) => (
+                  <li key={p.session_id} className="py-2 text-sm">
+                    <p className="font-medium tabular-nums">{SHOP[p.item]?.label ?? p.item} · {formatPrice(p.amount)}</p>
+                    <p className="wrap-anywhere text-[var(--color-foreground)]/70">{formatDateTime(p.created_at)} · {shortId(p.session_id)}</p>
                   </li>
                 ))}
               </ul>

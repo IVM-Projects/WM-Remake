@@ -21,20 +21,23 @@ export function apiTarget(url: string): { host: string; port: string; protocol: 
   return { host: u.hostname, port: u.port || (u.protocol === 'http:' ? '80' : '443'), protocol: u.protocol === 'http:' ? 'http' : 'https' }
 }
 
-let urlIgnoredLogged = false
+let liveKeyLogged = false
 
 // Variables lues à l'appel (G32) ; la clé n'est jamais journalisée ni recopiée dans une erreur, l'URL non plus.
-// STRIPE_API_URL n'est suivie qu'avec une clé de test : une clé live ne part jamais vers un autre hôte que Stripe. Illisible avec une
-// clé de test → aucun client (503 stripe_disabled), jamais un repli silencieux vers api.stripe.com.
+// Mode test seulement (D:24) : stripe_apply ignore tout événement livemode, une clé live prendrait de l'argent sans rien créditer ; toute
+// clé hors sk_test_/rk_test_ → aucun client (503 stripe_disabled, résiliation en attente), journalisé une fois. Le passage en live lève
+// cette garde en même temps que celle de stripe_apply. STRIPE_API_URL illisible → aucun client, jamais un repli vers api.stripe.com.
 export function stripeClient(): Stripe | null {
   const key = process.env.STRIPE_SECRET_KEY
   if (!key) return null
+  if (!/^(sk|rk)_test_/.test(key)) {
+    if (!liveKeyLogged) console.error(JSON.stringify({ stripe: 'live_key_refused' }))
+    liveKeyLogged = true
+    return null
+  }
   const url = process.env.STRIPE_API_URL
   let target = {}
-  if (url && !/^(sk|rk)_test_/.test(key)) {
-    if (!urlIgnoredLogged) console.error(JSON.stringify({ stripe: 'api_url_ignored' }))
-    urlIgnoredLogged = true
-  } else if (url) {
+  if (url) {
     const t = apiTarget(url)
     if (!t) {
       console.error(JSON.stringify({ stripe: 'bad_api_url' }))

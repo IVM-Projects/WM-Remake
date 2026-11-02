@@ -415,8 +415,8 @@ do $$ declare a uuid := tests.make_user('StrOffA'); d uuid := tests.make_user('S
   assert pg_temp.ap(pg_temp.ev('evt_bench_o2', 'customer.subscription.updated', T + 10, pg_temp.sub('sub_bench_off', a, 'past_due', P)))
     = 'applied', 'o2';
   assert not pg_temp.pro(a) and pg_temp.n(a, 'pro_ended') = 1, 'past_due → pas Pro';
-  assert (select jsonb_agg(data) from public.notifications where user_id = a and type = 'pro_ended') = '[{"subscription_id": "sub_bench_off"}]',
-    'données de pro_ended';
+  assert (select jsonb_agg(data) from public.notifications where user_id = a and type = 'pro_ended')
+    = '[{"subscription_id": "sub_bench_off", "status": "past_due"}]', 'données de pro_ended (statut stocké)';
   assert pg_temp.ap(pg_temp.ev('evt_bench_o3', 'customer.subscription.updated', T + 20, pg_temp.sub('sub_bench_off', a, 'active', P)))
     = 'applied', 'o3';
   assert pg_temp.pro(a) and pg_temp.n(a, 'pro_started') = 2, 'active revenu';
@@ -431,6 +431,8 @@ do $$ declare a uuid := tests.make_user('StrOffA'); d uuid := tests.make_user('S
   assert pg_temp.ap(pg_temp.ev('evt_bench_o5', 'customer.subscription.deleted', T + 40, pg_temp.sub('sub_bench_off', a, 'canceled', P)))
     = 'applied', 'deleted';
   assert not pg_temp.pro(a) and pg_temp.n(a, 'pro_ended') = 2, 'deleted → pas Pro';
+  assert (select array_agg(data ->> 'status' order by data ->> 'status') from public.notifications where user_id = a and type = 'pro_ended')
+    = array['canceled', 'past_due'], 'statuts de pro_ended';
   r := (select to_jsonb(x) from wm.subscriptions x where id = 'sub_bench_off');
   assert pg_temp.ap(pg_temp.ev('evt_bench_o6', 'customer.subscription.updated', T + 30, pg_temp.sub('sub_bench_off', a, 'active', P)))
     = 'stale', 'plus ancien';
@@ -451,6 +453,28 @@ do $$ declare a uuid := tests.make_user('StrOffA'); d uuid := tests.make_user('S
   assert (select is_vip from public.profiles where id = d), 'is_vip écrasé';
   assert (select prosrc from pg_proc where oid = to_regproc('wm.stripe_apply')) not like '%is_vip%', 'is_vip lu ou écrit';
   perform pg_temp.inv('Pro éteint');
+end $$;
+
+-- Régénération soldée à la bascule de Pro (apply_regen avant is_pro ; free 600 s, pro 180 s, now() figé).
+-- Pro allumé : gratuit à 0/10 depuis 1 850 s → 3 paquets à 600 s et 50 s de reste gardés, pas 10 recalculés à 180 s.
+-- Pro éteint : Pro à 3/10 depuis 1 800 s, puis deleted → 10 (cap) accumulés à 180 s, pas 6 recalculés à 600 s.
+do $$ declare a uuid := tests.make_user('StrRegOn'); b uuid := tests.make_user('StrRegOff'); T bigint := extract(epoch from now())::bigint;
+  P bigint := T + 30 * 86400; r public.profiles; begin
+  update public.profiles set packs_remaining = 0, packs_last_regen_at = now() - interval '1850 seconds' where id = a;
+  assert pg_temp.ap(pg_temp.ev('evt_bench_rg1', 'customer.subscription.created', T, pg_temp.sub('sub_bench_rg_on', a, 'active', P)))
+    = 'applied' and pg_temp.pro(a), 'régénération, Pro allumé';
+  r := wm.apply_regen(a);
+  assert r.packs_remaining = 3 and r.packs_last_regen_at = now() - interval '50 seconds',
+    'Pro allumé : 3 paquets au rythme gratuit, reste gardé : ' || r.packs_remaining || ' ' || coalesce(r.packs_last_regen_at::text, 'null');
+  assert pg_temp.ap(pg_temp.ev('evt_bench_rg2', 'customer.subscription.created', T, pg_temp.sub('sub_bench_rg_off', b, 'active', P)))
+    = 'applied', 'régénération, Pro';
+  update public.profiles set packs_remaining = 3, packs_last_regen_at = now() - interval '1800 seconds' where id = b;
+  assert pg_temp.ap(pg_temp.ev('evt_bench_rg3', 'customer.subscription.deleted', T + 1, pg_temp.sub('sub_bench_rg_off', b, 'canceled', P)))
+    = 'applied' and not pg_temp.pro(b), 'régénération, Pro éteint';
+  r := wm.apply_regen(b);
+  assert r.packs_remaining = 10 and r.packs_last_regen_at is null,
+    'Pro éteint : 10 paquets au rythme Pro : ' || r.packs_remaining || ' ' || coalesce(r.packs_last_regen_at::text, 'null');
+  perform pg_temp.inv('régénération à la bascule');
 end $$;
 
 -- Review Focus, départage à égalité de seconde (G44).
@@ -667,9 +691,13 @@ do $$ declare a uuid := tests.make_user('StrBoom'); T bigint := extract(epoch fr
 end $$;
 
 -- lock_timeout avant la première écriture (P5) ; stripe_apply : la ligne stripe_events est le premier verrou, avant le profil (C4).
-do $$ declare bad text := tests.lock_timeout_violations(array['stripe_customer_set'], array['insert into wm.stripe_customers']);
-  s text := (select prosrc from pg_proc where oid = to_regproc('wm.stripe_apply')); begin
+-- stripe_customer_set : la clé étrangère verrouillée (for key share) avant l'insert (contre stripe_apply, 22_stripe_concurrency scénario 10).
+do $$ declare bad text := tests.lock_timeout_violations(array['stripe_customer_set'], array['for key share', 'insert into wm.stripe_customers']);
+  s text := (select prosrc from pg_proc where oid = to_regproc('wm.stripe_apply'));
+  c text := (select prosrc from pg_proc where oid = to_regproc('wm.stripe_customer_set')); begin
   assert bad is null, 'lock_timeout absent ou tardif : ' || bad;
+  assert strpos(c, 'from public.profiles where id = p_uid for key share') between 1 and strpos(c, 'insert into wm.stripe_customers') - 1,
+    'stripe_customer_set : for key share avant l''insert';
   bad := tests.lock_timeout_violations(array['stripe_apply'], array['insert into wm.stripe_events', 'wm.lock_user(']);
   assert bad is null, 'lock_timeout absent ou tardif : ' || bad;
   assert strpos(s, 'insert into wm.stripe_events') between 1 and strpos(s, 'wm.lock_user(') - 1, 'stripe_events après le profil';
@@ -793,8 +821,9 @@ do $$ declare st uuid := tests.make_user('StrDashM'); dl uuid := tests.make_user
     and not exists (select from jsonb_array_elements(r -> 'stripe_disputes') e where e ->> 'id' = 'dp_bench_closed'), 'litige fermé listé';
   assert r -> 'stripe_pending_users' @> jsonb_build_array(jsonb_build_object('user_id', dl,
     'username', (select username from public.profiles where id = dl), 'deleted_at', now())), 'pierre tombale listée';
-  assert r -> 'purchases_on_deleted_list' @> jsonb_build_array(jsonb_build_object('session_id', 'cs_test_bench_dash', 'user_id', dl,
-    'item', 'wb_2500', 'amount', 499, 'currency', 'cad', 'created_at', now())), 'achat sur pierre tombale listé';
+  assert exists (select from jsonb_array_elements(r -> 'purchases_on_deleted_list') e where e - 'created_at' = jsonb_build_object(
+    'session_id', 'cs_test_bench_dash', 'user_id', dl, 'item', 'wb_2500', 'amount', 499, 'currency', 'cad')
+    and (e ->> 'created_at')::timestamptz > now()), 'achat sur pierre tombale listé (created_at lu sous le verrou)';
   assert (select count(*) from jsonb_array_elements(r -> 'purchases_on_deleted_list') e where e ->> 'session_id' = 'cs_test_bench_dash') = 1
     and not exists (select from jsonb_array_elements(r -> 'purchases_on_deleted_list') e where e ->> 'session_id' = 'cs_test_bench_dash_old'),
     'achat d''avant la suppression listé';

@@ -44,7 +44,13 @@ export function notificationView({ type, data }: Pick<Notification, 'type' | 'da
     case 'trade_voided': return { text: 'Un échange a été annulé', href: trade }
     // Cloche seulement : aucun type pro_* ni wb_* dans push_types (M6b).
     case 'pro_started': return { text: 'Tu es membre Pro : merci !', href: '/settings' }
-    case 'pro_ended': return { text: 'Ton abonnement Pro est terminé', href: '/settings' }
+    // status = statut stocké de l'abonnement (stripe_apply) : past_due/unpaid = suspendu en attente d'un paiement (/terms).
+    case 'pro_ended': return {
+      text: data.status === 'past_due' || data.status === 'unpaid'
+        ? 'Ton abonnement Pro est suspendu : mets à jour ton moyen de paiement'
+        : 'Ton abonnement Pro est terminé',
+      href: '/settings',
+    }
     case 'pro_payment_failed': return { text: 'Le paiement de ton abonnement Pro a échoué', href: '/settings' }
     case 'wb_purchased': return { text: `${formatInt(amount)} wikibidous crédités`, href: '/collection' }
     default: return { text: 'Nouvelle notification', href: null }

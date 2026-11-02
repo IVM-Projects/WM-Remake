@@ -424,7 +424,7 @@ select extract(epoch from wm.next_regen_at(p) - p.packs_last_regen_at)::int from
     },
     {
       name: 'Review Focus, Pro éteint : updated past_due → is_pro faux, détail des ventes 403 exact ; active puis deleted → faux ; updated active '
-        + 'plus ancien, puis de la même seconde que deleted (G44), reçus après → stale, reste faux ; pro_started et pro_ended',
+        + 'plus ancien, puis de la même seconde que deleted (G44), reçus après → stale, reste faux ; pro_started et pro_ended (statut past_due puis canceled)',
       run: (env) => withPlayers(env, async (player) => {
         const uid = player()
         const [id, customer, t, card] = [sub(), cus(), nowS(), firstCard(env)]
@@ -448,6 +448,9 @@ select extract(epoch from wm.next_regen_at(p) - p.packs_last_regen_at)::int from
         assert.equal(await pro(), false)
         const types = await notified(env, uid)
         assert.ok(types.includes('pro_started') && types.includes('pro_ended'), types.join())
+        // pro_ended porte le statut stocké : « suspendu » sur past_due, « terminé » sur canceled (lib/notification-view.ts).
+        assert.equal(sql(env, `select string_agg(data ->> 'status', ',' order by data ->> 'status') from public.notifications
+where user_id = :'u' and type = 'pro_ended'`, { u: uid }), 'canceled,past_due')
       }),
     },
     {

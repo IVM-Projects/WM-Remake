@@ -17,7 +17,10 @@
 #    → stripe_pending vrai (la ligne prise avant l'exists : aucune mise à jour perdue).
 # 8. Suppression contre crédit de 2 500 WB (G38), dans les deux ordres → +2 500 une fois, aucune notification chez D ; l'achat dans
 #    purchases_on_deleted_list seulement si la suppression est passée d'abord.
+#    Puis un crédit dont la transaction démarre avant la suppression mais prend le profil après elle → listé quand même (created_at lu
+#    sous le verrou, clock_timestamp).
 # 9. place_bid contre stripe_apply du même joueur (son profil), dans les deux ordres → servis, solde 100 - 20 + 2 500, P meneur.
+# 10. stripe_customer_set contre stripe_apply qui tient déjà le profil et relie le même Customer → servis, aucun 40P01, un seul lien.
 set -euo pipefail
 q() { psql "$DATABASE_URL" -qXAt -v ON_ERROR_STOP=1 "$@"; }
 tmp="$(mktemp -d)"
@@ -277,6 +280,36 @@ for pass in credit suppression; do
     achat sur compte supprimé, invariants : $got ($want attendu)"
 done
 
+# 8 bis. Crédit démarré avant la suppression, verrouillé après : sa transaction (now() figé) attend un verrou consultatif tenu par un
+# bloqueur ; la suppression passe pendant ce temps ; le bloqueur ne lâche qu'une fois la pierre tombale validée. L'achat est postérieur à
+# deleted_at (clock_timestamp sous le verrou) : listé parmi les achats sur comptes supprimés.
+d="$(player 8v)"
+key="$RANDOM$RANDOM"
+cat >"$tmp/s8v.sql" <<SQL
+begin;
+do \$\$ declare t1 timestamptz := clock_timestamp(); begin
+  perform pg_advisory_xact_lock($key);
+  loop
+    exit when exists (select from wm.deleted_accounts where user_id = '$d') or clock_timestamp() > t1 + interval '10 seconds';
+    perform pg_sleep(0.05);
+  end loop;
+end \$\$;
+commit;
+SQL
+q -f "$tmp/s8v.sql" >/dev/null 2>"$tmp/s8v.err" &
+blocker=$!
+sleeping "$tmp/s8v.err"
+first 8va "select pg_advisory_xact_lock($key); $(apply 8v checkout.session.completed "$T" "$(cs 8v "$d")")"
+run "$(del "$d")"
+wait "$blocker" || fail "crédit verrouillé après la suppression : bloqueur en erreur" "$tmp/s8v.err"
+waitall
+quiet "$tmp/s8v.err" "$tmp/8va"
+got="$(bal "$d") $(paid "$d") $(notes "$d") $(deleted "$d") $(q -c "select count(*) from jsonb_array_elements(wm.staff_dashboard('$adm')
+  -> 'purchases_on_deleted_list') e where e ->> 'session_id' = 'cs_test_bench_${tag}_8v'") $(q -c "select (select created_at from wm.purchases
+  where session_id = 'cs_test_bench_${tag}_8v') >= deleted_at from wm.deleted_accounts where user_id = '$d'") $(inv)"
+[[ $got == "2500 1 1 0 0 1 1 t []" ]] || fail "crédit démarré avant la suppression, verrouillé après : solde, achats, lignes stripe,
+  wb_purchased, notifications, supprimé, achat sur compte supprimé, achat après deleted_at, invariants : $got"
+
 # 9. place_bid contre stripe_apply du même joueur : la mise tient la vente puis attend P ; stripe_apply tient sa ligne stripe_events puis
 # attend P. Un seul verrou commun, aucun cycle. Garde de non-régression : ne rougit que sur un interblocage ou un crédit perdu.
 s="$(trader 9s)"
@@ -296,3 +329,37 @@ for pass in mise credit; do
   [[ $got == "2580 1 1 1 true 20 []" ]] || fail "mise contre crédit ($pass d'abord) : solde, achats, lignes stripe, wb_purchased, P meneur,
     prix, invariants : $got"
 done
+
+# 10. stripe_customer_set contre stripe_apply (même joueur, Customer pas encore relié) : stripe_apply tient le profil (lock_user, le bloqueur
+# simule son début), stripe_customer_set arrive, puis stripe_apply insère le même Customer. Sans le for key share pris avant l'insert,
+# stripe_customer_set tiendrait la ligne stripe_customers en attendant la clé étrangère du profil, et stripe_apply attendrait cette ligne
+# (40P01). Avec : stripe_customer_set attend le profil, puis trouve le lien validé.
+u="$(player 10)"
+c="$(cus "$u")"
+cat >"$tmp/s10.sql" <<SQL
+begin;
+do \$\$ declare t1 timestamptz := clock_timestamp(); w boolean := false; begin
+  perform wm.lock_user('$u');
+  loop
+    perform pg_stat_clear_snapshot();
+    w := exists (select from pg_stat_activity where wait_event_type = 'Lock' and query like 'set role service_role;%');
+    exit when w or clock_timestamp() > t1 + interval '5 seconds';
+    perform pg_sleep(0.05);
+  end loop;
+  perform set_config('wm_test.waited', w::text, true);
+end \$\$;
+select current_setting('wm_test.waited');
+select wm.stripe_apply($(ev 10 checkout.session.completed "$T" "jsonb_build_object('id', 'cs_test_bench_${tag}_10', 'object', 'checkout.session',
+  'mode', 'subscription', 'payment_status', 'paid', 'client_reference_id', '$u', 'customer', '$c', 'metadata', jsonb_build_object('uid', '$u',
+  'item', 'pro_monthly'), 'amount_total', 999, 'currency', 'cad')"));
+commit;
+SQL
+q -v VERBOSITY=verbose -f "$tmp/s10.sql" >"$tmp/s10.out" 2>"$tmp/s10.err" &
+blocker=$!
+sleeping "$tmp/s10.err"
+bgo 10c "select wm.stripe_customer_set('$u', '$c')"  # son attente est vue par le bloqueur (wm_test.waited), pas par first : il repart aussitôt
+wait "$blocker" || fail "stripe_customer_set contre stripe_apply : stripe_apply en erreur" "$tmp/s10.err"
+waitall
+quiet "$tmp/s10.err" "$tmp/10c"
+got="$(head -1 "$tmp/s10.out") $(cat "$tmp/10c.out") $(grep -c '"outcome": "applied"' "$tmp/s10.out") $(q -c "select count(*) from wm.stripe_customers where user_id = '$u'") $(inv)"
+[[ $got == "true $c 1 1 []" ]] || fail "stripe_customer_set contre stripe_apply : attente vue, Customer rendu, stripe_apply appliqué, liens, invariants : $got"

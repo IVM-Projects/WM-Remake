@@ -23,6 +23,13 @@ describe('Subscription statusText', () => {
     expect(statusText(me({ status: 'trialing', cancel_at_period_end: true }))).toBe('Abonnement Pro résilié : tu restes Pro jusqu\'au 15 mars 2027.')
   })
 
+  it('cancel_at posé sans cancel_at_period_end : résilié, jusqu\'à la date de cancel_at (pas de renouvellement annoncé)', () => {
+    const at = '2027-02-10T12:00:00Z'
+    expect(statusText(me({ cancel_at: at }))).toBe('Abonnement Pro résilié : tu restes Pro jusqu\'au 10 février 2027.')
+    expect(statusText(me({ cancel_at: at, cancel_at_period_end: true }))).toBe('Abonnement Pro résilié : tu restes Pro jusqu\'au 10 février 2027.')
+    expect(statusText(me({ cancel_at: at, current_period_end: null }))).toBe('Abonnement Pro résilié : tu restes Pro jusqu\'au 10 février 2027.')
+  })
+
   it('date absente ou illisible : la phrase tient sans date', () => {
     for (const current_period_end of [null, 'pas une date']) {
       expect(statusText(me({ current_period_end }))).toBe('Abonnement Pro actif.')

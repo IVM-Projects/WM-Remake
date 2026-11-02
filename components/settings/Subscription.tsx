@@ -30,7 +30,11 @@ export function statusText(me: Me): string {
   if (s.status === 'past_due' || s.status === 'unpaid') return PAST_DUE
   if (s.status !== 'active' && s.status !== 'trialing') return 'Ton abonnement Pro n\'est pas actif pour l\'instant.'
   const end = dateFr(s.current_period_end)
-  if (s.cancel_at_period_end) return `Abonnement Pro résilié : tu restes Pro ${end ? `jusqu'au ${end}` : 'jusqu\'à la fin de la période'}.`
+  // cancel_at : fin fixée à une date (Portail, API), prioritaire ; sinon la fin de période (G20).
+  if (s.cancel_at_period_end || s.cancel_at) {
+    const until = dateFr(s.cancel_at) ?? end
+    return `Abonnement Pro résilié : tu restes Pro ${until ? `jusqu'au ${until}` : 'jusqu\'à la fin de la période'}.`
+  }
   return `Abonnement Pro actif.${end ? ` Prochain renouvellement le ${end}.` : ''}`
 }
 

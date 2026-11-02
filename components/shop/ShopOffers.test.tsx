@@ -24,7 +24,7 @@ const buttons = (h: string) => h.match(/<button [^>]*>/g) ?? []
 test('avantages lus des règles, mot pour mot, et seulement ceux-là', () => {
   const t = text(html(state()))
   for (const line of [
-    'Un paquet toutes les 3 minutes au lieu de 10',
+    'Un paquet toutes les 3 minutes au lieu de toutes les 10 minutes',
     'Un paquet Pro de 15 cartes chaque jour, sans aucune commune',
     '10 ventes en même temps au lieu de 5',
     'L&#x27;historique détaillé des ventes sur 30 jours',
@@ -35,10 +35,12 @@ test('avantages lus des règles, mot pour mot, et seulement ceux-là', () => {
 
 test('les chiffres suivent la configuration, pas le texte', () => {
   const h = html({ ...state(), rules: { ...rules, pack_period_s: { free: 900, pro: 300 }, pro_daily_size: 20, sales_detail_days: 7, battle_quota: { free: 2, pro: 6 } } })
-  expect(h).toContain('Un paquet toutes les 5 minutes au lieu de 15')
+  expect(h).toContain('Un paquet toutes les 5 minutes au lieu de toutes les 15 minutes')
   expect(h).toContain('Un paquet Pro de 20 cartes')
   expect(h).toContain('sur 7 jours')
   expect(h).toContain('6 défis de bataille par jour au lieu de 2')
+  // every() de lib/format.ts, comme HowItWorks et PackStock : une période hors minute entière reste juste.
+  expect(html({ ...state(), rules: { ...rules, pack_period_s: { free: 60, pro: 90 } } })).toContain('Un paquet toutes les 90 secondes au lieu de toutes les minutes')
 })
 
 test('aucune promesse de meilleures chances', () => {

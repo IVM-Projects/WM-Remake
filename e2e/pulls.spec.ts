@@ -537,7 +537,8 @@ test('paquet spécial : « Récupérer » → révélation de ses cartes, puis l
     expect(posts).toEqual([JSON.stringify({ packId: id })])
     await finishReveal(page, 3)
     await expect(openButton(page)).toBeVisible()
-    await expect(offered(page)).toHaveCount(0)
+    // Le paquet du test seulement : celui d'une autre copie du spec (actif pour tous les joueurs du banc partagé) garderait la section.
+    await expect(page.getByRole('button', { name: `Récupérer ${name}` })).toHaveCount(0)
     await expect(page.getByText(name)).toHaveCount(0)
   })
 })
@@ -567,6 +568,8 @@ test('dotation de grâce : « Récupérer le paquet offert » → révélation, 
   const { uid } = await login({ humanVerified: true })
   sql(`insert into wm.grace_grants (user_id, size, reason) values (:'uid', 3, 'e2e')`, { uid })
   try {
+    // Aucun paquet spécial : celui d'une autre copie du spec (actif pour tous les joueurs) garderait la section.
+    await page.route('**/api/packs/special', (r) => (r.request().method() === 'GET' ? r.fulfill({ json: { packs: [], available: false } }) : r.fallback()))
     await page.goto('/pulls')
     await expect(offered(page)).toContainText('Paquet offert par l\'équipe : 3 cartes')
     await offered(page).getByRole('button', { name: 'Récupérer le paquet offert' }).click()

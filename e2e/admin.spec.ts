@@ -54,7 +54,8 @@ test('un admin : h1, lien au pied, AdminNav avec « Tableau de bord » courant ;
     await page.context().clearCookies()
     await page.context().addCookies([{ ...cookieFor(m), url: page.url() }])
     await page.reload()
-    await expect(page.getByText('Rôle : modérateur', { exact: true })).toBeVisible()
+    // Visible seulement : Next garde des copies cachées des routes (Activity, cacheComponents), comme le h1 de ce fichier.
+    await expect(page.getByText('Rôle : modérateur', { exact: true }).filter({ visible: true })).toBeVisible()
   } finally {
     wipe(u.uid, m.uid)
   }
@@ -367,7 +368,8 @@ test('tableau de bord : un modérateur voit les files Stripe mais pas « Résili
     tombstone(s)
     await page.goto('/admin')
     await page.locator('main [data-ready]').waitFor()
-    await expect(page.getByText('Rôle : modérateur', { exact: true })).toBeVisible()
+    // Visible seulement : Next garde des copies cachées des routes (Activity, cacheComponents), comme le h1 de ce fichier.
+    await expect(page.getByText('Rôle : modérateur', { exact: true }).filter({ visible: true })).toBeVisible()
     await expect(page.getByRole('listitem').filter({ hasText: s.d.username })).toBeVisible()
     await expect(page.getByRole('listitem').filter({ hasText: s.dispute })).toBeVisible()
     await expect(page.getByRole('button', { name: /^Résilier/ })).toHaveCount(0)
@@ -380,12 +382,39 @@ test('tableau de bord : un modérateur voit les files Stripe mais pas « Résili
   }
 })
 
+test('tableau de bord : achat sur un compte supprimé → tuile et ligne (article, montant, date, session raccourcie), aucun identifiant de joueur', async ({ page }) => {
+  const boss = await asStaff(page)
+  const s = seedStripe()
+  const session = `cs_test_bench_${s.h}`
+  try {
+    // Pierre tombale puis achat posé après deleted_at (pro_monthly, wb 0 : aucune ligne de grand livre attendue par les invariants).
+    sql(`insert into wm.deleted_accounts (user_id, auth_done_at) values (:'u', now());
+insert into wm.purchases (session_id, user_id, item, amount, currency, wb, created_at) values (:'c', :'u', 'pro_monthly', 999, 'cad', 0, now() + interval '1 minute')`,
+    { u: s.d.uid, c: session })
+    await page.goto('/admin')
+    await page.locator('main [data-ready]').waitFor()
+    expect(await tileCount(page, 'Achats sur comptes supprimés')).toBeGreaterThanOrEqual(1)
+    const list = page.getByRole('region', { name: 'Paiements reçus après la suppression du compte' })
+    await expect(list.getByText('Ces achats n\'ont crédité personne : à examiner dans Stripe.', { exact: true })).toBeVisible()
+    const row = list.getByRole('listitem').filter({ hasText: `cs_test_…${session.slice(-8)}` })
+    await expect(row).toHaveCount(1)
+    await expect(row).toContainText('Abonnement Pro')
+    await expect(row).toContainText(/9,99\s*CAD/)
+    for (const secret of [s.d.uid, s.d.username, session]) await expect(row).not.toContainText(secret)
+    await expect(list.getByRole('button')).toHaveCount(0)
+    await expect(list).not.toContainText(s.d.username)
+  } finally {
+    stripeWipe([s.d.uid, boss.uid], '')
+  }
+})
+
 test('tableau de bord : sans litige ni résiliation en attente, ni tuile ni liste Stripe (réponse posée)', async ({ page }) => {
   const u = await asStaff(page)
   try {
     await page.route('**/api/admin/dashboard', async (r) => {
       const real = await (await r.fetch()).json()
-      await r.fulfill({ json: { ...real, stripe_disputes_open: 0, stripe_disputes: [], stripe_pending: 0, stripe_pending_users: [] } })
+      await r.fulfill({ json: { ...real, stripe_disputes_open: 0, stripe_disputes: [], stripe_pending: 0, stripe_pending_users: [], purchases_on_deleted: 0,
+        purchases_on_deleted_list: [] } })
     })
     await page.goto('/admin')
     await page.locator('main [data-ready]').waitFor()
@@ -393,6 +422,8 @@ test('tableau de bord : sans litige ni résiliation en attente, ni tuile ni list
     await expect(page.getByRole('link', { name: 'Résiliations Stripe en attente' })).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Litiges Stripe' })).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Comptes supprimés à résilier' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Achats sur comptes supprimés' })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Paiements reçus après la suppression du compte' })).toHaveCount(0)
   } finally {
     wipe(u.uid)
   }

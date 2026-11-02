@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { ghost, link, primary } from '@/components/ui/button'
 import { ProBadge } from '@/components/ui/ProBadge'
 import { WCoin } from '@/components/ui/WCoin'
-import { formatInt } from '@/lib/format'
+import { every, formatInt } from '@/lib/format'
 import { formatPrice, SHOP, type ShopItem, type ShopState } from '@/lib/shop'
 
 type Props = {
@@ -20,7 +20,7 @@ export function ShopOffers({ state, busy, error, onBuy, onPortal }: Props) {
   const wbPrice = formatPrice(SHOP.wb_2500.cents)
   const wb = formatInt(rules.wb_2500)
   const perks = [
-    `Un paquet toutes les ${formatInt(rules.pack_period_s.pro / 60)} minutes au lieu de ${formatInt(rules.pack_period_s.free / 60)}`,
+    `Un paquet ${every(rules.pack_period_s.pro)} au lieu de ${every(rules.pack_period_s.free)}`,
     `Un paquet Pro de ${formatInt(rules.pro_daily_size)} cartes chaque jour, sans aucune commune`,
     `${formatInt(rules.max_concurrent_auctions.pro)} ventes en même temps au lieu de ${formatInt(rules.max_concurrent_auctions.free)}`,
     `L'historique détaillé des ventes sur ${formatInt(rules.sales_detail_days)} jours`,

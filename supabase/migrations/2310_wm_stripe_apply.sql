@@ -86,9 +86,12 @@ begin
         if o ->> 'payment_status' = 'paid' then
           v_wb := (select (value ->> 'wb_2500')::int from wm.config where key = 'shop');
           -- Une session = un achat = un crédit, quel que soit l'événement (completed ou async_payment_succeeded, D:625).
-          insert into wm.purchases (session_id, user_id, item, amount, currency, consent, wb)
+          -- Pierre tombale vue sous le verrou : created_at = clock_timestamp(), postérieur à deleted_at (le now() de la suppression,
+          -- validée avant ce verrou) même si cette transaction a démarré avant elle → listé (purchases_on_deleted, 2320). Sinon now() : un
+          -- crédit passé avant la suppression n'est pas listé, sauf si celle-ci a démarré avant lui (faux positif rare, rien de perdu).
+          insert into wm.purchases (session_id, user_id, item, amount, currency, consent, wb, created_at)
           values (o ->> 'id', v_uid, 'wb_2500', coalesce((o ->> 'amount_total')::int, 0), coalesce(o ->> 'currency', ''),
-            o -> 'consent' ->> 'terms_of_service', v_wb)
+            o -> 'consent' ->> 'terms_of_service', v_wb, case when v_tomb then clock_timestamp() else now() end)
           on conflict do nothing;
           if found then
             perform wm.wallet_apply(v_uid, v_wb, 'stripe', 'stripe:' || (o ->> 'id'));
@@ -101,9 +104,9 @@ begin
           v_outcome := 'pending';
         end if;
       elsif o ->> 'mode' = 'subscription' then
-        insert into wm.purchases (session_id, user_id, item, amount, currency, consent, wb)
+        insert into wm.purchases (session_id, user_id, item, amount, currency, consent, wb, created_at)
         values (o ->> 'id', v_uid, 'pro_monthly', coalesce((o ->> 'amount_total')::int, 0), coalesce(o ->> 'currency', ''),
-          o -> 'consent' ->> 'terms_of_service', 0)
+          o -> 'consent' ->> 'terms_of_service', 0, case when v_tomb then clock_timestamp() else now() end)
         on conflict do nothing;
       end if;
     end if;
@@ -138,10 +141,15 @@ begin
         v_outcome := 'stale';
       end if;
       v_pro := exists (select from wm.subscriptions where user_id = v_uid and status in ('active', 'trialing'));
+      -- Régénération paresseuse soldée au rythme d'avant la bascule (apply_regen lit is_pro) ; profil déjà tenu, inerte sur une pierre tombale.
+      perform wm.apply_regen(v_uid);
       update public.profiles set is_pro = v_pro where id = v_uid and is_pro is distinct from v_pro;
       if found and not v_tomb then
+        -- pro_ended porte le statut stocké : past_due/unpaid = suspendu, sinon terminé (lib/notification-view.ts).
         insert into public.notifications (user_id, type, data)
-        values (v_uid, case when v_pro then 'pro_started' else 'pro_ended' end, jsonb_build_object('subscription_id', o ->> 'id'));
+        values (v_uid, case when v_pro then 'pro_started' else 'pro_ended' end, case when v_pro
+          then jsonb_build_object('subscription_id', o ->> 'id')
+          else jsonb_build_object('subscription_id', o ->> 'id', 'status', (select status from wm.subscriptions where id = o ->> 'id')) end);
       end if;
       if v_tomb then
         update wm.deleted_accounts set stripe_pending = exists (select from wm.subscriptions where user_id = v_uid

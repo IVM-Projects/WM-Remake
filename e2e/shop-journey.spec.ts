@@ -78,7 +78,8 @@ test('parcours boutique : 2 500 WB crédités une seule fois, Pro allumé puis �
 
     // 7. Invariants vides pour P ; la cloche garde les trois notifications.
     expect(sql(`select coalesce(jsonb_agg(v), '[]') from jsonb_array_elements(wm.check_invariants()) v where v ->> 'user_id' = :'p'`, { p: p.uid })).toBe('[]')
-    expect(sql(`select string_agg(type, ',' order by type) from public.notifications where user_id = :'p'`, { p: p.uid })).toBe('pro_ended,pro_started,wb_purchased')
+    expect(sql(`select string_agg(type || coalesce(':' || (data ->> 'status'), ''), ',' order by type) from public.notifications where user_id = :'p'`, { p: p.uid }))
+      .toBe('pro_ended:canceled,pro_started,wb_purchased')
     await page.locator('button[aria-label="Notifications"]').click()
     const rows = page.getByRole('dialog', { name: 'Notifications' }).getByRole('list', { name: 'Notifications récentes' }).getByRole('listitem')
     await expect(rows).toHaveCount(3)

@@ -773,7 +773,7 @@ values ('sub_bench_a11y' || :'h', :'u', 'cus_bench_a11y' || :'h', 'active', '202
   }
 })
 
-test('axe /admin (staff) : tuiles et listes Stripe, ActionModal « Résilier » ouverte', async ({ page, context, baseURL }) => {
+test('axe /admin (staff) : tuiles et listes Stripe (achat sur compte supprimé compris), ActionModal « Résilier » ouverte', async ({ page, context, baseURL }) => {
   const u = makeStaff()
   const d = makePlayer()
   const h = randomUUID().replaceAll('-', '')
@@ -781,11 +781,14 @@ test('axe /admin (staff) : tuiles et listes Stripe, ActionModal « Résilier » 
     sql(`insert into wm.subscriptions (id, user_id, customer_id, status, event_created) values ('sub_bench_a11y' || :'h', :'u', 'cus_bench_a11y' || :'h', 'active', now());
 insert into wm.deleted_accounts (user_id, auth_done_at) values (:'u', now());
 insert into wm.stripe_disputes (id, charge_id, amount, currency, reason, status, created_at, event_created)
-values ('dp_bench_a11y' || :'h', 'ch_bench_a11y', 1250, 'cad', 'fraudulent', 'needs_response', now(), now())`, { u: d.uid, h })
+values ('dp_bench_a11y' || :'h', 'ch_bench_a11y', 1250, 'cad', 'fraudulent', 'needs_response', now(), now());
+insert into wm.purchases (session_id, user_id, item, amount, currency, wb, created_at) values ('cs_test_bench_a11y' || :'h', :'u', 'pro_monthly', 999, 'cad', 0,
+  now() + interval '1 minute')`, { u: d.uid, h })
     await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
     await page.goto('/admin')
     await page.locator(READY['/admin']).waitFor()
     await expect(page.getByRole('button', { name: /^Résilier/ }).first()).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Paiements reçus après la suppression du compte' })).toBeVisible()
     await settled(page)
     await expectNoSeriousViolations(page)
     await page.getByRole('listitem').filter({ hasText: d.username }).getByRole('button', { name: /^Résilier/ }).click()

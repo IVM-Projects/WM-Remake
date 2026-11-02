@@ -147,10 +147,13 @@ end $$;
 create or replace function wm.stripe_customer_set(p_uid uuid, p_customer_id text)
 returns text language plpgsql security definer set search_path = '' as $$
 begin
-  if not exists (select from public.profiles where id = p_uid) or exists (select from wm.deleted_accounts where user_id = p_uid) then
+  perform set_config('lock_timeout', '2s', true);
+  -- Le verrou de la clé étrangère pris avant l'insert : sinon, contre un stripe_apply qui tient le profil puis insère le même Customer, 40P01.
+  -- Refus relus sous ce verrou (une suppression validée pendant l'attente est vue).
+  perform 1 from public.profiles where id = p_uid for key share;
+  if not found or exists (select from wm.deleted_accounts where user_id = p_uid) then
     perform wm.raise_err(401, 'unauthorized', 'Session expirée, reconnecte-toi.');
   end if;
-  perform set_config('lock_timeout', '2s', true);
   insert into wm.stripe_customers (customer_id, user_id) values (p_customer_id, p_uid) on conflict do nothing;
   return (select customer_id from wm.stripe_customers where user_id = p_uid);
 end $$;

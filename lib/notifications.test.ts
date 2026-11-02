@@ -181,6 +181,14 @@ test('notificationView : les quatre types de paiement (stripe_apply) → leur te
   for (const type of types) expect(pushTypes()).not.toContain(type)
 })
 
+test('notificationView : pro_ended suspendu sur past_due et unpaid, terminé sinon (statut stocké par stripe_apply)', () => {
+  const view = (status?: string) => notificationView(n('pro_ended', { subscription_id: 'sub_bench_x', status })).text
+  const suspended = 'Ton abonnement Pro est suspendu : mets à jour ton moyen de paiement'
+  expect([view('past_due'), view('unpaid')]).toEqual([suspended, suspended])
+  for (const s of ['canceled', 'incomplete', 'incomplete_expired', 'paused', undefined]) expect(view(s), String(s)).toBe('Ton abonnement Pro est terminé')
+  expect(notificationView(n('pro_ended', { status: 'past_due' })).href).toBe('/settings')
+})
+
 test('PUSH_FAMILIES aplati et trié = pushTypes() = push_types de 1800 ; chaque type a son texte', () => {
   const sql = readFileSync(new URL('../supabase/migrations/1800_wm_social_core.sql', import.meta.url), 'utf8')
   const seeded: unknown = JSON.parse(/'push_types',\s*'(\[[^']*\])'/.exec(sql)?.[1] ?? 'null')
