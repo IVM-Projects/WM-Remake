@@ -351,7 +351,9 @@ values (:'s', :'u', 'cus_bench_' || :'h', 'active', now())`, { s: id, u: d.uid, 
           const vercelId = randomUUID()
           assert.deepEqual(await ok(await cancel(boss.uid, undefined, { ...idem(), 'x-vercel-id': vercelId }), StripeSynced),
             { stripe: { user_id: d.uid, subscription_ids: [fail] }, stripe_synced: false })
-          assert.ok((await stripeRequests(env)).every((r) => r.method === 'DELETE' && r.path === `/v1/subscriptions/${fail}`))
+          const calls = await stripeRequests(env)
+          assert.ok(calls.length >= 1)
+          assert.ok(calls.every((r) => r.method === 'DELETE' && r.path === `/v1/subscriptions/${fail}`))
           assert.equal(pending(), 't')
           assert.equal(await listed(), true)
           const log = readFileSync(new URL('../../.cache/logs/next-plain.log', import.meta.url), 'utf8')

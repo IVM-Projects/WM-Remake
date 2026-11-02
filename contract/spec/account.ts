@@ -228,9 +228,7 @@ export const account: RouteSpec[] = [
             assert.deepEqual(await ok(await send(env, 'POST', DELETE, d.uid, { username: d.username }, key), Deleted), first)
             assert.equal(sql(env, `select wm.check_invariants()`), '[]')
           } finally {
-            // Garde des pierres tombales levée pour cette session psql seulement (Task 6a) ; la ligne GoTrue survit à la suppression douce.
-            sql(env, `select set_config('wm.allow_tombstone_delete', 'on', false);
-delete from auth.users where id = any (string_to_array(:'ids', ',')::uuid[])`, { ids: created.join(',') })
+            dropUsers(env, created) // la ligne GoTrue survit à la suppression douce
           }
         },
       },
