@@ -16,7 +16,7 @@ const tiles = (page: Page) => grid(page).locator('> div.relative.isolate.group')
 const tile = (page: Page, n: number) => tiles(page).filter({ has: page.locator('h3').getByText(title(n), { exact: true }) })
 // Bouton clavier de la tuile (h3 > button[aria-label=titre]) : c'est lui qui ouvre la modale et reçoit le focus.
 const opener = (page: Page, n: number) => tile(page, n).getByRole('button', { name: title(n), exact: true })
-const balance = (page: Page) => page.locator('main h1 + p')
+const balance = (page: Page) => page.locator('header button[title="Ouvrir la boutique"]')
 const tagFilter = (page: Page) => page.getByRole('combobox', { name: 'Filtrer par étiquette' })
 const firstTitles = async (page: Page, k: number) => (await tiles(page).locator('h3').allTextContents()).slice(0, k)
 const isCollectionApi = (u: URL) => u.pathname === '/api/my-collection'
@@ -426,7 +426,7 @@ test('multi-sélection : tout sélectionner, défausser 50 cartes', async ({ pag
 test('défausse en masse découpée en lots de 50, solde illisible relu après', async ({ page, login }) => {
   const { uid } = await login({ balance: 0 })
   seed60(uid)
-  await routeOnce(page, '**/api/wikibidous', (r) => r.abort())
+  await routeOnce(page, '**/api/shop*', (r) => r.abort())
   await page.goto('/collection')
   await expect(tiles(page)).toHaveCount(50)
   // Lecture du solde échouée : « — » et un nom lisible, jamais rien.
@@ -545,7 +545,7 @@ test('défausse : 504 en texte brut de la plateforme → message français, sold
   await routeOnce(page, isDiscard, (r) => r.fulfill(PLATFORM_504))
   await opener(page, 6).click()
   const dialog = page.getByRole('dialog', { name: title(6) })
-  const reread = page.waitForRequest((r) => r.url().endsWith('/api/wikibidous'))
+  const reread = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/shop')
   await dialog.getByRole('button', { name: /^Défausser/ }).click()
   await expect(dialog.getByRole('alert')).toHaveText(DISCARD_UNSURE)
   await reread

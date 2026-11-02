@@ -207,6 +207,36 @@ from generate_series(1, 3) i`, { uid })
   }
 })
 
+test('axe /pulls, boutique ouverte (offre Pro et paquet de wikibidous)', async ({ page, login }) => {
+  await login({ balance: 120 })
+  await page.goto('/pulls')
+  await page.locator('header button[title="Ouvrir la boutique"]').click()
+  await expect(page.getByRole('dialog', { name: 'Boutique' }).getByRole('button', { name: /^Acheter/ })).toBeVisible()
+  await expectNoSeriousViolations(page)
+})
+
+test('axe /pulls, boutique ouverte d\'un membre Pro (portail), en maintenance', async ({ page, login }) => {
+  const { uid } = await login({ pro: true })
+  try {
+    sql(`insert into wm.stripe_customers (customer_id, user_id) values ('cus_bench_a11y' || :'h', :'u');
+insert into wm.subscriptions (id, user_id, customer_id, status, event_created) values ('sub_bench_a11y' || :'h', :'u', 'cus_bench_a11y' || :'h', 'active', now())`,
+    { u: uid, h: randomUUID().replaceAll('-', '') })
+    // Maintenance dite par la réponse de la lecture : le réglage global de la base est partagé par tous les workers.
+    await page.route('**/api/shop*', async (r) => {
+      const res = await r.fetch()
+      await r.fulfill({ response: res, json: { ...(await res.json()), maintenance: true } })
+    })
+    await page.goto('/pulls')
+    await page.locator('header button[title="Ouvrir la boutique"]').click()
+    const dialog = page.getByRole('dialog', { name: 'Boutique' })
+    await expect(dialog.getByText('Tu es membre Pro.')).toBeVisible()
+    await expect(dialog.getByRole('status').filter({ hasText: 'La boutique est fermée pendant la maintenance.' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
+  }
+})
+
 test('axe /pulls en révélation', async ({ page, login }) => {
   await login({ humanVerified: true })
   await page.goto('/pulls')

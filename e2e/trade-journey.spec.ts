@@ -14,7 +14,7 @@ const offerPanel = (page: Page) => page.getByRole('region', { name: /^Tu offres/
 const askPanel = (page: Page) => page.getByRole('region', { name: /^Tu demandes/ })
 const tiles = (page: Page) => page.locator('div.flex.flex-wrap.justify-center.gap-3 > div.relative.isolate.group')
 const tile = (page: Page, t: string) => tiles(page).filter({ has: page.locator('h3').getByText(t, { exact: true }) })
-const balance = (page: Page) => page.locator('main h1 + p')
+const balance = (page: Page) => page.locator('header button[title="Ouvrir la boutique"]')
 const bell = (page: Page) => page.locator('button[aria-label="Notifications"]')
 const badge = (page: Page) => page.locator('button[aria-label="Notifications"] + span')
 const bellLinks = (page: Page) => page.getByRole('dialog', { name: 'Notifications' }).getByRole('list', { name: 'Notifications récentes' }).getByRole('link')

@@ -42,6 +42,11 @@ export function notificationView({ type, data }: Pick<Notification, 'type' | 'da
     // Cloche seulement : ni auction_voided ni trade_voided dans push_types (M6a).
     case 'auction_voided': return { text: `La vente de ${c} a été annulée`, href: auction }
     case 'trade_voided': return { text: 'Un échange a été annulé', href: trade }
+    // Cloche seulement : aucun type pro_* ni wb_* dans push_types (M6b).
+    case 'pro_started': return { text: 'Tu es membre Pro : merci !', href: '/settings' }
+    case 'pro_ended': return { text: 'Ton abonnement Pro est terminé', href: '/settings' }
+    case 'pro_payment_failed': return { text: 'Le paiement de ton abonnement Pro a échoué', href: '/settings' }
+    case 'wb_purchased': return { text: `${formatInt(amount)} wikibidous crédités`, href: '/collection' }
     default: return { text: 'Nouvelle notification', href: null }
   }
 }

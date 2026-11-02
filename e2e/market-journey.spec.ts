@@ -3,7 +3,7 @@ import { formatInt } from '../lib/format.ts'
 import { cookieFor, expect, makePlayer, sql, test } from './fixtures'
 
 const tiles = (page: Page) => page.locator('div.flex.flex-wrap.justify-center.gap-3 > div.relative.isolate.group')
-const balance = (page: Page) => page.locator('main h1 + p')
+const balance = (page: Page) => page.locator('header button[title="Ouvrir la boutique"]')
 const amountField = (page: Page) => page.getByRole('spinbutton', { name: 'Montant de la mise' })
 const leading = (page: Page) => page.locator('main').getByText('En tête', { exact: true })
 // Durée d'une étape, en annotation du test (rapport HTML de la CI).

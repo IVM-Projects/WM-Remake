@@ -33,7 +33,7 @@ test('parcours M1 : inscription → code → paquet → collection → étiquett
   await page.goto('/collection')
   const tiles = page.locator('div.flex.flex-wrap.justify-center.gap-3 > div.relative.isolate.group')
   await expect(tiles).toHaveCount(5)
-  const balance = page.locator('main h1 + p')
+  const balance = page.locator('header button[title="Ouvrir la boutique"]')
   await expect(balance).toHaveText('0 wikibidou')
 
   await tiles.first().locator('h3 button').click()

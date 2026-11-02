@@ -1,9 +1,10 @@
 'use client'
 
-import { Bookmark, BookmarkCheck, Gavel, Sparkles, X } from 'lucide-react'
+import { Bookmark, BookmarkCheck, Gavel, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { MarketPanel } from '@/components/market/MarketPanel'
 import { Modal } from '@/components/ui/Modal'
+import { ProBadge } from '@/components/ui/ProBadge'
 import { toast } from '@/components/ui/toast'
 import { WCoin } from '@/components/ui/WCoin'
 import { ghost } from '@/components/ui/button'
@@ -277,12 +278,7 @@ export function CardModal({ item, onClose, onDiscarded, onChanged, onListed, onU
             <button {...tabProps('details')}>Détails</button>
             <button {...tabProps('market')}>
               Marché
-              <span
-                className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${tab === 'market' ? 'bg-[var(--color-accent-foreground)] text-violet-300' : 'bg-violet-500/20 text-violet-300'}`}
-              >
-                <Sparkles className="size-3" />
-                PRO
-              </span>
+              <ProBadge active={tab === 'market'} />
             </button>
           </div>
           <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${tab}`} className="flex flex-col gap-4">
