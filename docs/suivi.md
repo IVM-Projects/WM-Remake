@@ -1,6 +1,6 @@
 # Suivi des points différés
 
-Relevés par les revues des tâches et des branches du M0 au M6a, triés par jalon : chaque point est à traiter au plus tard au jalon indiqué. Les points du M0 gardent leur libellé d'origine (anglais) ; ceux du M1 au M6a sont résumés en français. « Dette » regroupe ce qui n'a pas de jalon naturel : à prendre quand on retouche le fichier concerné.
+Relevés par les revues des tâches et des branches du M0 au M6b, triés par jalon : chaque point est à traiter au plus tard au jalon indiqué. Les points du M0 gardent leur libellé d'origine (anglais) ; ceux du M1 au M6b sont résumés en français. « Dette » regroupe ce qui n'a pas de jalon naturel : à prendre quand on retouche le fichier concerné.
 
 ## Réglés au M1
 
@@ -85,15 +85,20 @@ La section M6 est soldée pour la modération, l'audit, le retrait de cartes, l'
 - **Critères de D:1085 pris par le M6a** : bannissement effectif malgré un JWT valide, chaque action staff auditée, export téléchargé, suppression de compte de bout en bout ; preuves dans `docs/superpowers/HANDOFF.md` et `docs/verifications.md`, M6a — livraison.
 - **Corrections de la revue finale** (b656777, f7219c9, 0622bb6) : pseudo effacé des notifications des autres joueurs (index `notifications_actor_idx`), amitiés verrouillées d'abord dans `account_delete`, empreinte d'e-mail effacée à la levée du dernier bannissement, acteur supprimé refusé sous le verrou (`wm.actor_uid`, `lock_user`, `lock_users`), bannissement GoTrue posé au mieux au report, lignes de carte en `for no key update`, `ends_at` en année 0000 → 400 « Date invalide », texte « avatars retirés » partagé par `/admin/cards` et `/admin/reports`, « Resynchroniser la session » pour tout administrateur, conséquences de la suppression (batailles, guilde dissoute) dans `/settings` et `/privacy`.
 
-## M6b — Pro, boutique, Stripe
+## Réglés au M6b
 
-- VIP traité comme Pro (`is_pro or is_vip`) pour la période de régénération et le paquet Pro du jour : à confirmer avec D§7.2.
-- Paquets Pro, spéciaux et de grâce comptés dans `packs_opened` et `cards_obtained` (accepté au M1 : ce sont des paquets) : à confirmer avec les succès.
-- Solde dans tout le shell avec la boutique (R23 : au M1, en-tête de `/collection` seulement) ; bandeau d'achat de paquets quand le stock est à 0.
-- **UI des paquets spéciaux et de grâce** sur `/pulls` : au M1, seules les routes `/api/packs/special` et `/api/packs/grace` existent (aucun appelant client) ; leurs outils staff avec (G18 du M6a).
-- Pro du jour après un échec sans verdict (réseau, ≥ 500) : le bloc n'est pas relu (le relire démonterait « Récupérer » sous le focus et perdrait la seule façon de voir les cartes) ; le message invite à réessayer, la même clé rejoue la réponse (vague B, R32).
-- « Comment ça marche ? » (`/pulls`) écrit encore en dur les périodes et le stock (les seuils viennent de `lib/rarity.ts` depuis le M2) : risque de dérive avec `wm.config`.
-- **Résiliation de l'abonnement à la suppression d'un compte** (A3, M6a-3) : point d'accroche dans la route de suppression, avant la suppression GoTrue (`lib/admin-auth.ts:64`, commentaire en tête de `wm.account_delete` dans `2250`) (M6a).
+**État : code livré et relu sur la branche ; déploiement sur la démo et recette en mode test : en cours (2026-11-02).** À compléter après la recette : preuves des critères de D:1085 (voir `docs/verifications.md`). Les points ci-dessous sont réglés **dans le code de la branche** (tête 4ea51e3, non fusionnée dans `develop`) ; aucun n'est encore déployé. Décisions G1 à G46 du M6b, conflits C1 à C8 et rulings : `docs/decisions-graphify.md`. Numéros S: = lignes de ce fichier avant le M6a (référence du plan).
+
+- **S:75, VIP traité comme Pro** (`is_pro or is_vip`) : confirmé et prouvé par un test (un VIP sans `is_pro` a le paquet Pro du jour, la régénération à 180 s et la sixième vente active, `40_stripe.test.sql`, Task 1) ; la règle est documentée dans « Exploitation de Stripe » de `docs/superpowers/HANDOFF.md` (`is_vip` est le geste durable, aucune action staff sur `is_pro`, G12).
+- **S:76, paquets Pro, spéciaux et de grâce comptés dans `packs_opened` et `cards_obtained`** : décision G22, ce sont des paquets ; gardée telle quelle.
+- **S:77, solde dans tout le shell et bannière de stock à 0** : le solde et la pastille PRO sont dans l'en-tête, il ouvre la boutique ; `/pulls` propose « Voir l'abonnement » à un stock vide (Tasks 9 et 10, G21, G42).
+- **S:80 (UI), paquets spéciaux et de grâce** : « Paquets offerts » sur `/pulls`, « Récupérer » par paquet spécial et « Récupérer le paquet offert » pour une dotation de grâce (`GET /api/packs/grace`, `wm.grace_status`) ; les fonctions d'octroi n'existent pas : voir « Reportés du M6b ».
+- **S:82, Pro du jour après un échec sans verdict** : gardé tel quel (le bloc n'est pas relu), documenté (G22, commentaire de `components/packs/ProDailyBlock.tsx`).
+- **S:84, « Comment ça marche ? »** : périodes, tailles et réserve lues de `wm.config` par `GET /api/shop` ; restent en dur « 5 CARTES » (décoratif, `aria-hidden`), le repli `?? 15` de `ProDailyBlock` pendant le chargement et « sans aucune commune » (ruling de la Task 10 : valeurs à relister).
+- **Résiliation de l'abonnement à la suppression d'un compte** (A3, M6a-3) : avant la suppression GoTrue (`lib/admin-auth.ts`), résiliation immédiate sans remboursement ; un échec ne bloque pas la suppression et laisse `wm.deleted_accounts.stripe_pending` vrai (posé dans la transaction, G35), montré au tableau de bord avec « Résilier » rejouable.
+- **Pro, boutique, Stripe** (D:616-632) : Checkout hébergé avec consentement et renonciation, Portail client, webhook signé en une transaction (`wm.stripe_apply`), crédit unique de 2 500 wikibidous par session, `is_pro` dérivé de l'abonnement, litiges en file staff, export RGPD des paiements, invariants `stripe_purchase` et `stripe_pro`, horloges de test par script manuel (`scripts/stripe-clock.mjs`).
+- **Critères de D:1085 pris par le M6b** : « avec une carte de test, le compte devient Pro et a tous ses avantages », « webhook rejoué sans effet » ; preuves automatisées dans `docs/superpowers/HANDOFF.md`, preuves avec le vrai Stripe en mode test **en attente de la recette**.
+- **Corrections de la revue finale** (4ea51e3) : régénération des paquets soldée à la bascule de Pro, achats sur comptes supprimés montrés au tableau de bord, clé Stripe non test refusée, verrou de clé étrangère pris avant l'insertion du Customer, notification `pro_ended` « suspendu » sur `past_due`, `cancel_at` dans la phrase d'état de l'abonnement, `every()` dans la boutique, isolation de `e2e/pulls.spec.ts` et `e2e/admin.spec.ts`.
 
 ## M7 — Parité et qualité
 
@@ -127,11 +132,22 @@ La section M6 est soldée pour la modération, l'audit, le retrait de cartes, l'
     - l'espace admin sous `app/(game)/admin/` au lieu de `app/admin/` (D:201, G13) ; sous `<Suspense>`, une réponse HTTP 200 avec l'interface 404 pour un non-staff (G13) ;
     - les routes `/api/admin/**`, l'export, la suppression et le signalement d'image, et leurs réponses inférées (`confidence: 'ajouté'`, M6a-14) ;
     - la restriction sans `packs_blocked_until` (G3, D:642) ;
-    - aucune réacceptation des conditions demandée aux comptes existants après le passage de `TERMS_VERSION` à `'2026-10-31'` (G16) ;
+    - aucune réacceptation des conditions demandée aux comptes existants après le passage de `TERMS_VERSION` à `'2026-10-31'` (G16), puis à `'2026-11-02'` au M6b (G40) : chaque compte garde la version que son formulaire d'inscription a envoyée (`terms_version` des métadonnées GoTrue, lue par `wm.handle_new_user` qui n'en exige que la présence, aucune colonne de `public.profiles`) ;
     - le classement des joueurs qui montre encore une pierre tombale sous « Joueur supprimé … » (G1, point f) ;
     - les textes d'interface de l'admin, de « Mes données », de « Supprimer mon compte » et les notifications `auction_voided` et `trade_voided`, inférés (A15), sauf « Signaler l'image » (R:721) ;
     - les pluriels accordés des engagements de `/admin/cards` (« 1 vente active », « 2 ventes actives ») au lieu de « {n} ventes actives » du brief (ruling de la Task 17).
+  - Pro, boutique et Stripe (M6b) :
+    - `stripe` 23.1.0 (API `2026-10-28.endive`) au lieu de 23.0.0 (D:73, G2) ;
+    - aucun `stripe trigger` en CI : événements de test signés par `Stripe.webhooks.generateTestHeaderString` contre un faux Stripe de la passerelle du banc, et acceptation réelle (cartes et horloges de test) jouée à la main sur la démo (D:631, D:1039, G15) ;
+    - aucune période de grâce sur `past_due` : l'impayé retire Pro tout de suite, et aucune action staff auditée sur `is_pro` (D:626, G4, G12) ;
+    - le compte Pro « carol » n'existe que dans les fixtures de test, pas à la démo (D:212, G23) ;
+    - deux variables de Price en plus (D:1053, G6) ; aucun secret GitHub Stripe (D:1055) ;
+    - les textes de la boutique, de la section « Abonnement », des tuiles admin et des notifications de paiement, inférés (aucune capture, R:897, D:741), et les pages `/terms` et `/privacy` du M6b.
 - **Reportés du M6 au M7** (G17) : `/api/human-check` et `/api/username-available` sans limite de débit (C17 ; une règle WAF seulement sur Hobby) ; `/reset-password` utilisable par n'importe quelle session connectée ; flux de réauthentification (`reauthentication_needed`) absent, remplacé au M6a par la saisie du pseudo pour la suppression (« Secure password change » désactivé sur la démo) ; changement d'e-mail (D:362), avec la réauthentification ; renommage forcé d'une carte (D:641, un nouvel article dont le titre appartient à une autre carte reste en `conflict` ; aucun conflit relevé à ce jour) ; délai d'une heure entre deux invitations de guilde du même couple (chaque `guild_invite` répétée notifie l'invité sans plafond ; l'amitié borne déjà le spam, et le staff peut sanctionner) (M6a).
+- **Reportés du M6b** (rulings de la revue finale et de la livraison) :
+  - au M7 : outils staff d'octroi des paquets spéciaux et de grâce (`wm.special_packs` et `wm.grace_grants` n'ont aucune fonction d'octroi, C6, G22) ; limite de débit par joueur sur `POST /api/stripe/checkout` et `/portal` (la limite de requêtes de Stripe est partagée par le compte) ; statut de litige rafraîchi (`charge.dispute.updated` ignoré) ; `invoice.*` reçu avant la ligne de son abonnement, sans effet ; solde de l'en-tête en tiret après une relecture ratée alors que les autres composants gardent l'ancienne valeur ; Customer supprimé au Dashboard jamais délié ; deux onglets de Checkout Pro (G41) ; flake `e2e/dms.spec.ts:364` (une lecture encore en vol quand un fil est masqué) à la vague de flakes ;
+  - avant le live (D:24) : Stripe Tax et TVA, passage en live (clé, Prices, endpoint, et les deux gardes du code : `stripeClient` et `livemode` de `stripe_apply`), relecture juridique de `/terms` et `/privacy` (étape humaine 16), domaine personnalisé de Checkout (`STRIPE_HOSTS`, `lib/shop.ts`) ;
+  - essai gratuit, recharges de paquets, achats intégrés des boutiques d'applications, cosmétiques et meilleures cotes : hors périmètre (G1, G7).
 - **Batailles héritées du site d'origine** (option A, M5a) : une bataille ouverte importée (`game_state` sans `cards`, sans secrets) ne se clôt que par un abandon ou l'inactivité de 48 h ; un `currentTurnUserId` ou un `defenderId` hérité présent mais qui n'est pas un uuid lève `22P02` dans la sous-transaction d'`expire_battles` : la bataille est sautée à chaque passage, avec un avertissement toutes les 15 min, et le `shortcut:` ne le dit pas ; une bataille sans phase ni `currentTurnUserId` ferait gagner le challenger. Vérifier à la bascule qu'il n'y en a aucune, ou les annuler (revues des Tasks 5 et 7) (M5a).
 - **Guildes, succès et classements** (M5b, parqués avec ruling de la revue finale) :
   - la dissolution d'une guilde supprime ses `guild_donations` en cascade (D-C20 voulait la cascade) : la métrique du succès « dons », le karma total et le plafond du jour du receveur reculent ; à relire (envisager `on delete set null`) ;
@@ -316,6 +332,10 @@ La section M6 est soldée pour la modération, l'audit, le retrait de cartes, l'
 - **Textes légaux** : `/terms`, `/rules` et `/privacy` à relire par un humain avant toute ouverture publique (pas un conseil juridique) ; `LEGAL_*` posées dans Vercel (Production et Preview) le 2026-11-01, lues au build (étape humaine 16) (M6a).
 - **Fait (2026-11-02) : affichages de l'essai du M6a**, confirmés par l'utilisateur le 2026-11-02 (étape humaine 18) ; `banned_until` pendant la suspension reste non relevé à chaud (non prouvé sur le GoTrue hébergé) (M6a).
 - **Correctif 22a70b8 à republier** (« Date.now() … while prerendering » sur `/admin/*`) : corrigé dans la branche, non déployé ; relire les erreurs d'exécution Vercel après la fusion (étape humaine 19) (M6a).
+
+- **M6b : réglages Stripe en mode test et variables Vercel** (catalogue, URL des conditions, Portail avec résiliation en fin de période et lien de connexion, relances, endpoint « Snapshot », clé restreinte, quatre variables) : par l'utilisateur, avant la fusion ; **recette en mode test** sur la démo ensuite (étape humaine 20) (M6b).
+- **M6b : textes de `/terms` et `/privacy` à relire par un humain** (pas un conseil juridique) : conservation des références de paiement, rôle de Stripe et transfert hors UE, base légale comptable, réglages du Portail, renonciation du Checkout pour un abonnement récurrent, `LEGAL_*` (étape humaine 16) (M6b).
+- **M6b : faits Stripe à confirmer sur docs.stripe.com** : carte de test de litige, `pm_card_chargeCustomerFail`, code d'erreur d'une résiliation déjà faite, Portail (étape humaine 21) (M6b).
 
 - **Graphify** : indexation du dépôt et notes de `docs/decisions-graphify.md`, en attente de l'étape humaine de `docs/superpowers/HANDOFF.md`.
 - **Démo** : changement de mot de passe (« Secure password change » désactivé) et déconnexion sur le Supabase hébergé, en-tête `alg` d'une vraie session : après les réglages Auth de `docs/superpowers/HANDOFF.md`.
