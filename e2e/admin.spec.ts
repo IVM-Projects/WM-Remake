@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { cookieFor, expect, makeStaff, routeOnce, sql, test } from './fixtures'
 
@@ -265,6 +266,22 @@ test('360 px : aucun défilement horizontal, liens et champs de 44 px', async ({
     }
   } finally {
     unlog(t)
+    wipe(u.uid)
+  }
+})
+
+// Régression (Vercel, M6a) : le client à clé secrète lit Date.now() à sa création ; sans `await connection()` avant, Next journalise
+// « unstable value » à chaque rendu de l'admin. Le journal de next start (contract/harness.ts) ne doit en contenir aucun.
+test('pages de l’admin : aucun « unstable value » au journal du serveur', async ({ page }) => {
+  const u = await asStaff(page)
+  try {
+    for (const path of ['/admin', '/admin/reports', '/admin/users', '/admin/cards', '/admin/guilds', '/admin/audit']) {
+      await page.goto(path)
+      await page.locator('main [data-ready]').waitFor()
+    }
+    const log = readFileSync(new URL('../.cache/logs/next-plain.log', import.meta.url), 'utf8')
+    expect(log.split('\n').filter((l) => l.includes('unstable value'))).toEqual([])
+  } finally {
     wipe(u.uid)
   }
 })

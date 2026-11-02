@@ -1,3 +1,4 @@
+import { connection } from 'next/server'
 import { cache } from 'react'
 import type { StaffRole } from '@/components/admin/types'
 import { accessDenied } from '@/lib/access'
@@ -6,7 +7,9 @@ import { createClient } from '@/lib/supabase/server'
 
 // Rôle du lecteur lu côté serveur (cookie vérifié, puis wm.staff_me en SQL) ; null : pas de session, suspension ou bannissement actifs (G4), pas de rôle.
 // Mis en cache par requête : le layout de l'admin et le titre de chaque page (qui ne doit pas fuiter à un non-staff) partagent une seule lecture.
+// connection() d'abord : le client à clé secrète lit Date.now() à sa création, interdit avant connection() sous cacheComponents (cookies() ne suffit pas).
 export const staffRole = cache(async (): Promise<StaffRole | null> => {
+  await connection()
   const { data } = await (await createClient()).auth.getClaims()
   const uid = data?.claims.sub
   if (!uid || (await accessDenied(uid))) return null
