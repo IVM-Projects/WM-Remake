@@ -141,7 +141,7 @@ begin
         v_outcome := 'stale';
       end if;
       v_pro := exists (select from wm.subscriptions where user_id = v_uid and status in ('active', 'trialing'));
-      -- Régénération paresseuse soldée au rythme d'avant la bascule (apply_regen lit is_pro) ; profil déjà tenu, inerte sur une pierre tombale.
+      -- Régénération paresseuse soldée au rythme d'avant la bascule (apply_regen lit is_pro) ; profil déjà tenu, sur une pierre tombale elle écrit packs_remaining et packs_last_regen_at, que rien ne lit.
       perform wm.apply_regen(v_uid);
       update public.profiles set is_pro = v_pro where id = v_uid and is_pro is distinct from v_pro;
       if found and not v_tomb then
