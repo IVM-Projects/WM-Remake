@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type Stripe from 'stripe'
 import { z } from 'zod'
@@ -322,14 +322,26 @@ const eventRow = (env: ContractEnv, ev: { id: string }) =>
   sql(env, `select coalesce((select outcome from wm.stripe_events where id = :'id'), 'absent')`, { id: ev.id })
 const firstCard = (env: ContractEnv) => sql(env, `select id from public.cards order by wikipedia_title limit 1`)
 const salesOf = (card: string) => `/api/marketplace/cards/${card}/sales`
-const serverLog = () => readFileSync(new URL('../../.cache/logs/next-plain.log', import.meta.url), 'utf8').split('\n')
+const SERVER_LOG = new URL('../../.cache/logs/next-plain.log', import.meta.url)
+
+// Après chaque cas : ses événements effacés (ids evt_bench_ des fixtures seulement ; WHERE exigé par pg-safeupdate).
+const cleaned = (cases: RouteSpec['cases']): RouteSpec['cases'] => cases.map((c) => ({
+  ...c,
+  run: async (env, t) => {
+    try {
+      await c.run(env, t)
+    } finally {
+      sql(env, `delete from wm.stripe_events where id like 'evt\\_bench\\_%'`)
+    }
+  },
+}))
 
 export const stripeWebhook: RouteSpec = {
   method: 'POST',
   path: '/api/stripe/webhook',
   source: 'D§7.11 · D:330 · D:1085',
   confidence: 'ajouté',
-  cases: [
+  cases: cleaned([
     {
       name: 'sans stripe-signature, signé par whsec_test_autre, corps modifié après signature, horodatage à 301 s (tolérance 300 s) → 400 '
         + 'invalid_signature exact ; aucune ligne stripe_events',
@@ -376,6 +388,8 @@ export const stripeWebhook: RouteSpec = {
         await received(await hook(env, async))
         assert.equal(await wallet(env, uid), 100 + SHOP.wb_2500.wb)
         assert.deepEqual([eventRow(env, ev), eventRow(env, async)], ['applied', 'applied'])
+        // Le rejeu est un doublon : une seule ligne pour l'id rejoué.
+        assert.equal(sql(env, `select count(*) from wm.stripe_events where id = :'id'`, { id: ev.id }), '1')
         assert.equal(sql(env, `select count(*) || ':' || sum(wb) || ':' || sum(amount) from wm.purchases where user_id = :'u'`, { u: uid }),
           `1:${SHOP.wb_2500.wb}:${SHOP.wb_2500.cents}`)
         assert.equal(sql(env, `select count(*) from wm.wb_ledger where user_id = :'u' and reason = 'stripe'`, { u: uid }), '1')
@@ -453,7 +467,8 @@ select extract(epoch from wm.next_regen_at(p) - p.packs_last_regen_at)::int from
       }),
     },
     {
-      name: 'Review Focus, désordre : updated active puis created incomplete de la même seconde (G44) → stale, Pro ; abonnement reçu avant '
+      name: 'Review Focus, désordre : created active avant checkout.session.completed pro_monthly → Pro, puis un achat, Pro inchangé ; '
+        + 'updated active puis created incomplete de la même seconde (G44) → stale, Pro ; abonnement reçu avant '
         + 'checkout.session.completed pro_monthly → un achat pro_monthly (wb 0), Pro et solde inchangés',
       run: (env) => withPlayers(env, async (player) => {
         const uid = player({ balance: 7 })
@@ -469,6 +484,16 @@ select extract(epoch from wm.next_regen_at(p) - p.packs_last_regen_at)::int from
         assert.equal(sql(env, `select string_agg(item || ':' || wb, ',') from wm.purchases where user_id = :'u'`, { u: uid }), 'pro_monthly:0')
         const state = await ok(await api(env, `/api/shop?session=${session}`, { uid }), ShopState)
         assert.deepEqual([state.me.is_pro, state.me.balance, state.purchase?.item], [true, 7, 'pro_monthly'])
+
+        // Ordre littéral du brief : created active, puis completed.
+        const other = player()
+        const [id2, customer2, session2] = [sub(), cus(), cs()]
+        await received(await hook(env, subscriptionEvent({ id: id2, uid: other, customer: customer2, status: 'active', type: 'created', created: t,
+          periodEnd: t + 30 * DAY })))
+        assert.equal((await me(env, other)).is_pro, true)
+        await received(await hook(env, checkoutCompleted({ uid: other, session: session2, item: 'pro_monthly', customer: customer2, created: t })))
+        assert.equal(sql(env, `select string_agg(item || ':' || wb, ',') from wm.purchases where user_id = :'u'`, { u: other }), 'pro_monthly:0')
+        assert.equal((await me(env, other)).is_pro, true)
       }),
     },
     {
@@ -557,15 +582,22 @@ select extract(epoch from wm.next_regen_at(p) - p.packs_last_regen_at)::int from
     },
     {
       name: 'journal du serveur : une ligne aux clés exactes par requête, signature refusée comprise ; ni whsec_, ni t= ni v1= de l\'en-tête, ni l\'uid',
-      run: (env) => withPlayers(env, async (player) => {
+      run: (env, t) => withPlayers(env, async (player) => {
         const uid = player()
         const ev = checkoutCompleted({ uid, session: cs(), item: 'wb_2500', paid: false })
         const { payload, header } = sign(ev)
         const vercelId = randomUUID()
+        const t0 = Date.now()
         await received(await postRaw(env.plain, payload, header))
         await refused(await postRaw(env.plain, payload, `${header}0`, { 'x-vercel-id': vercelId }), 400, BAD_SIGNATURE, 'invalid_signature')
-        // Journal du serveur lancé par le banc lui-même : ce cas ne vaut que si la suite démarre son propre serveur.
-        const lines = serverLog()
+        // Journal du serveur lancé par le banc lui-même : absent, ou muet pendant nos requêtes (marge d'une seconde pour un mtime grossier),
+        // il n'est pas celui du serveur interrogé. Saut explicite, jamais un échec.
+        if (!existsSync(SERVER_LOG) || statSync(SERVER_LOG).mtimeMs < t0 - 1000) {
+          const reason = `journal ${SERVER_LOG.pathname} absent ou périmé : le serveur interrogé n'a pas été lancé par ce banc`
+          console.warn(reason)
+          t.skip(reason)
+        }
+        const lines = readFileSync(SERVER_LOG, 'utf8').split('\n')
         const good = lines.find((l) => l.includes(ev.id))
         const bad = lines.find((l) => l.includes(vercelId))
         for (const line of [good, bad]) {
@@ -580,7 +612,7 @@ select extract(epoch from wm.next_regen_at(p) - p.packs_last_regen_at)::int from
         assert.deepEqual(b, { ...b, status: 400, event_type: null, event_id: null, duplicate: null, outcome: null, vercel_id: vercelId })
       }),
     },
-  ],
+  ]),
 }
 
 export const stripe: RouteSpec[] = [shop, stripeCheckout, stripePortal, graceStatus, stripeWebhook]

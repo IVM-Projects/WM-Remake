@@ -8,7 +8,8 @@ export type RouteSpec = {
   path: string // paramètres en {nom}
   source: string // ex. '§3.5 · S 2926-2940' ou 'D§8.3'
   confidence: 'conf.' | 'prob.' | 'inc.' | 'ajouté'
-  cases: Array<{ name: string; run: (env: ContractEnv) => Promise<void>; timeout?: number }>
+  // `t.skip(raison)` : saut explicite d'un cas qui ne peut pas valoir sur ce banc (journal d'un serveur qu'il n'a pas lancé).
+  cases: Array<{ name: string; run: (env: ContractEnv, t: { skip(note: string): never }) => Promise<void>; timeout?: number }>
 }
 
 export type RecapRoute = { method: string; path: string; section: string }

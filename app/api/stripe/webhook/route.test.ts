@@ -42,13 +42,23 @@ describe('POST /api/stripe/webhook', () => {
     ['sans en-tête', () => post(payload, null)],
     ['autre secret', () => post(payload, Stripe.webhooks.generateTestHeaderString({ payload, secret: 'whsec_test_autre' }))],
     ['hors tolérance (301 s)', () => post(payload, Stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET, timestamp: Date.now() / 1000 - 301 }))],
-    ['signé mais pas du JSON', () => post('x')],
   ])('%s → 400 invalid_signature, aucun client ni RPC, journal sans événement', async (_, send) => {
     const res = await send()
     expect(res.status).toBe(400)
     expect(await res.json()).toStrictEqual({ code: 'invalid_signature', error: 'Signature Stripe invalide', message: 'Signature Stripe invalide' })
     expect(admin).not.toHaveBeenCalled()
     expect(line()).toMatchObject({ status: 400, event_id: null, event_type: null, pg_code: null })
+  })
+
+  it('signé mais illisible (pas du JSON, événement v2 « thin ») → même 400 invalid_signature, aucune RPC, event_type « unparsable » au journal', async () => {
+    for (const body of ['x{secret', JSON.stringify({ id: 'evtn_x', object: 'v2.core.event', type: 'x' })]) {
+      const res = await post(body)
+      expect(res.status).toBe(400)
+      expect(await res.json()).toStrictEqual({ code: 'invalid_signature', error: 'Signature Stripe invalide', message: 'Signature Stripe invalide' })
+      expect(line()).toMatchObject({ status: 400, event_type: 'unparsable', event_id: null, pg_code: null })
+      expect(String(log.mock.calls.at(-1)?.[0])).not.toContain('secret')
+    }
+    expect(admin).not.toHaveBeenCalled()
   })
 
   it('signé → une RPC stripe_apply avec l\'événement ; 200 {received: true} ; ligne aux clés exactes, sans secret ni signature', async () => {
@@ -86,8 +96,20 @@ describe('POST /api/stripe/webhook', () => {
     const res = await post()
     expect([res.status, res.headers.get('retry-after')]).toEqual([503, '1'])
     expect(await res.json()).toStrictEqual({ code: 'maintenance', error: m, message: m })
-    rpc.mockResolvedValueOnce(pgError('P0001', { details: JSON.stringify({ status: 400, code: 'invalid_request', error: 'Événement invalide', message: 'Événement invalide' }) }))
-    expect((await post()).status).toBe(400)
+    const bad = 'Événement invalide'
+    rpc.mockResolvedValueOnce(pgError('P0001', { details: JSON.stringify({ status: 400, code: 'invalid_request', error: bad, message: bad }) }))
+    const refused = await post()
+    expect([refused.status, refused.headers.get('retry-after')]).toEqual([400, null])
+    expect(await refused.json()).toStrictEqual({ code: 'invalid_request', error: bad, message: bad })
+    expect(line()).toMatchObject({ status: 400, pg_code: 'P0001', duplicate: null, outcome: null })
+  })
+
+  it.each([['null', null], ['une chaîne', 'ok'], ['un nombre', 1]])('stripe_apply rend %s → 200 {received: true}, outcome « unknown », duplicate faux (jamais un 500 rejoué)', async (_, data) => {
+    rpc.mockResolvedValueOnce({ data, error: null })
+    const res = await post()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toStrictEqual({ received: true })
+    expect(line()).toMatchObject({ status: 200, pg_code: null, duplicate: false, outcome: 'unknown' })
   })
 
   it('autre erreur de base, ou RPC qui lève → 500 INTERNAL sans détail (Stripe réessaie)', async () => {
@@ -99,6 +121,10 @@ describe('POST /api/stripe/webhook', () => {
     const thrown = await post()
     expect(thrown.status).toBe(500)
     expect(await thrown.text()).not.toContain('secrète')
-    expect(line()).toMatchObject({ status: 500, event_id: EVENT.id })
+    expect(line()).toMatchObject({ status: 500, event_id: EVENT.id, pg_code: 'thrown' })
+    const text = String(log.mock.calls.at(-1)?.[0])
+    expect(Object.keys(JSON.parse(text))).toStrictEqual(
+      ['route', 'status', 'ms', 'rpc', 'pg_code', 'event_type', 'event_id', 'duplicate', 'outcome', 'vercel_id'])
+    expect(text).not.toContain('secrète')
   })
 })

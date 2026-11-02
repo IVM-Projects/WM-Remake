@@ -1,3 +1,4 @@
+import Stripe from 'stripe'
 import { reply } from '@/lib/cron'
 import { fail, INTERNAL, toHttpError } from '@/lib/route'
 import { verifyEvent } from '@/lib/stripe'
@@ -15,7 +16,9 @@ async function handle(req: Request, log: Log): Promise<Response> {
   let event: unknown
   try {
     event = verifyEvent(body, req.headers.get('stripe-signature'), secret)
-  } catch {
+  } catch (err) {
+    // Signature bonne mais corps illisible (pas du JSON, événement v2 « thin ») : même 400, consigné à part, sans le message.
+    if (!(err instanceof Stripe.errors.StripeSignatureVerificationError)) log.event_type = 'unparsable'
     return reply(fail(400, 'Signature Stripe invalide', 'invalid_signature'))
   }
   // Signé mais quelconque (null, sans type) : stripe_apply le refuse en 400, jamais une exception ici.
@@ -29,9 +32,10 @@ async function handle(req: Request, log: Log): Promise<Response> {
     // P0001 400/503 recopiés (maintenance : Stripe réessaie), BUSY_CODES → 503, tout le reste → 500 : Stripe réessaie aussi.
     return reply(toHttpError(error))
   }
-  const applied = data as { duplicate: boolean; outcome: string | null }
-  log.duplicate = applied.duplicate
-  log.outcome = applied.outcome
+  // Réponse inattendue : l'événement est appliqué (la transaction a validé), jamais un 500 que Stripe rejouerait sans fin.
+  const applied = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
+  log.duplicate = applied?.duplicate === true
+  log.outcome = applied ? str(applied.outcome) : 'unknown'
   return Response.json({ received: true })
 }
 
@@ -43,6 +47,8 @@ export async function POST(req: Request): Promise<Response> {
   try {
     res = await handle(req, log)
   } catch {
+    // Jamais le message : il peut porter un détail de la base ou de la requête.
+    log.pg_code = 'thrown'
     res = reply(fail(500, INTERNAL))
   }
   // Ni corps, ni en-tête de signature, ni secret, ni joueur : l'événement par son id et son type seulement.
