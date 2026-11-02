@@ -161,6 +161,20 @@ test('retour annulé : la boutique s\'ouvre sur « Paiement annulé : rien n\'a 
   await expect(balance(page)).toBeFocused()
 })
 
+test('retour annulé, boutique fermée avant la fin de la lecture : le focus va au solde dès qu\'il apparaît', async ({ page, login }) => {
+  trash.push((await login({ balance: 120 })).uid)
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route('**/api/shop*', async (r) => { await held; await r.continue() })
+  await page.goto('/pulls?shop=cancel')
+  await expect(shop(page)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(shop(page)).toBeHidden()
+  await expect(balance(page)).toHaveCount(0)
+  release()
+  await expect(balance(page)).toBeFocused()
+})
+
 for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }], ['200 sans solde', { status: 200, contentType: 'application/json', body: '{"me":{}}' }]] as const) {
   test(`lecture en échec (${label}) : « — » dans l'en-tête, « Réessayer » dans la modale, puis tout rentre dans l'ordre`, async ({ page, login }) => {
     trash.push((await login({ balance: 120 })).uid)

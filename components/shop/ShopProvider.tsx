@@ -74,7 +74,18 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     setFailed(false)
     setState(next)
   }, [read])
-  const openShop = useCallback(() => setOpen(true), [])
+  // Boutique ouverte sans ouvreur (retour de Checkout) : Modal rendrait le focus à body ; il va au solde dès que celui-ci existe.
+  const bare = useRef(false)
+  const openShop = useCallback(() => { bare.current = false; setOpen(true) }, [])
+  // Après la fermeture (les nettoyages de Modal sont déjà passés) et à chaque lecture : le solde n'est monté qu'une fois l'état lu,
+  // une boutique fermée avant la fin de la première lecture le retrouve donc ici. Le focus déjà ailleurs annule la demande.
+  useEffect(() => {
+    if (open || !bare.current) return
+    const active = document.activeElement
+    if (active && active !== document.body) { bare.current = false; return }
+    const target = document.querySelector<HTMLElement>('header button[title="Ouvrir la boutique"]')
+    if (target) { target.focus(); bare.current = false }
+  }, [open, state, failed])
   const quiet = useCallback(() => void read(), [read])
 
   // Retour au premier plan : le solde a pu bouger ailleurs.
@@ -100,6 +111,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     void (async () => {
       if (shop === 'cancel') {
         setNotice(CANCELLED)
+        bare.current = true
         setOpen(true)
         clean()
         return
@@ -146,14 +158,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
           Paiement reçu, confirmation en cours…
         </p>
       )}
-      {open && <ShopDialog notice={notice} onClose={() => {
-        setOpen(false)
-        setNotice(null)
-        // Ouverte sans ouvreur (retour de Checkout) : à la fermeture le focus tomberait sur body, il va au solde.
-        setTimeout(() => {
-          if (!document.activeElement || document.activeElement === document.body) document.querySelector<HTMLElement>('header button[title="Ouvrir la boutique"]')?.focus()
-        })
-      }} />}
+      {open && <ShopDialog notice={notice} onClose={() => { setOpen(false); setNotice(null) }} />}
     </Ctx>
   )
 }
