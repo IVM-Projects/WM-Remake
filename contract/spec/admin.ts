@@ -29,6 +29,9 @@ const Dashboard = z.strictObject({
     id: z.string(), amount: z.int(), currency: z.string(), reason: z.string().nullable(), status: z.string(), created_at: Iso,
   })),
   stripe_pending_users: z.array(z.strictObject({ user_id: z.uuid(), username: z.string(), deleted_at: Iso })),
+  purchases_on_deleted_list: z.array(z.strictObject({
+    session_id: z.string(), user_id: z.uuid(), item: z.enum(['pro_monthly', 'wb_2500']), amount: z.int(), currency: z.string(), created_at: Iso,
+  })),
 })
 const AuditRow = z.strictObject({
   id: z.int().positive(), staff_id: z.uuid().nullable(), staff_username: z.string().nullable(), action: z.string(), target_type: z.string(),

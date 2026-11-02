@@ -760,11 +760,13 @@ do $$ declare a uuid := tests.make_user('StrExp'); b uuid := tests.make_user('St
 end $$;
 
 -- Tableau de bord (G8, G10, G38) : écarts sur un jeu construit (compteurs globaux) ; litige ouvert et fermé, pierre tombale stripe_pending,
--- achat après la suppression (compté) et avant (non compté) ; 20 litiges ouverts au plus, les plus récents.
-do $$ declare st uuid := tests.make_user('StrDashM'); dl uuid := tests.make_user('StrDashD'); T bigint := extract(epoch from now())::bigint;
+-- achat après la suppression (compté, listé) et avant (ni l'un ni l'autre). Ordres et plafonds prouvés par des lignes hors d'atteinte des
+-- autres blocs : created_at dans le futur (litiges, achats), deleted_at un siècle avant (pierres tombales).
+do $$ declare st uuid := tests.make_user('StrDashM'); dl uuid := tests.make_user('StrDashD'); d0 uuid := tests.make_user('StrDashD0');
+  dm uuid := tests.make_user('StrDashDM'); T bigint := extract(epoch from now())::bigint;
   dp jsonb := jsonb_build_object('id', 'dp_bench_open', 'object', 'dispute', 'charge', 'ch_bench_open', 'amount', 499, 'currency', 'cad',
     'reason', 'fraudulent', 'status', 'needs_response', 'created', T - 3600);
-  r0 jsonb; r jsonb; begin
+  adm jsonb := (select value from wm.config where key = 'admin'); r0 jsonb; r jsonb; begin
   insert into wm.staff (user_id, role) values (st, 'moderator');
   r0 := wm.staff_dashboard(st);
   assert pg_temp.ap(pg_temp.ev('evt_bench_dd1', 'charge.dispute.created', T, dp)) = 'applied', 'ouvert';
@@ -779,8 +781,8 @@ do $$ declare st uuid := tests.make_user('StrDashM'); dl uuid := tests.make_user
     = 'applied', 'achat sur pierre tombale';
   r := wm.staff_dashboard(st);
   assert (select array_agg(k order by k) from jsonb_object_keys(r) k) = array['active_sanctions', 'auth_pending', 'auto_hidden_cards',
-    'health', 'image_reports', 'open_reports', 'purchases_on_deleted', 'removed_cards', 'stripe_disputes', 'stripe_disputes_open',
-    'stripe_pending', 'stripe_pending_users'], 'clés';
+    'health', 'image_reports', 'open_reports', 'purchases_on_deleted', 'purchases_on_deleted_list', 'removed_cards', 'stripe_disputes',
+    'stripe_disputes_open', 'stripe_pending', 'stripe_pending_users'], 'clés';
   assert jsonb_build_object('stripe_disputes_open', (r ->> 'stripe_disputes_open')::int - (r0 ->> 'stripe_disputes_open')::int,
     'stripe_pending', (r ->> 'stripe_pending')::int - (r0 ->> 'stripe_pending')::int,
     'purchases_on_deleted', (r ->> 'purchases_on_deleted')::int - (r0 ->> 'purchases_on_deleted')::int)
@@ -791,11 +793,43 @@ do $$ declare st uuid := tests.make_user('StrDashM'); dl uuid := tests.make_user
     and not exists (select from jsonb_array_elements(r -> 'stripe_disputes') e where e ->> 'id' = 'dp_bench_closed'), 'litige fermé listé';
   assert r -> 'stripe_pending_users' @> jsonb_build_array(jsonb_build_object('user_id', dl,
     'username', (select username from public.profiles where id = dl), 'deleted_at', now())), 'pierre tombale listée';
+  assert r -> 'purchases_on_deleted_list' @> jsonb_build_array(jsonb_build_object('session_id', 'cs_test_bench_dash', 'user_id', dl,
+    'item', 'wb_2500', 'amount', 499, 'currency', 'cad', 'created_at', now())), 'achat sur pierre tombale listé';
+  assert (select count(*) from jsonb_array_elements(r -> 'purchases_on_deleted_list') e where e ->> 'session_id' = 'cs_test_bench_dash') = 1
+    and not exists (select from jsonb_array_elements(r -> 'purchases_on_deleted_list') e where e ->> 'session_id' = 'cs_test_bench_dash_old'),
+    'achat d''avant la suppression listé';
+  -- 21 litiges ouverts dans le futur : les 20 plus récents, du plus récent au plus ancien.
   insert into wm.stripe_disputes (id, amount, currency, status, created_at, event_created)
-  select 'dp_bench_many_' || lpad(i::text, 2, '0'), 1, 'cad', 'needs_response', now() - make_interval(secs => i), now()
+  select 'dp_bench_many_' || lpad(i::text, 2, '0'), 1, 'cad', 'needs_response', now() + make_interval(secs => i), now()
   from generate_series(1, 21) i;
   assert (select array_agg(e ->> 'id') from jsonb_array_elements(wm.staff_dashboard(st) -> 'stripe_disputes') e)
-    = (select array_agg('dp_bench_many_' || lpad(i::text, 2, '0') order by i) from generate_series(1, 20) i), 'les 20 plus récents';
+    = (select array_agg('dp_bench_many_' || lpad(i::text, 2, '0') order by i desc) from generate_series(2, 21) i), 'les 20 litiges les plus récents';
+  -- 21 achats dans le futur sur une pierre tombale (pro_monthly, wb 0 : aucune ligne de grand livre attendue) : les 20 plus récents.
+  insert into wm.deleted_accounts (user_id) values (dm);
+  insert into wm.purchases (session_id, user_id, item, amount, currency, wb, created_at)
+  select 'cs_test_bench_many_' || lpad(i::text, 2, '0'), dm, 'pro_monthly', 999, 'cad', 0, now() + make_interval(secs => i)
+  from generate_series(1, 21) i;
+  r := wm.staff_dashboard(st);
+  assert (r ->> 'purchases_on_deleted')::int - (r0 ->> 'purchases_on_deleted')::int = 22, 'compte non plafonné';
+  assert (select array_agg(e ->> 'session_id') from jsonb_array_elements(r -> 'purchases_on_deleted_list') e)
+    = (select array_agg('cs_test_bench_many_' || lpad(i::text, 2, '0') order by i desc) from generate_series(2, 21) i), 'les 20 achats les plus récents';
+  assert r -> 'purchases_on_deleted_list' -> 0 = jsonb_build_object('session_id', 'cs_test_bench_many_21', 'user_id', dm, 'item', 'pro_monthly',
+    'amount', 999, 'currency', 'cad', 'created_at', now() + interval '21 seconds'), 'forme d''un achat listé';
+  -- Résiliations en attente : la plus ancienne d'abord ; admin.page plafonne la liste, pas le compte.
+  update public.profiles set is_pro = true where id = d0;
+  perform pg_temp.sub('sub_bench_dash_0', d0, 'active');
+  insert into wm.deleted_accounts (user_id, deleted_at) values (d0, now() - interval '100 years');
+  r := wm.staff_dashboard(st);
+  assert r -> 'stripe_pending_users' -> 0 = jsonb_build_object('user_id', d0, 'username', (select username from public.profiles where id = d0),
+    'deleted_at', now() - interval '100 years'), 'la plus ancienne d''abord';
+  assert (select bool_and((a ->> 'deleted_at')::timestamptz <= (b ->> 'deleted_at')::timestamptz) from jsonb_array_elements(r -> 'stripe_pending_users')
+    with ordinality x (a, i) join jsonb_array_elements(r -> 'stripe_pending_users') with ordinality y (b, j) on j = i + 1), 'ordre';
+  update wm.config set value = value || '{"page": 1}' where key = 'admin';
+  r := wm.staff_dashboard(st);
+  assert r -> 'stripe_pending_users' = jsonb_build_array(jsonb_build_object('user_id', d0, 'username',
+    (select username from public.profiles where id = d0), 'deleted_at', now() - interval '100 years')), 'plafond admin.page';
+  assert (r ->> 'stripe_pending')::int - (r0 ->> 'stripe_pending')::int = 2, 'compte non plafonné';
+  update wm.config set value = adm where key = 'admin';
   perform pg_temp.inv('tableau de bord');
 end $$;
 

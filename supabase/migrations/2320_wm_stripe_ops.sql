@@ -278,9 +278,14 @@ begin
       from (select * from wm.deleted_accounts where stripe_pending order by deleted_at, user_id
         limit coalesce((select (value ->> 'page')::int from wm.config where key = 'admin'), 50)) d
       join public.profiles p on p.id = d.user_id), '[]'),
-    -- Achat enregistré après la suppression du compte (webhook reçu sur une pierre tombale).
+    -- Achat enregistré après la suppression du compte (created_at = insertion par le webhook : un paiement d'avant la suppression dont
+    -- le webhook arrive après compte aussi, son crédit est inerte) ; le compte et les 20 plus récents.
     'purchases_on_deleted', (select count(*) from wm.purchases u join wm.deleted_accounts d on d.user_id = u.user_id
-      where u.created_at >= d.deleted_at));
+      where u.created_at >= d.deleted_at),
+    'purchases_on_deleted_list', coalesce((select jsonb_agg(jsonb_build_object('session_id', u.session_id, 'user_id', u.user_id,
+        'item', u.item, 'amount', u.amount, 'currency', u.currency, 'created_at', u.created_at) order by u.created_at desc, u.session_id)
+      from (select u.* from wm.purchases u join wm.deleted_accounts d on d.user_id = u.user_id where u.created_at >= d.deleted_at
+        order by u.created_at desc, u.session_id limit 20) u), '[]'));
 end $$;
 
 -- Abonnements à résilier chez Stripe (G9, G10) : non terminaux, triés. Sans verrou : la route résilie puis appelle stripe_cancel_done.
@@ -288,6 +293,8 @@ create or replace function wm.stripe_cancel_targets(p_user_id uuid)
 returns jsonb language sql stable security definer set search_path = '' as $$
   select jsonb_build_object('subscription_ids', coalesce(jsonb_agg(id order by id), '[]'))
   from wm.subscriptions
+  -- Liste non terminale de G9, recopiée telle quelle dans 2300 (trigger stripe_pending_on_delete, garde de stripe_checkout_prepare),
+  -- 2310 (stripe_apply) et stripe_cancel_done ci-dessous : changer l'une, c'est changer toutes.
   where user_id = p_user_id and status in ('active', 'trialing', 'past_due', 'incomplete', 'unpaid', 'paused')
 $$;
 
@@ -301,6 +308,7 @@ declare
 begin
   perform set_config('lock_timeout', '2s', true);
   perform from wm.deleted_accounts where user_id = p_user_id for update;
+  -- Liste non terminale de G9 (mêmes copies que stripe_cancel_targets ci-dessus : 2300, 2310).
   update wm.deleted_accounts set stripe_pending = exists (select from wm.subscriptions where user_id = p_user_id
     and status in ('active', 'trialing', 'past_due', 'incomplete', 'unpaid', 'paused')
     and id <> all (coalesce(p_subscription_ids, '{}')))

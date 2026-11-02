@@ -924,7 +924,7 @@ do $$ declare a uuid := pg_temp.staff('admin'); m uuid := pg_temp.staff('moderat
   r := wm.staff_dashboard(m);
   assert (select array_agg(k order by k) from jsonb_object_keys(r) k)
     = array['active_sanctions', 'auth_pending', 'auto_hidden_cards', 'health', 'image_reports', 'open_reports', 'purchases_on_deleted',
-      'removed_cards', 'stripe_disputes', 'stripe_disputes_open', 'stripe_pending', 'stripe_pending_users'], 'clés';
+      'purchases_on_deleted_list', 'removed_cards', 'stripe_disputes', 'stripe_disputes_open', 'stripe_pending', 'stripe_pending_users'], 'clés';
   assert jsonb_build_object('open_reports', (r ->> 'open_reports')::int - (r0 ->> 'open_reports')::int,
     'image_reports', (r ->> 'image_reports')::int - (r0 ->> 'image_reports')::int,
     'auto_hidden_cards', (r ->> 'auto_hidden_cards')::int - (r0 ->> 'auto_hidden_cards')::int,
