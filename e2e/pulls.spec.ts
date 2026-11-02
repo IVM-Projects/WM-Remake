@@ -513,9 +513,9 @@ test('« Comment ça marche ? » : lecture de la boutique en cours → « Charge
 })
 
 // Paquet spécial posé par sql, retiré en finally (cascade sur ses réclamations). Il est actif pour tous les joueurs le temps du test.
-async function withSpecial(run: (pack: { id: string; name: string }) => Promise<void>) {
+async function withSpecial(run: (pack: { id: string; name: string }) => Promise<void>, size = 3) {
   const name = `Cadeau e2e ${randomUUID().slice(-8)}`
-  const id = sql(`insert into wm.special_packs (name, description, size) values (:'name', 'Un cadeau de test.', 3) returning id`, { name })
+  const id = sql(`insert into wm.special_packs (name, description, size) values (:'name', 'Un cadeau de test.', :'size') returning id`, { name, size: String(size) })
   try {
     await run({ id, name })
   } finally {
@@ -581,9 +581,58 @@ test('dotation de grâce : « Récupérer le paquet offert » → révélation, 
 
 test('rien à récupérer : aucune section « Paquets offerts »', async ({ page, login }) => {
   await login({ humanVerified: true })
+  // Réponses vides posées : un paquet spécial d'un autre test (actif pour tous les joueurs) ne doit pas compter.
+  await page.route('**/api/packs/special', (r) => (r.request().method() === 'GET' ? r.fulfill({ json: { packs: [], available: false } }) : r.fallback()))
+  await page.route('**/api/packs/grace', (r) => (r.request().method() === 'GET' ? r.fulfill({ json: { available: 0, size: null } }) : r.fallback()))
   await page.goto('/pulls')
   await expect(proBlock(page)).toBeVisible()
   await expect(page.getByText('Paquets offerts')).toHaveCount(0)
+})
+
+test('paquet de 1 carte : « {name} : 1 carte » au singulier', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await withSpecial(async ({ name }) => {
+    await page.goto('/pulls')
+    await expect(offered(page)).toContainText(`${name} : 1 carte`)
+    await expect(offered(page)).not.toContainText(`${name} : 1 cartes`)
+  }, 1)
+})
+
+test('paquet spécial retiré côté serveur avant le clic : 404 « Paquet introuvable » en alerte, la section part et le focus ne tombe pas sur body', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await withSpecial(async ({ id, name }) => {
+    await page.goto('/pulls')
+    const button = offered(page).getByRole('button', { name: `Récupérer ${name}` })
+    await expect(button).toBeVisible()
+    sql(`delete from wm.special_packs where id = :'id'`, { id })
+    await button.click()
+    await expect(page.getByRole('alert').filter({ hasText: 'Paquet introuvable' })).toBeVisible()
+    await expect(button).toHaveCount(0)
+    await expect(page.locator('body')).not.toBeFocused()
+    await expect(openButton(page)).toBeFocused()
+  })
+})
+
+test('stock vide d\'un VIP (pas Pro) : aucune bannière', async ({ page, login }) => {
+  const { uid } = await login({ humanVerified: true })
+  empty(uid)
+  sql(`update public.profiles set is_vip = true where id = :'uid'`, { uid })
+  await page.goto('/pulls')
+  await expect(page.getByText('Plus de paquets disponibles')).toBeVisible()
+  await expect(page.getByText(/^Avec Pro/)).toHaveCount(0)
+})
+
+test('« Comment ça marche ? » : une règle déjà lue reste affichée si une relecture échoue ensuite', async ({ page, login }) => {
+  await login()
+  await page.goto('/pulls')
+  await expect(page.locator('header button[title="Ouvrir la boutique"]')).toHaveText(/wikibidou/)
+  await page.route('**/api/shop*', (r) => r.fulfill({ status: 500 }))
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(page.locator('header button[title="Ouvrir la boutique"]')).toHaveText('—Solde indisponible')
+  await page.getByRole('button', { name: 'Comment ça marche ?' }).click()
+  const help = page.getByRole('dialog', { name: 'Comment ça marche ?' })
+  await expect(help).toContainText('Un paquet contient 5 cartes')
+  await expect(help.getByText('Les règles n\'ont pas pu être lues.')).toHaveCount(0)
 })
 
 for (const path of ['special', 'grace']) {

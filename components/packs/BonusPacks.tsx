@@ -20,7 +20,7 @@ const cartes = (n: number) => `${formatInt(n)} carte${n > 1 ? 's' : ''}`
 
 // Paquets offerts en attente (S:80) : paquets spéciaux actifs et dotations de grâce. Masquée sans rien à récupérer.
 // Chaque lecture échoue seule : ce qui a pu être lu reste réclamable.
-// onRetried : « Réessayer » a réussi et son bouton a disparu, le parent reprend le focus.
+// onRetried : un bouton focalisé a disparu (« Réessayer » réussi, paquet périmé retiré), le parent reprend le focus.
 export function BonusPacks({ onCards, onRetried }: { onCards: (cards: CardInPack[]) => void; onRetried: () => void }) {
   const id = useId()
   const [specials, setSpecials] = useState<Special[]>([])
@@ -77,7 +77,10 @@ export function BonusPacks({ onCards, onRetried }: { onCards: (cards: CardInPack
       if (code === 'human_verification_required' && !token) setVerify({ intent, path, body })
       else setError(userMessage(e, sent && unsure(e) ? UNSURE_TEXT : 'Le paquet n\'a pas pu être récupéré, réessaie.'))
       // Introuvable ou déjà réclamé ailleurs : la liste est périmée.
-      if (e instanceof ApiError && (e.status === 404 || e.status === 409)) void read()
+      // Le dernier paquet peut disparaître avec son bouton focalisé : le focus ne reste pas sur body.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 409)) {
+        void read().then(() => requestAnimationFrame(() => { if (!document.activeElement || document.activeElement === document.body) onRetried() }))
+      }
     } finally {
       inflight.current = false
       if (live.current) setBusy(null)

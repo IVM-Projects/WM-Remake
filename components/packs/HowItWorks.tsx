@@ -14,9 +14,7 @@ export function HowItWorks() {
     <HelpDialog>
       <section className="space-y-2">
         <h3 className="text-base font-bold text-[var(--color-foreground)]">Les paquets</h3>
-        {failed ? (
-          <p>Les règles n&apos;ont pas pu être lues.</p>
-        ) : state ? (
+        {state ? (
           <ul className="list-disc space-y-1.5 pl-5">
             <li>{`Un paquet contient ${formatInt(state.rules.pack_size)} cartes, révélées une à une : la meilleure arrive en dernier.`}</li>
             <li>{`Tu gagnes un paquet ${every(state.rules.pack_period_s.free)} (${every(state.rules.pack_period_s.pro)} avec Pro), même hors ligne.`}</li>
@@ -24,6 +22,8 @@ export function HowItWorks() {
             <li>Le badge « Nouvelle » marque ta première copie d&apos;une carte. Une Légendaire peut aussi sortir « Brillante » : c&apos;est très rare.</li>
             <li>{`Membres Pro : un paquet de ${formatInt(state.rules.pro_daily_size)} cartes chaque jour, sans aucune commune.`}</li>
           </ul>
+        ) : failed ? (
+          <p>Les règles n&apos;ont pas pu être lues.</p>
         ) : (
           <Loading label="Chargement des règles…" />
         )}
