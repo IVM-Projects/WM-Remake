@@ -9,17 +9,40 @@ import { createAdminClient } from '@/lib/supabase/admin'
 export const STRIPE_API_VERSION = '2026-10-28.endive'
 
 // STRIPE_API_URL (G36, facultative) : le SDK prend host, port et protocol séparés ; HTTP clair seulement pour protocol === 'http'.
-export function apiTarget(url: string): { host: string; port: string; protocol: 'http' | 'https' } {
-  const u = new URL(url)
-  return { host: u.hostname, port: u.port, protocol: u.protocol.replace(':', '') as 'http' | 'https' }
+// null pour une URL illisible ou un autre schéma que http:/https:. Sans port, celui du schéma (le SDK prendrait 443 même en http).
+export function apiTarget(url: string): { host: string; port: string; protocol: 'http' | 'https' } | null {
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+  return { host: u.hostname, port: u.port || (u.protocol === 'http:' ? '80' : '443'), protocol: u.protocol === 'http:' ? 'http' : 'https' }
 }
 
-// Variables lues à l'appel (G32) ; la clé n'est jamais journalisée ni recopiée dans une erreur.
+let urlIgnoredLogged = false
+
+// Variables lues à l'appel (G32) ; la clé n'est jamais journalisée ni recopiée dans une erreur, l'URL non plus.
+// STRIPE_API_URL n'est suivie qu'avec une clé de test : une clé live ne part jamais vers un autre hôte que Stripe. Illisible avec une
+// clé de test → aucun client (503 stripe_disabled), jamais un repli silencieux vers api.stripe.com.
 export function stripeClient(): Stripe | null {
   const key = process.env.STRIPE_SECRET_KEY
   if (!key) return null
   const url = process.env.STRIPE_API_URL
-  return new Stripe(key, { apiVersion: STRIPE_API_VERSION, maxNetworkRetries: 1, timeout: 10_000, ...(url ? apiTarget(url) : {}) })
+  let target = {}
+  if (url && !/^(sk|rk)_test_/.test(key)) {
+    if (!urlIgnoredLogged) console.error(JSON.stringify({ stripe: 'api_url_ignored' }))
+    urlIgnoredLogged = true
+  } else if (url) {
+    const t = apiTarget(url)
+    if (!t) {
+      console.error(JSON.stringify({ stripe: 'bad_api_url' }))
+      return null
+    }
+    target = t
+  }
+  return new Stripe(key, { apiVersion: STRIPE_API_VERSION, maxNetworkRetries: 1, timeout: 10_000, ...target })
 }
 
 // Erreur au format de wm.raise_err, lue par toHttpError comme une erreur SQL.
@@ -92,7 +115,8 @@ export function checkoutCall(origin: string): (args: Record<string, unknown>) =>
     const idem = typeof args.p_idem === 'string' && args.p_idem ? `checkout:${uid}:${item}:${args.p_idem}` : undefined
     const session = await sdk('checkout', () =>
       stripe.checkout.sessions.create(checkoutParams({ uid, item, customer, price, origin }), { idempotencyKey: idem }))
-    return session ? { data: { url: session.url }, error: null } : unavailable()
+    // Une session sans url (jamais pour un Checkout hébergé) serait un 200 inutilisable.
+    return session?.url ? { data: { url: session.url }, error: null } : unavailable()
   }
 }
 
@@ -106,7 +130,7 @@ export function portalCall(origin: string): (args: Record<string, unknown>) => P
     const { customer_id } = prep.data as { customer_id: string }
     const session = await sdk('portal', () =>
       stripe.billingPortal.sessions.create({ customer: customer_id, return_url: `${origin}/settings`, locale: 'fr' }))
-    return session ? { data: { url: session.url }, error: null } : unavailable()
+    return session?.url ? { data: { url: session.url }, error: null } : unavailable()
   }
 }
 

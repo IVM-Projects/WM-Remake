@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { SHOP, formatPrice } from '@/lib/shop'
 
@@ -18,6 +19,6 @@ describe('lib/shop', () => {
   })
 
   it('aucune promesse de meilleures cotes (D:102)', () => {
-    expect(readFileSync('lib/shop.ts', 'utf8')).not.toMatch(/meilleur|cote/i)
+    expect(readFileSync(fileURLToPath(new URL('./shop.ts', import.meta.url)), 'utf8')).not.toMatch(/meilleur|cote/i)
   })
 })

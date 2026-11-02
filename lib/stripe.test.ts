@@ -71,6 +71,41 @@ describe('stripeClient et apiTarget', () => {
     expect(S.apiTarget('http://127.0.0.1:54321')).toStrictEqual({ host: '127.0.0.1', port: '54321', protocol: 'http' })
   })
 
+  it('apiTarget sans port → celui du schéma ; autre schéma ou URL illisible → null', () => {
+    expect(S.apiTarget('http://bench.test')).toStrictEqual({ host: 'bench.test', port: '80', protocol: 'http' })
+    expect(S.apiTarget('https://bench.test')).toStrictEqual({ host: 'bench.test', port: '443', protocol: 'https' })
+    expect(S.apiTarget('ftp://bench.test:21')).toBeNull()
+    expect(S.apiTarget('pas une url')).toBeNull()
+  })
+
+  it('STRIPE_API_URL illisible avec une clé de test → aucun client, bad_api_url sans l\'URL', () => {
+    vi.stubEnv('STRIPE_API_URL', 'ftp://secret-host.test')
+    expect(S.stripeClient()).toBeNull()
+    expect(ctor).not.toHaveBeenCalled()
+    expect(console.error).toHaveBeenCalledWith('{"stripe":"bad_api_url"}')
+    expect(logs()).not.toContain('secret-host')
+  })
+
+  it('rk_test_ → STRIPE_API_URL suivie', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'rk_test_bench_fake')
+    vi.stubEnv('STRIPE_API_URL', 'http://127.0.0.1:54321')
+    S.stripeClient()
+    expect(ctor.mock.lastCall?.[1]).toMatchObject({ host: '127.0.0.1', port: '54321', protocol: 'http' })
+  })
+
+  it('clé live → STRIPE_API_URL ignorée (hôte Stripe), api_url_ignored journalisé une fois, sans l\'URL', () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'sk_live_bench_fake')
+    vi.stubEnv('STRIPE_API_URL', 'http://evil-host.test:8080')
+    S.stripeClient()
+    S.stripeClient()
+    expect(ctor.mock.calls).toStrictEqual([
+      ['sk_live_bench_fake', { apiVersion: '2026-10-28.endive', maxNetworkRetries: 1, timeout: 10_000 }],
+      ['sk_live_bench_fake', { apiVersion: '2026-10-28.endive', maxNetworkRetries: 1, timeout: 10_000 }],
+    ])
+    expect(vi.mocked(console.error).mock.calls).toStrictEqual([['{"stripe":"api_url_ignored"}']])
+    expect(logs()).not.toContain('evil-host')
+  })
+
   it('sans STRIPE_SECRET_KEY → null, aucun client', () => {
     vi.stubEnv('STRIPE_SECRET_KEY', '')
     expect(S.stripeClient()).toBeNull()
@@ -221,6 +256,14 @@ describe('checkoutCall', () => {
     expect(JSON.stringify(r)).not.toContain(KEY)
   })
 
+  it('session sans url → 502 stripe_unavailable, jamais un 200 { url: null }', async () => {
+    rpcs({ stripe_checkout_prepare: ok({ customer_id: 'cus_bench_1', email: EMAIL }) })
+    api.checkout.sessions.create.mockResolvedValue({ id: 'cs_test_bench_1', url: null })
+    const r = await call(args())
+    expect(r.data).toBeNull()
+    expect(body(r)).toMatchObject({ status: 502, body: { code: 'stripe_unavailable' } })
+  })
+
   it('erreur du SDK à la création de la session → 502', async () => {
     rpcs({ stripe_checkout_prepare: ok({ customer_id: 'cus_bench_1', email: EMAIL }) })
     api.checkout.sessions.create.mockRejectedValue(new Error('down'))
@@ -237,6 +280,12 @@ describe('portalCall', () => {
     expect(r).toStrictEqual({ data: { url: 'https://billing.stripe.com/p/session/test_bench_1' }, error: null })
     expect(rpc.mock.calls[0]).toStrictEqual(['stripe_portal_prepare', { p_uid: UID }])
     expect(api.billingPortal.sessions.create).toHaveBeenCalledWith({ customer: 'cus_bench_1', return_url: 'https://x.test/settings', locale: 'fr' })
+  })
+
+  it('session de Portail sans url → 502 stripe_unavailable', async () => {
+    rpcs({ stripe_portal_prepare: ok({ customer_id: 'cus_bench_1' }) })
+    api.billingPortal.sessions.create.mockResolvedValue({ id: 'bps_bench_1' })
+    expect(body(await call({ p_uid: UID }))).toMatchObject({ status: 502, body: { code: 'stripe_unavailable' } })
   })
 
   it('404 no_customer rendu tel quel ; sans clé → 503 ; SDK en erreur → 502', async () => {
