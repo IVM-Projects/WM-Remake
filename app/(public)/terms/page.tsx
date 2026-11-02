@@ -29,8 +29,9 @@ export default function TermsPage() {
         </>) },
         { id: 'abonnement', heading: 'Abonnement Pro', body: (<>
           <p>L&apos;abonnement Pro coûte 9,99 CAD par mois. Il se renouvelle automatiquement chaque mois, jusqu&apos;à ce que tu le résilies. Comme pour les achats, la boutique est en mode test pour l&apos;instant : rien n&apos;est prélevé réellement.</p>
+          <p>La même case de renonciation au droit de rétractation s&apos;applique quand tu t&apos;abonnes.</p>
           <p>Tu peux résilier à tout moment depuis les Paramètres, avec « Gérer mon abonnement », qui ouvre le portail de Stripe. La résiliation prend effet à la fin de la période déjà payée : tu gardes Pro jusque-là, et la période en cours n&apos;est pas remboursée au prorata.</p>
-          <p>Si un paiement échoue, tu perds les avantages Pro jusqu&apos;à ce que le paiement soit régularisé. Si tu supprimes ton compte, ton abonnement est résilié tout de suite, sans remboursement.</p>
+          <p>Si un paiement échoue, Pro est suspendu tant que le paiement n&apos;est pas réglé ; s&apos;il ne l&apos;est pas, l&apos;abonnement prend fin. Si tu supprimes ton compte, ton abonnement est résilié tout de suite, sans remboursement.</p>
           <p>Les avantages de Pro sont ceux qui sont décrits dans la boutique.</p>
           <p>Si tu contestes un paiement auprès de ta banque, l&apos;équipe examine le litige : rien n&apos;est retiré automatiquement de ton compte.</p>
           <p>Un compte suspendu ou banni ne peut plus se connecter, donc plus ouvrir « Gérer mon abonnement ». Une sanction ne résilie pas l&apos;abonnement toute seule. Pour le résilier, utilise le lien de connexion au portail client de Stripe, que tu reçois par e-mail, ou écris à l&apos;équipe : {l.contact}.</p>

@@ -23,7 +23,7 @@ export default function PrivacyPage() {
         { id: 'finalites', heading: 'Finalités et bases légales', body: <p>Faire fonctionner {brand.name} (exécution du service) ; encaisser tes paiements, gérer ton abonnement et créditer tes achats (exécution du contrat) ; tenir les références de paiement exigées par la comptabilité (obligation légale) ; assurer la modération et lutter contre la fraude (intérêt légitime).</p> },
         { id: 'destinataires', heading: 'Destinataires et sous-traitants', body: (<>
           <p>Tes données sont traitées par des prestataires pour l&apos;hébergement de l&apos;application, la base de données, l&apos;envoi des e-mails et le captcha ; Stripe traite tes paiements (voir « Paiements et abonnement ») ; Wikimédia fournit le catalogue de cartes. Hébergeur : {l.host}.</p>
-          <p>Quand un prestataire est hors de l&apos;Union européenne, le transfert est encadré par des clauses contractuelles types.</p>
+          <p>Quand un prestataire est hors de l&apos;Union européenne, le transfert est encadré par des clauses contractuelles types, sauf mention contraire ci-dessous.</p>
         </>) },
         { id: 'paiements', heading: 'Paiements et abonnement', body: (
           <ul className="list-disc space-y-2 pl-5">
@@ -32,7 +32,7 @@ export default function PrivacyPage() {
             <li>De notre côté, nous gardons : l&apos;identifiant de ton Customer, tes abonnements (identifiant, tarif souscrit, statut, fin de la période en cours, résiliation prévue, état de la dernière facture) et tes achats (identifiant de la session de paiement, article, montant, devise, date, nombre de wikibidous crédités, et la case des conditions que tu as cochée au paiement).</li>
             <li>Nous gardons aussi les litiges de paiement signalés par Stripe (montant, devise, motif, statut, référence du prélèvement) dans une liste réservée à l&apos;équipe. Ils ne sont pas rattachés à ton compte dans notre base, donc ils ne figurent pas dans ton export.</li>
             <li>Stripe peut traiter ces données en dehors de l&apos;Union européenne, selon ses propres garanties de transfert, décrites dans sa politique de confidentialité.</li>
-            <li>Tes abonnements, ton Customer et tes achats figurent dans l&apos;export de tes données (« Mes données », dans les Paramètres), jamais un numéro de carte.</li>
+            <li>L&apos;export de tes données (« Mes données », dans les Paramètres) contient ton Customer, tes abonnements (statut, fin de la période en cours, résiliation prévue, état de la dernière facture) et tes achats, jamais un numéro de carte. Les autres références techniques (par exemple le tarif souscrit) sont gardées mais ne sont pas exportées.</li>
           </ul>
         ) },
         { id: 'conservation', heading: 'Conservation', body: (

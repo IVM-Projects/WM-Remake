@@ -62,14 +62,17 @@ test('/terms : achats et abonnement Pro (prix, Portail, rétractation, test, com
   await expect(abo.getByRole('heading', { level: 2 })).toHaveText('Abonnement Pro')
   await expect(abo).toContainText('9,99 CAD')
   await expect(abo).toContainText('Gérer mon abonnement')
-  await expect(page.locator('article')).toContainText('rétractation')
-  await expect(page.locator('article')).toContainText('banni')
-  await expect(page.locator('article')).toContainText('mode test')
+  await expect(page.locator('#achats')).toContainText('rétractation')
+  await expect(page.locator('#achats')).toContainText('mode test')
+  await expect(abo).toContainText('suspendu ou banni')
+  await expect(abo).toContainText('La même case de renonciation au droit de rétractation s\'applique quand tu t\'abonnes.')
+  await expect(abo).toContainText('Pro est suspendu tant que le paiement n\'est pas réglé')
+  await expect(abo).not.toContainText('régularisé')
 })
 
 test('/privacy : Stripe, aucun numéro de carte, e-mail transmis, export', async ({ page }) => {
   await page.goto('/privacy')
-  const a = page.locator('article')
+  const a = page.locator('#paiements')
   for (const t of ['Stripe', 'aucun numéro de carte', 'e-mail', 'export']) await expect(a).toContainText(t)
 })
 
