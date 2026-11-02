@@ -32,8 +32,8 @@ const TAG_OPTION: Known = { rule: 'nested-interactive', selector: '[role=listbox
 const READY: Record<string, string> = {
   '/reset-password': 'main [role=alert]', '/verify-email': '#signup-otp-code', '/pulls': '[data-stock-bar]',
   '/collection': 'main a[href="/pulls"]', '/global-collection': 'main nav[aria-label="Pagination"]',
-  // Les lectures de /settings finies : pseudo, préférences et notifications push (avec le renvoi de l'abonnement).
-  '/settings': 'main:has(#settings-username):has(input[name="sounds"]) section[data-ready]',
+  // Les lectures de /settings finies : pseudo, préférences, abonnement et notifications push (avec le renvoi de l'abonnement de l'appareil).
+  '/settings': 'main:has(#settings-username):has(input[name="sounds"]):has(section[aria-labelledby="settings-subscription"][data-ready]) section[aria-labelledby="settings-notifications"][data-ready]',
   // Première lecture de /api/friends finie (sections ou erreur).
   '/friends': 'main [data-ready]',
   // Ami, collections et parent lus (composer, blocage ou erreur).
@@ -754,4 +754,46 @@ test('axe /leaderboard : Joueurs (corps posé, ligne du lecteur), Guildes', asyn
   await page.getByRole('tab', { name: 'Guildes' }).click()
   await expect(page.getByRole('cell', { name: 'Les Sages' })).toBeVisible()
   await expectNoSeriousViolations(page)
+})
+
+// Task 11 : section « Abonnement » de /settings (abonné résilié en fin de période, avec Portail) et tuiles Stripe de /admin.
+test('axe /settings : section « Abonnement » (résiliée en fin de période, Portail)', async ({ page, login }) => {
+  const { uid } = await login({ pro: true })
+  try {
+    const h = randomUUID().replaceAll('-', '')
+    sql(`insert into wm.stripe_customers (customer_id, user_id) values ('cus_bench_a11y' || :'h', :'u');
+insert into wm.subscriptions (id, user_id, customer_id, status, current_period_end, cancel_at_period_end, event_created)
+values ('sub_bench_a11y' || :'h', :'u', 'cus_bench_a11y' || :'h', 'active', '2027-03-15 12:00:00+00', true, now())`, { u: uid, h })
+    await page.goto('/settings')
+    await page.locator(READY['/settings']).waitFor()
+    await expect(page.getByText('Abonnement Pro résilié : tu restes Pro jusqu\'au 15 mars 2027.', { exact: true })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from auth.users where id = :'uid'`, { uid })
+  }
+})
+
+test('axe /admin (staff) : tuiles et listes Stripe, ActionModal « Résilier » ouverte', async ({ page, context, baseURL }) => {
+  const u = makeStaff()
+  const d = makePlayer()
+  const h = randomUUID().replaceAll('-', '')
+  try {
+    sql(`insert into wm.subscriptions (id, user_id, customer_id, status, event_created) values ('sub_bench_a11y' || :'h', :'u', 'cus_bench_a11y' || :'h', 'active', now());
+insert into wm.deleted_accounts (user_id, auth_done_at) values (:'u', now());
+insert into wm.stripe_disputes (id, charge_id, amount, currency, reason, status, created_at, event_created)
+values ('dp_bench_a11y' || :'h', 'ch_bench_a11y', 1250, 'cad', 'fraudulent', 'needs_response', now(), now())`, { u: d.uid, h })
+    await context.addCookies([{ ...cookieFor(u), url: baseURL! }])
+    await page.goto('/admin')
+    await page.locator(READY['/admin']).waitFor()
+    await expect(page.getByRole('button', { name: /^Résilier/ }).first()).toBeVisible()
+    await settled(page)
+    await expectNoSeriousViolations(page)
+    await page.getByRole('listitem').filter({ hasText: d.username }).getByRole('button', { name: /^Résilier/ }).click()
+    await expect(page.getByRole('dialog', { name: 'Résilier l\'abonnement ?' })).toBeVisible()
+    await expectNoSeriousViolations(page)
+  } finally {
+    sql(`delete from wm.stripe_disputes where id = 'dp_bench_a11y' || :'h';
+select set_config('wm.allow_tombstone_delete', 'on', false);
+delete from auth.users where id in (:'u', :'s')`, { h, u: d.uid, s: u.uid })
+  }
 })

@@ -8,19 +8,7 @@ import { LoadError } from '@/components/ui/LoadError'
 import { Loading } from '@/components/ui/Loading'
 import { Modal } from '@/components/ui/Modal'
 import { api, apiOnce, userMessage } from '@/lib/api'
-import type { ShopItem } from '@/lib/shop'
-
-// Seules les pages hébergées de Stripe reçoivent le navigateur : une URL venue du serveur n'est jamais suivie telle quelle.
-// Si le compte Stripe adopte un jour un domaine personnalisé pour Checkout ou le portail, l'ajouter ici.
-const HOSTS = ['checkout.stripe.com', 'billing.stripe.com']
-function stripeUrl(r: { url?: unknown } | null): string | null {
-  try {
-    const u = new URL(String(r?.url))
-    return u.protocol === 'https:' && HOSTS.includes(u.hostname) ? u.href : null
-  } catch {
-    return null
-  }
-}
+import { stripeUrl, type ShopItem } from '@/lib/shop'
 
 const CHECKOUT_FAILED = 'Le paiement n\'a pas pu démarrer.'
 const PORTAL_FAILED = 'Le portail de gestion n\'a pas pu s\'ouvrir.'

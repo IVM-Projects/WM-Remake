@@ -10,6 +10,22 @@ export function formatPrice(cents: number): string {
   return new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', currencyDisplay: 'code' }).format(cents / 100)
 }
 
+// Seules les pages hébergées de Stripe reçoivent le navigateur : une URL venue du serveur n'est jamais suivie telle quelle (Checkout et Portail).
+// Si le compte Stripe adopte un jour un domaine personnalisé pour Checkout ou le portail, l'ajouter ici.
+const STRIPE_HOSTS = ['checkout.stripe.com', 'billing.stripe.com']
+export function stripeUrl(r: { url?: unknown } | null): string | null {
+  try {
+    const u = new URL(String(r?.url))
+    return u.protocol === 'https:' && STRIPE_HOSTS.includes(u.hostname) ? u.href : null
+  } catch {
+    return null
+  }
+}
+
+// Abonnement non terminal (liste de G9, sans les deux statuts finaux) : il bloque un second Checkout et se résilie à la suppression du compte.
+export const liveSubscription = (s: { status?: unknown } | null | undefined): boolean =>
+  typeof s?.status === 'string' && s.status !== 'canceled' && s.status !== 'incomplete_expired'
+
 type FreePro = { free: number; pro: number }
 
 // Réponse de wm.shop_state (G34, G46).

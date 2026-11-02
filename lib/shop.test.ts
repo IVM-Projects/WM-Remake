@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { SHOP, formatPrice } from '@/lib/shop'
+import { SHOP, formatPrice, liveSubscription, stripeUrl } from '@/lib/shop'
 
 describe('lib/shop', () => {
   it('formatPrice : montant en CAD au format fr-CA (espaces fines comprises, lues d\'Intl)', () => {
@@ -16,6 +16,21 @@ describe('lib/shop', () => {
     expect(SHOP.wb_2500.wb).toBe(2500)
     expect(SHOP.wb_2500.cents).toBe(499)
     expect(SHOP.pro_monthly).toMatchObject({ mode: 'subscription', cents: 999, interval: 'month' })
+  })
+
+  it('stripeUrl : seules les pages https de Checkout et du Portail passent (jamais un autre hôte, port, schéma ou sous-domaine piégé)', () => {
+    expect(stripeUrl({ url: 'https://checkout.stripe.com/c/pay/cs_test_x' })).toBe('https://checkout.stripe.com/c/pay/cs_test_x')
+    expect(stripeUrl({ url: 'https://billing.stripe.com/p/session/x' })).toBe('https://billing.stripe.com/p/session/x')
+    for (const url of ['http://billing.stripe.com/p', 'https://billing.stripe.com.evil.example/p', 'https://evil.example/https://billing.stripe.com',
+      'https://user@evil.example/', 'javascript:alert(1)', 'https://stripe.com/', '/relative', '', null, undefined, 42]) {
+      expect(stripeUrl({ url }), String(url)).toBeNull()
+    }
+    expect(stripeUrl(null)).toBeNull()
+  })
+
+  it('liveSubscription : tout statut sauf canceled et incomplete_expired, rien sans statut lisible', () => {
+    for (const status of ['active', 'trialing', 'past_due', 'incomplete', 'unpaid', 'paused']) expect(liveSubscription({ status }), status).toBe(true)
+    for (const s of [{ status: 'canceled' }, { status: 'incomplete_expired' }, {}, { status: 7 }, null, undefined]) expect(liveSubscription(s)).toBe(false)
   })
 
   it('aucune promesse de meilleures cotes (D:102)', () => {

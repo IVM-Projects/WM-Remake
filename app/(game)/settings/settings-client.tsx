@@ -14,6 +14,7 @@ import { pushState, unsubscribePush } from '@/lib/push-browser'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 import { DataExport } from '@/components/settings/DataExport'
 import { DeleteAccount } from '@/components/settings/DeleteAccount'
+import { Subscription } from '@/components/settings/Subscription'
 import { PushSection } from './push-section'
 
 type Prefs = { sounds: boolean; hide_sensitive: boolean; is_public: boolean }
@@ -175,6 +176,8 @@ export function SettingsClient() {
         </Section>
 
         <PushSection />
+
+        <Subscription />
 
         <Section id="settings-account" title="Compte">
           <PasswordForm />

@@ -1,11 +1,13 @@
 'use client'
 
-import { useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { danger, ghost } from '@/components/ui/button'
 import { Modal } from '@/components/ui/Modal'
 import { Section } from '@/components/ui/Section'
-import { apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
+import { toast } from '@/components/ui/toast'
+import { api, apiOnce, UNSURE, unsure, userMessage } from '@/lib/api'
 import { pushState, unsubscribePush } from '@/lib/push-browser'
+import { liveSubscription, type ShopState } from '@/lib/shop'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
 
 const CONSEQUENCES = [
@@ -16,6 +18,9 @@ const CONSEQUENCES = [
   'Tes messages restent visibles chez tes interlocuteurs, sous le nom « Joueur supprimé ».',
   'Télécharge tes données avant, si tu veux les garder.',
 ]
+
+const STRIPE_CANCEL = 'Ton abonnement Pro sera résilié tout de suite, sans remboursement.'
+const STRIPE_PENDING = 'La résiliation de ton abonnement sera terminée par l\'équipe.'
 
 // « Supprimer mon compte » (G1) : irréversible, confirmé par la saisie du pseudo (S:81).
 export function DeleteAccount({ username }: { username: string }) {
@@ -40,6 +45,13 @@ function ConfirmModal({ username, onClose }: { username: string; onClose: () => 
   const inflight = useRef(false)
   const keys = useRef(new Map<string, string>())
   const input = useRef<HTMLInputElement>(null)
+  // Abonnement non terminal, lu à l'ouverture : la ligne en plus. Lecture en échec : pas de ligne, le serveur résilie quand même (G10).
+  const [subscribed, setSubscribed] = useState(false)
+  useEffect(() => {
+    let stale = false
+    api<ShopState | null>('/api/shop').then((r) => { if (!stale && liveSubscription(r?.me?.subscription)) setSubscribed(true) }, () => {})
+    return () => { stale = true }
+  }, [])
   const matches = typed.trim().toLowerCase() === username.toLowerCase()
 
   // Ni Échap, ni voile, ni « Annuler » pendant l'envoi.
@@ -51,9 +63,10 @@ function ConfirmModal({ username, onClose }: { username: string; onClose: () => 
     inflight.current = true
     setBusy(true)
     setError(null)
+    let done: { stripe_pending?: unknown } | null
     try {
       // La clé suit la saisie : une issue incertaine rejoue la même demande.
-      await apiOnce(keys.current, 'delete-account', '/api/settings/delete-account', { method: 'POST', body: JSON.stringify({ username: typed.trim() }) })
+      done = await apiOnce<{ stripe_pending?: unknown } | null>(keys.current, 'delete-account', '/api/settings/delete-account', { method: 'POST', body: JSON.stringify({ username: typed.trim() }) })
     } catch (err) {
       setError(unsure(err) ? UNSURE : userMessage(err, 'Le compte n\'a pas pu être supprimé.'))
       inflight.current = false
@@ -65,12 +78,18 @@ function ConfirmModal({ username, onClose }: { username: string; onClose: () => 
     const { sub } = await pushState().catch(() => ({ sub: null }))
     if (sub?.endpoint) await unsubscribePush().catch(() => null)
     await createBrowserSupabase().auth.signOut({ scope: 'local' }).catch(() => null)
+    // La résiliation chez Stripe a échoué : le mot reste lisible avant de quitter la page.
+    if (done?.stripe_pending === true) {
+      toast(STRIPE_PENDING, 6000)
+      await new Promise((r) => setTimeout(r, 3000))
+    }
     window.location.replace('/login')
   }
 
   return (
     <Modal onClose={close} labelledBy={`${id}-title`} className="card-frame relative w-full max-w-md animate-fade-in-up space-y-4 p-6 max-h-[90vh] overflow-y-auto">
       <h2 id={`${id}-title`} className="text-xl font-bold">Supprimer ton compte ?</h2>
+      {subscribed && <p className="text-sm font-medium">{STRIPE_CANCEL}</p>}
       <form onSubmit={submit} noValidate className="space-y-4">
         <div className="space-y-1">
           <label htmlFor={`${id}-name`} className="text-sm font-semibold">Tape ton pseudo pour confirmer</label>

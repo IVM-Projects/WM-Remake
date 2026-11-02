@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
-import { cookieFor, expect, makeStaff, routeOnce, sql, test } from './fixtures'
+import { cookieFor, expect, makePlayer, makeStaff, routeOnce, sql, test } from './fixtures'
 
 // Espace admin (Task 15) : garde serveur, tableau de bord, journal. Chaque test crée son staff et ses lignes, supprimés dans un finally.
 const MIN_TARGET = 44 - 0.01
@@ -281,6 +281,118 @@ test('pages de l’admin : aucun « unstable value » au journal du serveur', as
     }
     const log = readFileSync(new URL('../.cache/logs/next-plain.log', import.meta.url), 'utf8')
     expect(log.split('\n').filter((l) => l.includes('unstable value'))).toEqual([])
+  } finally {
+    wipe(u.uid)
+  }
+})
+
+// Stripe au tableau de bord (Task 11) : litiges ouverts et résiliations en attente. Les compteurs sont ceux de la base partagée :
+// on ne compare que `>=`, et les lignes sont celles du test.
+const stripeWipe = (users: string[], dispute: string) => sql(`delete from wm.stripe_disputes where id = :'d';
+select set_config('wm.allow_tombstone_delete', 'on', false);
+delete from auth.users where id = any(string_to_array(:'u', ',')::uuid[])`, { d: dispute, u: users.join(',') })
+// Joueur Pro dont le compte supprimé garde un abonnement `sub_bench_fail_…` (la passerelle du banc refuse sa résiliation), et un litige ouvert.
+function seedStripe() {
+  const h = randomUUID().replaceAll('-', '')
+  const d = makePlayer({ pro: true })
+  const ids = { fail: `sub_bench_fail_${h}`, ok: `sub_bench_ok_${h}`, dispute: `dp_bench_${h}` }
+  return { d, h, ...ids }
+}
+type Seed = ReturnType<typeof seedStripe>
+const subscribe = (s: Seed, id: string, status: string) => sql(`insert into wm.subscriptions (id, user_id, customer_id, status, event_created)
+values (:'id', :'u', 'cus_bench_' || :'h', :'s', now())`, { id, u: s.d.uid, h: s.h, s: status })
+function tombstone(s: Seed) {
+  subscribe(s, s.fail, 'active')
+  sql(`insert into wm.deleted_accounts (user_id, auth_done_at) values (:'u', now())`, { u: s.d.uid })
+  sql(`insert into wm.stripe_disputes (id, charge_id, amount, currency, reason, status, created_at, event_created)
+values (:'d', 'ch_bench_' || :'h', 1250, 'cad', 'fraudulent', 'needs_response', now(), now())`, { d: s.dispute, h: s.h })
+}
+const tileCount = async (page: Page, label: string) => {
+  const tile = page.getByRole('listitem').filter({ has: page.getByRole('link', { name: label, exact: true }) })
+  return Number((await tile.locator('p').first().innerText()).replace(/\s/g, ''))
+}
+
+test('tableau de bord : tuiles et listes Stripe ; « Résilier » échoue chez Stripe (toast), puis réussit et la ligne disparaît', async ({ page }) => {
+  const boss = await asStaff(page)
+  const s = seedStripe()
+  try {
+    tombstone(s)
+    await page.goto('/admin')
+    await page.locator('main [data-ready]').waitFor()
+    expect(await tileCount(page, 'Litiges Stripe ouverts')).toBeGreaterThanOrEqual(1)
+    expect(await tileCount(page, 'Résiliations Stripe en attente')).toBeGreaterThanOrEqual(1)
+
+    const dispute = page.getByRole('listitem').filter({ hasText: s.dispute })
+    await expect(dispute).toContainText(/12,50\s*CAD/)
+    await expect(dispute).toContainText('fraudulent')
+    const stripeLink = dispute.getByRole('link', { name: /^Voir dans Stripe/ })
+    await expect(stripeLink).toHaveAttribute('href', `https://dashboard.stripe.com/test/disputes/${s.dispute}`)
+    await expect(stripeLink).toHaveAttribute('target', '_blank')
+    await expect(stripeLink).toHaveAttribute('rel', 'noopener noreferrer')
+
+    const row = page.getByRole('listitem').filter({ hasText: s.d.username })
+    await expect(row.getByRole('button', { name: /^Résilier/ })).toBeVisible()
+    const dialog = page.getByRole('dialog', { name: 'Résilier l\'abonnement ?' })
+    const cancel = async () => {
+      await row.getByRole('button', { name: /^Résilier/ }).click()
+      await expect(dialog.getByText('L\'abonnement Stripe de ce compte supprimé est résilié tout de suite, sans remboursement.', { exact: true })).toBeVisible()
+      await dialog.getByLabel('Motif').fill('Résiliation à rejouer')
+      await dialog.getByRole('button', { name: 'Résilier', exact: true }).click()
+      await expect(dialog).toHaveCount(0)
+    }
+    const toasts = page.locator('#wm-toasts')
+    await cancel()
+    await expect(toasts.getByText('La résiliation a échoué chez Stripe : réessaie plus tard.', { exact: true })).toBeVisible()
+    await expect(row).toBeVisible()
+    await expect(row.getByRole('button', { name: /^Résilier/ })).toBeFocused()
+
+    // Le Stripe en panne rétabli : la ligne échouée passée à canceled, un abonnement qui se résilie.
+    sql(`update wm.subscriptions set status = 'canceled' where id = :'s'`, { s: s.fail })
+    subscribe(s, s.ok, 'active')
+    await cancel()
+    await expect(toasts.getByText('Abonnement résilié.', { exact: true })).toBeVisible()
+    await expect(row).toHaveCount(0)
+    await expect(h1(page)).toBeFocused()
+    expect(sql(`select stripe_pending from wm.deleted_accounts where user_id = :'u'`, { u: s.d.uid })).toBe('f')
+  } finally {
+    unlog(s.d.uid)
+    stripeWipe([s.d.uid, boss.uid], s.dispute)
+  }
+})
+
+test('tableau de bord : un modérateur voit les files Stripe mais pas « Résilier »', async ({ page }) => {
+  const mod = await asStaff(page, 'moderator')
+  const s = seedStripe()
+  try {
+    tombstone(s)
+    await page.goto('/admin')
+    await page.locator('main [data-ready]').waitFor()
+    await expect(page.getByText('Rôle : modérateur', { exact: true })).toBeVisible()
+    await expect(page.getByRole('listitem').filter({ hasText: s.d.username })).toBeVisible()
+    await expect(page.getByRole('listitem').filter({ hasText: s.dispute })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Résilier/ })).toHaveCount(0)
+    // 360 px : rien ne déborde, le lien vers Stripe garde sa cible de 44 px.
+    await page.setViewportSize({ width: 360, height: 800 })
+    expect((await page.getByRole('listitem').filter({ hasText: s.dispute }).getByRole('link', { name: /^Voir dans Stripe/ }).boundingBox())!.height).toBeGreaterThanOrEqual(MIN_TARGET)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  } finally {
+    stripeWipe([s.d.uid, mod.uid], s.dispute)
+  }
+})
+
+test('tableau de bord : sans litige ni résiliation en attente, ni tuile ni liste Stripe (réponse posée)', async ({ page }) => {
+  const u = await asStaff(page)
+  try {
+    await page.route('**/api/admin/dashboard', async (r) => {
+      const real = await (await r.fetch()).json()
+      await r.fulfill({ json: { ...real, stripe_disputes_open: 0, stripe_disputes: [], stripe_pending: 0, stripe_pending_users: [] } })
+    })
+    await page.goto('/admin')
+    await page.locator('main [data-ready]').waitFor()
+    await expect(page.getByRole('link', { name: 'Litiges Stripe ouverts' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Résiliations Stripe en attente' })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Litiges Stripe' })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Comptes supprimés à résilier' })).toHaveCount(0)
   } finally {
     wipe(u.uid)
   }
