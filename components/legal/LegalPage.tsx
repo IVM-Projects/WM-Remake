@@ -6,12 +6,12 @@ export type LegalSection = { id: string; heading: string; body: ReactNode }
 
 const FOOT = [['/terms', 'Conditions d\'utilisation'], ['/rules', 'Règles de la communauté'], ['/privacy', 'Confidentialité'], ['/credits', 'Crédits']] as const
 
-export function LegalPage({ title, sections }: { title: string; sections: LegalSection[] }) {
+export function LegalPage({ title, updated, sections }: { title: string; updated: string; sections: LegalSection[] }) {
   return (
     <main className="flex min-h-dvh items-center justify-center p-4">
       <article className="card-frame w-full max-w-prose space-y-4 p-6 motion-safe:animate-fade-in-up">
         <h1 className="text-2xl font-bold">{title}</h1>
-        <p className="text-sm text-foreground/70">Dernière mise à jour : 31 octobre 2026</p>
+        <p className="text-sm text-foreground/70">Dernière mise à jour : {updated}</p>
         <nav aria-label="Sommaire">
           <ul className="space-y-1 text-sm">
             {sections.map((s) => (

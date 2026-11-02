@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { authErrorMessage } from './auth'
+import { TERMS_VERSION, authErrorMessage } from './auth'
 
 describe('authErrorMessage', () => {
   it('message français du trigger (500 de GoTrue, sans code) → tel quel', () => {
@@ -33,5 +33,11 @@ describe('authErrorMessage', () => {
     for (const err of [null, {}, { message: 'Database error saving new user' }, { code: 'constructor' }, { code: 'unexpected_failure' }]) {
       expect(authErrorMessage(err)).toBe('Une erreur est survenue, réessaie.')
     }
+  })
+})
+
+describe('TERMS_VERSION', () => {
+  it('date des conditions en vigueur (abonnement Pro, M6b) ; signup-form l\'enregistre telle quelle', () => {
+    expect(TERMS_VERSION).toBe('2026-11-02')
   })
 })
