@@ -128,6 +128,8 @@ test('quota atteint (3 défis du jour posés par sql) : « Défier » en aria-di
   const button = friendRow(page, friend).getByRole('button', { name: 'Défier' })
   await expect(button).toHaveAttribute('aria-disabled', 'true')
   await expect(button).toHaveAccessibleDescription(/Tu as utilisé tes 3 défis du jour\.$/)
+  // Quota gratuit épuisé : le lien vers l'abonnement suit la phrase (hors d'elle, qui décrit « Défier »).
+  await expect(page.getByRole('button', { name: 'Voir l\'abonnement' })).toBeVisible()
   const sent = page.waitForRequest(posts, { timeout: 1_500 }).then(() => true, () => false)
   // Playwright tient aria-disabled pour inactif et attendrait : le clic est forcé, comme celui d'un joueur.
   await button.click({ force: true })

@@ -2,17 +2,17 @@ import { brand } from '../lib/brand.ts'
 import { expect, test } from './fixtures'
 
 const PAGES = [
-  ['/terms', 'Conditions d\'utilisation'],
-  ['/rules', 'Règles de la communauté'],
-  ['/privacy', 'Politique de confidentialité'],
+  ['/terms', 'Conditions d\'utilisation', '2 novembre 2026'],
+  ['/rules', 'Règles de la communauté', '31 octobre 2026'],
+  ['/privacy', 'Politique de confidentialité', '2 novembre 2026'],
 ] as const
 
-for (const [path, h1] of PAGES) {
+for (const [path, h1, updated] of PAGES) {
   test(`${path} : titre, sommaire et ancres`, async ({ page }) => {
     await page.goto(path)
     await expect(page.locator('main h1')).toHaveText(h1)
     await expect(page).toHaveTitle(new RegExp(`^${h1} — `))
-    await expect(page.getByText('Dernière mise à jour : 31 octobre 2026', { exact: true })).toBeVisible()
+    await expect(page.getByText(`Dernière mise à jour : ${updated}`, { exact: true })).toBeVisible()
     const links = page.getByRole('navigation', { name: 'Sommaire' }).getByRole('link')
     const n = await links.count()
     await expect(page.locator('article h2')).toHaveCount(n)
@@ -38,7 +38,7 @@ test('/terms : mentions légales à compléter, marque et version', async ({ pag
   const mentions = page.locator('section', { has: page.getByRole('heading', { name: 'Mentions légales' }) })
   await expect(mentions.getByText('à compléter')).toHaveCount(5)
   await expect(page.getByText(brand.name).first()).toBeVisible()
-  await expect(page.getByText('Version du 2026-10-31')).toBeVisible()
+  await expect(page.getByText('Version du 2026-11-02')).toBeVisible()
 })
 
 test('/privacy : responsable à compléter, CNIL, conservation et droits', async ({ page }) => {
@@ -53,3 +53,32 @@ test('/privacy : responsable à compléter, CNIL, conservation et droits', async
   await expect(page.getByText('si tu en es le seul membre, elle est dissoute', { exact: false })).toBeVisible()
   await expect(page.getByText('suspendu ou banni', { exact: false })).toBeVisible()
 })
+
+test('/terms : achats et abonnement Pro (prix, Portail, rétractation, test, compte banni)', async ({ page }) => {
+  await page.goto('/terms')
+  await expect(page.locator('#achats')).toBeAttached()
+  await expect(page.locator('#abonnement')).toBeAttached()
+  const abo = page.locator('#abonnement')
+  await expect(abo.getByRole('heading', { level: 2 })).toHaveText('Abonnement Pro')
+  await expect(abo).toContainText('9,99 CAD')
+  await expect(abo).toContainText('Gérer mon abonnement')
+  await expect(page.locator('#achats')).toContainText('rétractation')
+  await expect(page.locator('#achats')).toContainText('mode test')
+  await expect(abo).toContainText('suspendu ou banni')
+  await expect(abo).toContainText('La même case de renonciation au droit de rétractation s\'applique quand tu t\'abonnes.')
+  await expect(abo).toContainText('Pro est suspendu tant que le paiement n\'est pas réglé')
+  await expect(abo).not.toContainText('régularisé')
+})
+
+test('/privacy : Stripe, aucun numéro de carte, e-mail transmis, export', async ({ page }) => {
+  await page.goto('/privacy')
+  const a = page.locator('#paiements')
+  for (const t of ['Stripe', 'aucun numéro de carte', 'e-mail', 'export']) await expect(a).toContainText(t)
+})
+
+for (const path of ['/terms', '/privacy']) {
+  test(`${path} : aucune promesse de meilleures cotes (C27)`, async ({ page }) => {
+    await page.goto(path)
+    await expect(page.locator('article')).not.toContainText(/meilleures cotes/i)
+  })
+}

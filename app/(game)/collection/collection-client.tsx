@@ -10,11 +10,10 @@ import { CollectionToolbar, type TagCount } from '@/components/collection/Collec
 import { SelectionBar } from '@/components/collection/SelectionBar'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
+import { useShop } from '@/components/shop/ShopProvider'
 import { Loading } from '@/components/ui/Loading'
 import { Pagination } from '@/components/ui/Pagination'
-import { WCoin } from '@/components/ui/WCoin'
 import { api } from '@/lib/api'
-import { formatInt, wikibidous } from '@/lib/format'
 import type { RarityCode } from '@/lib/rarity'
 import { CollectionQuery, Rarity } from '@/lib/schemas'
 import { createBrowserSupabase } from '@/lib/supabase/browser'
@@ -44,58 +43,22 @@ function go(patch: Record<string, string | string[] | null>, replace = false) {
   else window.history.pushState(null, '', url)
 }
 
-type Balance = { readBalance: () => void; freshBalance: (b: number) => void }
-
-// En-tête et solde hors du Suspense : rendus une fois dans la coquille statique, ils ne sont pas remplacés (ni refondus) à l'hydratation.
+// En-tête hors du Suspense : rendu une fois dans la coquille statique, il n'est pas remplacé (ni refondu) à l'hydratation.
+// Le solde vit dans la coquille (ShopProvider, G42) : la grille le relit (reload) ou le pose (setBalance) après une défausse.
 export function CollectionClient() {
-  const [balance, setBalance] = useState<number | 'error' | null>(null)
-  // Génération du solde : une réponse de défausse rend périmée une lecture partie avant elle.
-  const balanceGen = useRef(0)
-  const readBalance = () => {
-    const g = ++balanceGen.current
-    api<{ balance: number }>('/api/wikibidous').then(
-      (r) => { if (g === balanceGen.current) setBalance(r.balance) },
-      () => { if (g === balanceGen.current) setBalance('error') },
-    )
-  }
-  const freshBalance = (b: number) => {
-    balanceGen.current++
-    setBalance(b)
-  }
-  // À chaque affichage (Activity compris).
-  const onShow = useEffectEvent(readBalance)
-  useEffect(() => onShow(), [])
-
   return (
     <>
-      <PageHeader title={entry.title} icon={entry.icon}>
-        {balance !== null && (
-          <p title="Solde de wikibidous" className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm font-semibold tabular-nums">
-            <WCoin className="size-5 text-amber-300" />
-            {balance === 'error' ? (
-              // Relu à la prochaine défausse.
-              <>
-                <span aria-hidden="true">—</span>
-                <span className="sr-only">Solde indisponible</span>
-              </>
-            ) : (
-              <>
-                {formatInt(balance)}
-                <span className="sr-only"> {wikibidous(balance)}</span>
-              </>
-            )}
-          </p>
-        )}
-      </PageHeader>
+      <PageHeader title={entry.title} icon={entry.icon} />
       {/* useSearchParams : seule la grille attend le client. */}
       <Suspense fallback={<Loading label="Chargement de la collection" />}>
-        <CollectionBody readBalance={readBalance} freshBalance={freshBalance} />
+        <CollectionBody />
       </Suspense>
     </>
   )
 }
 
-function CollectionBody({ readBalance, freshBalance }: Balance) {
+function CollectionBody() {
+  const { reload: readBalance, setBalance: freshBalance } = useShop()
   const params = useSearchParams()
   const rawPage = params.get('page')
   const rawSort = params.get('sort')

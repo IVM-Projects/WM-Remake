@@ -17,7 +17,16 @@ export type Dashboard = {
   removed_cards: number
   auth_pending: number
   health: Health
+  // Stripe (2320) : litiges ouverts (les 20 plus récents listés), résiliations en attente (comptes supprimés), achats reçus après la suppression.
+  stripe_disputes_open: number
+  stripe_disputes: StripeDispute[]
+  stripe_pending: number
+  stripe_pending_users: { user_id: string; username: string; deleted_at: string }[]
+  purchases_on_deleted: number
+  purchases_on_deleted_list: { session_id: string; user_id: string; item: 'pro_monthly' | 'wb_2500'; amount: number; currency: string; created_at: string }[]
 }
+
+export type StripeDispute = { id: string; amount: number; currency: string; reason: string | null; status: string; created_at: string }
 
 export type AuditRow = {
   id: number

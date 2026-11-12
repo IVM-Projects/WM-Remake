@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Turnstile } from '@/components/auth/Turnstile'
+import { BonusPacks } from '@/components/packs/BonusPacks'
 import { PackOpening, type CardInPack } from '@/components/packs/PackOpening'
 import { PackStock } from '@/components/packs/PackStock'
 import { ProDailyBlock } from '@/components/packs/ProDailyBlock'
@@ -183,6 +184,7 @@ export function PullsClient() {
       {error && <p role="alert" className="max-w-sm text-center text-sm font-medium text-red-400">{error}</p>}
       {verify && <Turnstile onToken={(t) => { if (t) void claim(verify, t) }} />}
       <ProDailyBlock busy={busy === PRO_DAILY} onClaim={() => void claim(PRO_DAILY)} />
+      <BonusPacks onCards={(c) => { playRip(); setCards(c) }} onRetried={focusIdle} />
     </div>
   )
 }

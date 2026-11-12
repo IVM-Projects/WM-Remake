@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
+import { formatInt } from '../lib/format'
 import { befriend, makeGuild, expect, hydrated, makePlayer, routeOnce, sql, test } from './fixtures'
 
 // Les workers partagent la base du banc : chaque test a son joueur, supprimé à la fin (ses notifications suivent en cascade).
@@ -195,5 +196,25 @@ test('vide : « Aucune notification. » ; la cloche et « Tout marquer comme lu 
   for (const target of [bell(page), all]) {
     const box = (await target.boundingBox())!
     expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44)
+  }
+})
+
+test('paiements (lignes de public.notifications posées par sql) : 2 500 wikibidous crédités → /collection, et les messages Pro (fin suspendue sur past_due, terminée sinon) → /settings', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  sql(`insert into public.notifications (user_id, type, data) values
+  (:'uid', 'wb_purchased', jsonb_build_object('amount', 2500, 'session_id', 'cs_test_bench_notif')),
+  (:'uid', 'pro_started', jsonb_build_object('subscription_id', 'sub_bench_notif')),
+  (:'uid', 'pro_payment_failed', jsonb_build_object('subscription_id', 'sub_bench_notif')),
+  (:'uid', 'pro_ended', jsonb_build_object('subscription_id', 'sub_bench_notif', 'status', 'canceled')),
+  (:'uid', 'pro_ended', jsonb_build_object('subscription_id', 'sub_bench_notif2', 'status', 'past_due'))`, { uid })
+  await page.goto('/pulls')
+  await expect(badge(page)).toHaveText('5')
+  await bell(page).click()
+  const link = (name: string) => panel(page).getByRole('link', { name, exact: true })
+  await expect(link(`${formatInt(2500)} wikibidous crédités`)).toHaveAttribute('href', '/collection')
+  for (const name of ['Tu es membre Pro : merci !', 'Le paiement de ton abonnement Pro a échoué', 'Ton abonnement Pro est terminé',
+    'Ton abonnement Pro est suspendu : mets à jour ton moyen de paiement']) {
+    await expect(link(name)).toHaveAttribute('href', '/settings')
   }
 })

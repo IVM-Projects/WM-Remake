@@ -134,3 +134,9 @@ export const ImageReportParams = z.object({ id: z.uuid() })
 
 // Suppression du compte : confirmée par la saisie du pseudo, comparé en SQL (wm.account_delete).
 export const AccountDelete = z.object({ username: pgText })
+
+// Boutique (M6b, G31) : article du Checkout ; session de retour, les ids du banc ont des `_`.
+export const CheckoutInput = z.object({ item: z.enum(['pro_monthly', 'wb_2500'], { error: 'Article inconnu' }) })
+// Id de session Checkout : la boutique le valide avant de le renvoyer au serveur.
+export const CHECKOUT_SESSION = /^cs_(test|live)_[A-Za-z0-9_]{1,200}$/
+export const ShopQuery = z.object({ session: z.string().regex(CHECKOUT_SESSION).optional() })

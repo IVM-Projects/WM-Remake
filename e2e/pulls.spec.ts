@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 import { expect, hydrated, routeOnce, sql, test } from './fixtures'
 
@@ -405,3 +406,258 @@ test('dernier paquet ouvert, réponse perdue (504) : stock relu à 0, le focus p
   await expect(idleZone(page)).toBeFocused()
   await expect(page.getByRole('main').getByRole('alert')).toHaveText(OPEN_UNSURE)
 })
+
+// --- M6b Task 10 : bannière à stock vide, liens vers l'abonnement, « Comment ça marche ? » lu de la config, paquets offerts ---
+
+const SUBSCRIBE = 'Voir l\'abonnement'
+const BANNER = 'Avec Pro, un paquet revient toutes les 3 minutes.'
+const shopDialog = (page: Page) => page.getByRole('dialog', { name: 'Boutique' })
+const empty = (uid: string) => sql(`update public.profiles set packs_remaining = 0, packs_last_regen_at = now() where id = :'uid'`, { uid })
+const proBlock = (page: Page) => page.getByRole('region', { name: 'Paquet PRO du jour' })
+
+// Réponse réelle de GET /api/shop, réécrite : la config (wm.config) est globale à la base partagée par les workers, jamais touchée ici.
+async function rewriteShop(page: Page, edit: (body: { rules: Record<string, unknown>; me: Record<string, unknown> }) => void) {
+  await page.route('**/api/shop*', async (route) => {
+    const res = await route.fetch()
+    const body = await res.json()
+    edit(body)
+    await route.fulfill({ response: res, json: body })
+  })
+}
+
+// Révélation de n cartes jusqu'au retour aux paquets.
+async function finishReveal(page: Page, n: number) {
+  for (let k = 1; k < n; k++) await page.getByRole('button', { name: 'Carte suivante' }).click()
+  await page.getByRole('button', { name: 'Continuer' }).click()
+  await page.getByRole('button', { name: 'Retour aux paquets' }).click()
+}
+
+test('stock vide d\'un joueur gratuit : la bannière exacte, « Voir l\'abonnement » ouvre la boutique', async ({ page, login }) => {
+  empty((await login({ humanVerified: true })).uid)
+  await page.goto('/pulls')
+  await expect(page.getByText('Plus de paquets disponibles')).toBeVisible()
+  await expect(page.getByText(BANNER, { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: SUBSCRIBE }).first().click()
+  await expect(shopDialog(page)).toBeVisible()
+})
+
+test('stock vide d\'un joueur Pro : aucune bannière, aucun lien vers l\'abonnement', async ({ page, login }) => {
+  empty((await login({ pro: true, humanVerified: true })).uid)
+  await page.goto('/pulls')
+  await expect(page.getByText('Plus de paquets disponibles')).toBeVisible()
+  await expect(proBlock(page).getByRole('button', { name: 'Récupérer' })).toBeVisible()
+  await expect(page.getByText(/^Avec Pro/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: SUBSCRIBE })).toHaveCount(0)
+})
+
+test('stock non vide d\'un joueur gratuit : pas de bannière ; le bloc Pro du jour garde son lien', async ({ page, login }) => {
+  onePack((await login()).uid)
+  await page.goto('/pulls')
+  await expect(proBlock(page)).toContainText('Réservé aux membres Pro')
+  await expect(page.getByText(/^Avec Pro/)).toHaveCount(0)
+  await proBlock(page).getByRole('button', { name: SUBSCRIBE }).click()
+  await expect(shopDialog(page)).toBeVisible()
+})
+
+test('« Comment ça marche ? » : périodes, tailles et réserve lues de la boutique (réponse réécrite), aucune valeur en dur', async ({ page, login }) => {
+  await login()
+  await rewriteShop(page, (b) => {
+    b.rules.pack_period_s = { free: 1200, pro: 180 }
+    b.rules.pack_size = 7
+    b.rules.pro_daily_size = 9
+    b.me.pack_cap = 12
+  })
+  await page.goto('/pulls')
+  await page.getByRole('button', { name: 'Comment ça marche ?' }).click()
+  const help = page.getByRole('dialog', { name: 'Comment ça marche ?' })
+  await expect(help).toContainText('Tu gagnes un paquet toutes les 20 minutes (toutes les 3 minutes avec Pro)')
+  await expect(help).toContainText('Un paquet contient 7 cartes')
+  await expect(help).toContainText('Ta réserve monte jusqu\'à 12 paquets')
+  await expect(help).toContainText('un paquet de 9 cartes chaque jour')
+  await expect(help).toContainText('L ≥ 20 000')
+})
+
+test('« Comment ça marche ? » avec les valeurs de la config : 5 cartes, toutes les 10 minutes, réserve de 10, Pro du jour de 15', async ({ page, login }) => {
+  await login()
+  await page.goto('/pulls')
+  await page.getByRole('button', { name: 'Comment ça marche ?' }).click()
+  const help = page.getByRole('dialog', { name: 'Comment ça marche ?' })
+  await expect(help).toContainText('Un paquet contient 5 cartes')
+  await expect(help).toContainText('toutes les 10 minutes (toutes les 3 minutes avec Pro)')
+  await expect(help).toContainText('Ta réserve monte jusqu\'à 10 paquets')
+  await expect(help).toContainText('un paquet de 15 cartes chaque jour')
+})
+
+test('« Comment ça marche ? » : lecture de la boutique en échec → « Les règles n\'ont pas pu être lues. », les seuils de rareté restent', async ({ page, login }) => {
+  await login()
+  await page.route('**/api/shop*', (r) => r.fulfill({ status: 500 }))
+  await page.goto('/pulls')
+  await page.getByRole('button', { name: 'Comment ça marche ?' }).click()
+  const help = page.getByRole('dialog', { name: 'Comment ça marche ?' })
+  await expect(help.getByText('Les règles n\'ont pas pu être lues.', { exact: true })).toBeVisible()
+  await expect(help).not.toContainText('Un paquet contient')
+  await expect(help).toContainText('L ≥ 20 000')
+})
+
+test('« Comment ça marche ? » : lecture de la boutique en cours → « Chargement… »', async ({ page, login }) => {
+  await login()
+  let release!: () => void
+  const held = new Promise<void>((r) => { release = r })
+  await page.route('**/api/shop*', async (r) => { await held; await r.continue() })
+  await page.goto('/pulls')
+  await page.getByRole('button', { name: 'Comment ça marche ?' }).click()
+  const help = page.getByRole('dialog', { name: 'Comment ça marche ?' })
+  await expect(help.getByRole('status')).toBeAttached()
+  release()
+  await expect(help).toContainText('Un paquet contient 5 cartes')
+})
+
+// Paquet spécial posé par sql, retiré en finally (cascade sur ses réclamations). Il est actif pour tous les joueurs le temps du test.
+async function withSpecial(run: (pack: { id: string; name: string }) => Promise<void>, size = 3) {
+  const name = `Cadeau e2e ${randomUUID().slice(-8)}`
+  const id = sql(`insert into wm.special_packs (name, description, size) values (:'name', 'Un cadeau de test.', :'size') returning id`, { name, size: String(size) })
+  try {
+    await run({ id, name })
+  } finally {
+    sql(`delete from wm.special_packs where id = :'id'`, { id })
+  }
+}
+const offered = (page: Page) => page.getByRole('region', { name: 'Paquets offerts' })
+
+test('paquet spécial : « Récupérer » → révélation de ses cartes, puis la section disparaît (un seul POST au double clic)', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await withSpecial(async ({ id, name }) => {
+    const posts: string[] = []
+    page.on('request', (r) => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/packs/special') posts.push(r.postData() ?? '') })
+    await page.goto('/pulls')
+    await expect(offered(page)).toContainText(`${name} : 3 cartes`)
+    await expect(offered(page)).toContainText('Un cadeau de test.')
+    await offered(page).getByRole('button', { name: `Récupérer ${name}` }).dblclick()
+    await expect(counter(page, 1, 3)).toBeVisible()
+    expect(posts).toEqual([JSON.stringify({ packId: id })])
+    await finishReveal(page, 3)
+    await expect(openButton(page)).toBeVisible()
+    // Le paquet du test seulement : celui d'une autre copie du spec (actif pour tous les joueurs du banc partagé) garderait la section.
+    await expect(page.getByRole('button', { name: `Récupérer ${name}` })).toHaveCount(0)
+    await expect(page.getByText(name)).toHaveCount(0)
+  })
+})
+
+test('paquet spécial d\'un joueur jamais vérifié : la vérification anti-bot passe, puis la révélation', async ({ page, login }) => {
+  await login()
+  await withSpecial(async ({ name }) => {
+    await page.goto('/pulls')
+    await offered(page).getByRole('button', { name: `Récupérer ${name}` }).click()
+    await expect(counter(page, 1, 3)).toBeVisible()
+  })
+})
+
+test('paquet spécial : 409 « déjà récupéré » → son message en alerte, la section reste utilisable', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await withSpecial(async ({ name }) => {
+    await routeOnce(page, '**/api/packs/special', (r) => r.fulfill({ status: 409, json: { code: 'already_claimed', error: 'Paquet déjà récupéré' } }), (r) => r.request().method() === 'POST')
+    await page.goto('/pulls')
+    const button = offered(page).getByRole('button', { name: `Récupérer ${name}` })
+    await button.click()
+    await expect(page.getByRole('alert').filter({ hasText: 'Paquet déjà récupéré' })).toBeVisible()
+    await expect(button).not.toHaveAttribute('aria-disabled', 'true')
+  })
+})
+
+test('dotation de grâce : « Récupérer le paquet offert » → révélation, puis la section disparaît', async ({ page, login }) => {
+  const { uid } = await login({ humanVerified: true })
+  sql(`insert into wm.grace_grants (user_id, size, reason) values (:'uid', 3, 'e2e')`, { uid })
+  try {
+    // Aucun paquet spécial : celui d'une autre copie du spec (actif pour tous les joueurs) garderait la section.
+    await page.route('**/api/packs/special', (r) => (r.request().method() === 'GET' ? r.fulfill({ json: { packs: [], available: false } }) : r.fallback()))
+    await page.goto('/pulls')
+    await expect(offered(page)).toContainText('Paquet offert par l\'équipe : 3 cartes')
+    await offered(page).getByRole('button', { name: 'Récupérer le paquet offert' }).click()
+    await expect(counter(page, 1, 3)).toBeVisible()
+    await finishReveal(page, 3)
+    await expect(openButton(page)).toBeVisible()
+    await expect(offered(page)).toHaveCount(0)
+  } finally {
+    sql(`delete from wm.grace_grants where user_id = :'uid'`, { uid })
+  }
+})
+
+test('rien à récupérer : aucune section « Paquets offerts »', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  // Réponses vides posées : un paquet spécial d'un autre test (actif pour tous les joueurs) ne doit pas compter.
+  await page.route('**/api/packs/special', (r) => (r.request().method() === 'GET' ? r.fulfill({ json: { packs: [], available: false } }) : r.fallback()))
+  await page.route('**/api/packs/grace', (r) => (r.request().method() === 'GET' ? r.fulfill({ json: { available: 0, size: null } }) : r.fallback()))
+  await page.goto('/pulls')
+  await expect(proBlock(page)).toBeVisible()
+  await expect(page.getByText('Paquets offerts')).toHaveCount(0)
+})
+
+test('paquet de 1 carte : « {name} : 1 carte » au singulier', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await withSpecial(async ({ name }) => {
+    await page.goto('/pulls')
+    await expect(offered(page)).toContainText(`${name} : 1 carte`)
+    await expect(offered(page)).not.toContainText(`${name} : 1 cartes`)
+  }, 1)
+})
+
+test('paquet spécial retiré côté serveur avant le clic : 404 « Paquet introuvable » en alerte, la section part et le focus ne tombe pas sur body', async ({ page, login }) => {
+  await login({ humanVerified: true })
+  await withSpecial(async ({ id, name }) => {
+    await page.goto('/pulls')
+    const button = offered(page).getByRole('button', { name: `Récupérer ${name}` })
+    await expect(button).toBeVisible()
+    sql(`delete from wm.special_packs where id = :'id'`, { id })
+    await button.click()
+    await expect(page.getByRole('alert').filter({ hasText: 'Paquet introuvable' })).toBeVisible()
+    await expect(button).toHaveCount(0)
+    await expect(page.locator('body')).not.toBeFocused()
+    await expect(openButton(page)).toBeFocused()
+  })
+})
+
+test('stock vide d\'un VIP (pas Pro) : aucune bannière', async ({ page, login }) => {
+  const { uid } = await login({ humanVerified: true })
+  empty(uid)
+  sql(`update public.profiles set is_vip = true where id = :'uid'`, { uid })
+  await page.goto('/pulls')
+  await expect(page.getByText('Plus de paquets disponibles')).toBeVisible()
+  await expect(page.getByText(/^Avec Pro/)).toHaveCount(0)
+})
+
+test('« Comment ça marche ? » : une règle déjà lue reste affichée si une relecture échoue ensuite', async ({ page, login }) => {
+  await login()
+  await page.goto('/pulls')
+  await expect(page.locator('header button[title="Ouvrir la boutique"]')).toHaveText(/wikibidou/)
+  await page.route('**/api/shop*', (r) => r.fulfill({ status: 500 }))
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(page.locator('header button[title="Ouvrir la boutique"]')).toHaveText('—Solde indisponible')
+  await page.getByRole('button', { name: 'Comment ça marche ?' }).click()
+  const help = page.getByRole('dialog', { name: 'Comment ça marche ?' })
+  await expect(help).toContainText('Un paquet contient 5 cartes')
+  await expect(help.getByText('Les règles n\'ont pas pu être lues.')).toHaveCount(0)
+})
+
+for (const path of ['special', 'grace']) {
+  for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }]] as const) {
+    test(`lecture de /api/packs/${path} en échec (${label}) : alerte et « Réessayer », puis tout rentre dans l'ordre`, async ({ page, login }) => {
+      const { uid } = await login({ humanVerified: true })
+      sql(`insert into wm.grace_grants (user_id, size, reason) values (:'uid', 3, 'e2e')`, { uid })
+      try {
+        await routeOnce(page, `**/api/packs/${path}`, (r) => r.fulfill(reply), (r) => r.request().method() === 'GET')
+        await page.goto('/pulls')
+        const alert = page.getByRole('alert').filter({ hasText: 'Tes paquets offerts n\'ont pas pu être lus.' })
+        await expect(alert).toBeVisible()
+        // Ce qui a pu être lu reste réclamable.
+        if (path === 'special') await expect(offered(page)).toContainText('Paquet offert par l\'équipe : 3 cartes')
+        await page.getByRole('button', { name: 'Réessayer' }).click()
+        await expect(alert).toHaveCount(0)
+        // Le bouton disparu ne laisse pas le focus sur body.
+        await expect(openButton(page)).toBeFocused()
+        await expect(offered(page)).toContainText('Paquet offert par l\'équipe : 3 cartes')
+      } finally {
+        sql(`delete from wm.grace_grants where user_id = :'uid'`, { uid })
+      }
+    })
+  }
+}

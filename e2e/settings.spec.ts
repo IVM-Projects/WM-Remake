@@ -584,3 +584,156 @@ test('mes données et suppression à 360 px : aucun défilement horizontal, bout
     sql(`delete from auth.users where id = :'uid'`, { uid })
   }
 })
+
+// Section « Abonnement » (Task 11) : lue de /api/shop, cinq états posés par SQL, Portail, suppression d'un abonné.
+const hex = () => randomUUID().replaceAll('-', '')
+const END = '2027-03-15 12:00:00+00' // midi UTC : le jour ne change dans aucun fuseau d'usage
+const END_FR = '15 mars 2027'
+const subscription = (page: Page) => page.getByRole('region', { name: 'Abonnement', exact: true })
+// Un abonnement par joueur ; is_pro suit active/trialing (hygiène stripe_pro).
+function setSub(uid: string, status: string, o: { cancel?: boolean; id?: string } = {}) {
+  sql(`delete from wm.subscriptions where user_id = :'u';
+insert into wm.subscriptions (id, user_id, customer_id, status, current_period_end, cancel_at_period_end, event_created)
+values (:'id', :'u', 'cus_bench_' || :'h', :'s', :'end'::timestamptz, :'c'::boolean, now());
+update public.profiles set is_pro = (:'s' in ('active', 'trialing')) where id = :'u'`,
+  { u: uid, id: o.id ?? `sub_bench_${hex()}`, h: hex(), s: status, end: END, c: String(!!o.cancel) })
+}
+const setCustomer = (uid: string) => sql(`insert into wm.stripe_customers (customer_id, user_id) values ('cus_bench_' || :'h', :'u') on conflict do nothing`, { u: uid, h: hex() })
+const portalButton = (page: Page) => subscription(page).getByRole('button', { name: 'Gérer mon abonnement' })
+
+test('abonnement : aucun, actif, résilié en fin de période (date exacte), impayé, VIP → les textes exacts', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  const view = subscription(page)
+  const open = async () => { await page.goto('/settings'); await expect(view.getByRole('heading', { name: 'Abonnement' })).toBeVisible() }
+  await open()
+  await expect(view.getByText('Tu n\'as pas d\'abonnement.', { exact: true })).toBeVisible()
+  await expect(view.getByRole('button', { name: 'Voir l\'abonnement' })).toBeVisible()
+  await expect(portalButton(page)).toHaveCount(0)
+  await view.getByRole('button', { name: 'Voir l\'abonnement' }).click()
+  await expect(page.getByRole('dialog', { name: 'Boutique' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(view.getByRole('button', { name: 'Voir l\'abonnement' })).toBeFocused()
+
+  setCustomer(uid)
+  for (const [status, cancel, text] of [
+    ['active', false, `Abonnement Pro actif. Prochain renouvellement le ${END_FR}.`],
+    ['trialing', false, `Abonnement Pro actif. Prochain renouvellement le ${END_FR}.`],
+    ['active', true, `Abonnement Pro résilié : tu restes Pro jusqu'au ${END_FR}.`],
+    ['past_due', false, 'Le dernier paiement a échoué : ton abonnement Pro est suspendu. Mets à jour ton moyen de paiement.'],
+    ['unpaid', false, 'Le dernier paiement a échoué : ton abonnement Pro est suspendu. Mets à jour ton moyen de paiement.'],
+  ] as const) {
+    setSub(uid, status, { cancel })
+    await open()
+    await expect(view.getByText(text, { exact: true }), `${status} ${cancel}`).toBeVisible()
+    await expect(portalButton(page)).toBeVisible()
+    await expect(view.getByRole('button', { name: 'Voir l\'abonnement' })).toHaveCount(0)
+  }
+
+  // Abonnement terminé et VIP : les avantages de l'équipe, rien à acheter.
+  setSub(uid, 'canceled')
+  sql(`update public.profiles set is_vip = true where id = :'u'`, { u: uid })
+  await open()
+  await expect(view.getByText('Avantages Pro accordés par l\'équipe.', { exact: true })).toBeVisible()
+  await expect(view.getByRole('button', { name: 'Voir l\'abonnement' })).toHaveCount(0)
+})
+
+test('abonnement : « Gérer mon abonnement » → Portail de Stripe, un seul envoi ; sans client : « Aucun abonnement à gérer »', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  setCustomer(uid)
+  setSub(uid, 'active')
+  await page.route('https://billing.stripe.com/**', (r) => r.fulfill({ contentType: 'text/html', body: '<title>Portail</title>' }))
+  await page.goto('/settings')
+  await expect(portalButton(page)).toBeVisible()
+  const calls: string[] = []
+  page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/stripe/portal') calls.push(r.method()) })
+  await portalButton(page).dblclick()
+  await page.waitForURL(/^https:\/\/billing\.stripe\.com\/p\/session\/test_bench_/)
+  expect(calls).toEqual(['POST'])
+
+  // Le client disparaît après la lecture : le serveur répond 404, dit tel quel, bouton rendu.
+  await page.goto('/settings')
+  await expect(portalButton(page)).toBeVisible()
+  sql(`delete from wm.stripe_customers where user_id = :'u'`, { u: uid })
+  await portalButton(page).click()
+  await expect(subscription(page).getByRole('alert')).toHaveText('Aucun abonnement à gérer')
+  await expect(portalButton(page)).not.toHaveAttribute('aria-disabled', 'true')
+})
+
+test('abonnement : adresse du Portail hors de Stripe → jamais suivie, erreur de repli', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  setCustomer(uid)
+  await page.goto('/settings')
+  await expect(portalButton(page)).toBeVisible()
+  await routeOnce(page, '**/api/stripe/portal', (r) => r.fulfill({ json: { url: 'https://billing.stripe.com.evil.example/p/session/x' } }))
+  await portalButton(page).click()
+  await expect(subscription(page).getByRole('alert')).toHaveText('Le portail de gestion n\'a pas pu s\'ouvrir.')
+  await expect(page).toHaveURL(/\/settings$/)
+})
+
+for (const [label, reply] of [['500', { status: 500 }], ['200 illisible', { status: 200, body: 'x' }]] as const) {
+  test(`abonnement : lecture en échec (${label}) → alerte et « Réessayer » dans la section, le reste lu ; « Réessayer » rend le focus au titre`, async ({ page, login }) => {
+    const { uid } = await login()
+    trash.push(uid)
+    setSub(uid, 'active')
+    const fail = (r: Route) => r.fulfill(reply)
+    await page.route('**/api/shop', fail)
+    await page.goto('/settings')
+    const view = subscription(page)
+    await expect(view.getByRole('alert')).toBeVisible()
+    await expect(view.getByText('Abonnement Pro actif', { exact: false })).toHaveCount(0)
+    await expect(pseudo(page)).toBeVisible()
+    await page.unroute('**/api/shop', fail)
+    await view.getByRole('button', { name: 'Réessayer' }).click()
+    await expect(view.getByText(`Abonnement Pro actif. Prochain renouvellement le ${END_FR}.`, { exact: true })).toBeVisible()
+    await expect(view.getByRole('heading', { name: 'Abonnement' })).toBeFocused()
+  })
+}
+
+test('suppression d\'un abonné : la modale annonce la résiliation immédiate ; échec chez Stripe → toast, tombe en attente', async ({ page, login }) => {
+  const me = await login()
+  try {
+    setSub(me.uid, 'canceled')
+    await page.goto('/settings')
+    await expect(pseudo(page)).toHaveValue(me.username)
+    const dialog = page.getByRole('dialog', { name: 'Supprimer ton compte ?' })
+    const line = dialog.getByText('Ton abonnement Pro sera résilié tout de suite, sans remboursement.', { exact: true })
+    // Terminé : aucune ligne (la lecture est finie quand sa réponse est rendue).
+    const read = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/shop')
+    await deleteButton(page).click()
+    await read
+    await settle(page)
+    await expect(dialog.getByLabel('Tape ton pseudo pour confirmer')).toBeVisible()
+    await expect(line).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Annuler' }).click()
+
+    setSub(me.uid, 'active', { id: `sub_bench_fail_${hex()}` })
+    await deleteButton(page).click()
+    await expect(line).toBeVisible()
+    await dialog.getByLabel('Tape ton pseudo pour confirmer').fill(me.username)
+    await dialog.getByLabel('Tape ton pseudo pour confirmer').press('Enter')
+    await expect(page.locator('#wm-toasts').getByText('La résiliation de ton abonnement sera terminée par l\'équipe.')).toBeVisible()
+    await expect(page).toHaveURL(/\/login$/, { timeout: 15_000 })
+    expect(sql(`select stripe_pending from wm.deleted_accounts where user_id = :'u'`, { u: me.uid })).toBe('t')
+  } finally {
+    sql(`select set_config('wm.allow_tombstone_delete', 'on', false);
+delete from auth.users where id = :'uid'`, { uid: me.uid })
+  }
+})
+
+test('abonnement à 360 px : aucun défilement horizontal, boutons de 44 px', async ({ page, login }) => {
+  const { uid } = await login()
+  trash.push(uid)
+  setCustomer(uid)
+  await page.setViewportSize({ width: 360, height: 800 })
+  await page.goto('/settings')
+  await expect(subscription(page).getByRole('button', { name: 'Voir l\'abonnement' })).toBeVisible()
+  expect((await subscription(page).getByRole('button', { name: 'Voir l\'abonnement' }).boundingBox())!.height).toBeGreaterThanOrEqual(MIN_TARGET)
+  expect((await portalButton(page).boundingBox())!.height).toBeGreaterThanOrEqual(MIN_TARGET)
+  setSub(uid, 'past_due')
+  await page.reload()
+  await expect(subscription(page).getByText('Le dernier paiement a échoué', { exact: false })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})

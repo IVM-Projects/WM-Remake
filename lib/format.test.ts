@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { formatCountdown, formatInt, formatLongDate, formatMonthYear, formatRemaining, formatShortDate, formatTime, wikibidous } from './format'
+import { every, formatCountdown, formatInt, formatLongDate, formatMonthYear, formatRemaining, formatShortDate, formatTime, wikibidous } from './format'
 
 test('formatInt : fr-FR, espace fine insécable U+202F entre les milliers', () => {
   expect(formatInt(6974)).toBe('6 974')
@@ -42,4 +42,8 @@ test('formatLongDate : date en toutes lettres fr-FR, séparateur de jour du fil 
 
 test('formatTime : heure courte fr-FR d\'un message, hh:mm', () => {
   expect(formatTime('2026-10-21T12:00:00Z')).toMatch(/^\d{2}:\d{2}$/)
+})
+
+test('every : période en secondes → « toutes les 10 minutes », « toutes les minutes », « toutes les 90 secondes »', () => {
+  expect([600, 180, 60, 90, 45].map(every)).toEqual(['toutes les 10 minutes', 'toutes les 3 minutes', 'toutes les minutes', 'toutes les 90 secondes', 'toutes les 45 secondes'])
 })

@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useEffectEvent, useSyncExternalStore, type Ref } from 'react'
+import { useShop } from '@/components/shop/ShopProvider'
+import { link } from '@/components/ui/button'
 import { brand } from '@/lib/brand'
 import { serverNow, subscribeClock } from '@/lib/clock'
-import { formatCountdown } from '@/lib/format'
+import { every, formatCountdown } from '@/lib/format'
 
 type Props = {
   remaining: number
@@ -23,6 +25,9 @@ export function PackStock({ remaining, cap, nextAt, period, busy, onOpen, onElap
   // la relecture du stock attend la borne basse (lib/clock.ts) : elle ne demande jamais un paquet pas encore régénéré.
   const left = useSyncExternalStore(subscribeClock, () => (nextAt === null ? 0 : Math.ceil((nextAt - serverNow() - 500) / 1000)), () => 0)
   const empty = remaining < 1
+  // Les WB n'achètent pas de paquets (G7) : seul l'abonnement relance le stock, donc rien pour un Pro ni pour un VIP.
+  const { state, openShop } = useShop()
+  const upsell = empty && !busy && state && !state.me.is_pro && !state.me.is_vip ? state.rules.pack_period_s.pro : null
   const elapsed = useEffectEvent(onElapsed)
   useEffect(() => {
     if (nextAt !== null && serverNow() >= nextAt) elapsed()
@@ -49,6 +54,12 @@ export function PackStock({ remaining, cap, nextAt, period, busy, onOpen, onElap
         <p role="status" className={empty && !busy ? 'text-sm font-medium text-[var(--color-foreground)]/80' : 'sr-only'}>
           {busy ? 'Ouverture du paquet…' : empty ? 'Plus de paquets disponibles' : ''}
         </p>
+        {upsell !== null && (
+          <div className="flex flex-col items-center">
+            <p className="text-sm text-[var(--color-foreground)]/70">{`Avec Pro, un paquet revient ${every(upsell)}.`}</p>
+            <button type="button" onClick={openShop} className={link}>Voir l&apos;abonnement</button>
+          </div>
+        )}
       </div>
       <div className="card-frame w-full max-w-sm space-y-3 p-4">
         <div className="flex items-baseline justify-between gap-3">

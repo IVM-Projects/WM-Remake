@@ -2,6 +2,8 @@
 
 import { Lock, Sparkles } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
+import { useShop } from '@/components/shop/ShopProvider'
+import { link } from '@/components/ui/button'
 import { api, calendarTz } from '@/lib/api'
 
 type Status = { eligible: boolean; claimed_today: boolean; size?: number; is_pro: boolean; next_claim_at?: string | null }
@@ -9,12 +11,14 @@ type Status = { eligible: boolean; claimed_today: boolean; size?: number; is_pro
 // Bloc « Paquet PRO du jour » (R§2.2, R§5.1). Relu à chaque montage : PullsClient le remonte au retour d'une révélation.
 export function ProDailyBlock({ busy, onClaim }: { busy: boolean; onClaim: () => void }) {
   const id = useId()
+  const { openShop } = useShop()
   const [status, setStatus] = useState<Status | 'error' | null>(null)
 
   useEffect(() => {
     let live = true
     api<Status>('/api/packs/pro-daily', { headers: calendarTz() }).then(
       (s) => { if (live) setStatus(s) },
+      // S:82 gardé tel quel (G22 du M6b, docs/decisions-graphify.md).
       () => { if (live) setStatus('error') },
     )
     return () => { live = false }
@@ -48,10 +52,13 @@ export function ProDailyBlock({ busy, onClaim }: { busy: boolean; onClaim: () =>
       </div>
       {status === 'error' && <p className="text-sm text-[var(--color-foreground)]/70">Le paquet du jour n&apos;a pas pu être lu.</p>}
       {s && !s.is_pro && (
-        <p className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-300">
-          <Lock className="size-3.5" />
-          Réservé aux membres Pro
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-x-3">
+          <p className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-300">
+            <Lock className="size-3.5" />
+            Réservé aux membres Pro
+          </p>
+          <button type="button" onClick={openShop} className={link}>Voir l&apos;abonnement</button>
+        </div>
       )}
       {s?.is_pro && !s.eligible && (
         <p className="text-sm text-[var(--color-foreground)]/70">

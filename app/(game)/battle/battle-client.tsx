@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { BattleRules } from '@/components/battle/BattleRules'
 import { battleLine, isOpen, type Battle, type BattleList } from '@/components/battle/types'
+import { useShop } from '@/components/shop/ShopProvider'
 import { PageHeader } from '@/components/shell/PageHeader'
 import { navEntry } from '@/components/shell/nav'
 import { link, primary } from '@/components/ui/button'
@@ -42,6 +43,7 @@ const openIn = (battles: Battle[], friend: string) => battles.find((b) => isOpen
 export function BattleClient() {
   const id = useId()
   const router = useRouter()
+  const { openShop } = useShop()
   const [tab, setTab] = useState<Tab>('open')
   const [list, setList] = useState<BattleList | null>(null)
   const [listFailed, setListFailed] = useState(false)
@@ -229,6 +231,8 @@ export function BattleClient() {
           friends.length ? (
             <>
               {quota && full && <p id={`${id}-full`} className="text-sm text-[var(--color-foreground)]/70">{`Tu as utilisé tes ${formatInt(quota.limit)} défis du jour.`}</p>}
+              {/* Hors de la phrase ci-dessus, qui décrit les boutons « Défier ». */}
+              {quota && full && list && quota.limit < list.rules.quota_pro && <button type="button" onClick={openShop} className={link}>Voir l&apos;abonnement</button>}
               <ul className="divide-y divide-[var(--color-border)]">
                 {friends.map((f) => {
                   const b = openWith(f.id)

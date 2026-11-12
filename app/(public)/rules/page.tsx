@@ -9,6 +9,7 @@ export default function RulesPage() {
   return (
     <LegalPage
       title="Règles de la communauté"
+      updated="31 octobre 2026"
       sections={[
         { id: 'un-compte', heading: 'Un compte par personne', body: <p>Chaque personne a un seul compte. Ouvrir plusieurs comptes pour cumuler des récompenses ou contourner une sanction est interdit.</p> },
         { id: 'automatisation', heading: 'Pas d\'automatisation', body: <p>Les bots, scripts, macros et le trafic modifié sont interdits. Si tu trouves un bug exploitable, signale-le au lieu de l&apos;utiliser.</p> },
