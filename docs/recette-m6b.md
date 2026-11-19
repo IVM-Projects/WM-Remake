@@ -16,7 +16,7 @@ Règles :
 
 - [ ] Compte Stripe perso créé, interrupteur « Mode test » (ou « Sandbox ») actif.
 - [ ] **Produits** : « Abonnement Pro » avec un Price récurrent **mensuel 9,99 CAD** ; « 2 500 wikibidous » avec un Price **unique 4,99 CAD**. Noter les deux `price_…` (hors conversation).
-- [ ] **Paramètres → informations publiques** : un nom affiché (ex. « WMR démo ») ; URL des conditions `https://wmr-ivm.vercel.app/terms` ; URL de confidentialité `https://wmr-ivm.vercel.app/privacy`. Sans l'URL des conditions, le Checkout refuse de s'ouvrir.
+- [ ] **Paramètres → informations publiques** : un nom affiché (ex. « WMR démo ») ; URL des conditions `https://wmr-ivm.vercel.app/terms` ; URL de confidentialité `https://wmr-ivm.vercel.app/privacy`. Facultatif en mode test : une session Checkout avec la case des conditions se crée sans ces URL (vérifié le 2026-11-19 ; le lien vers `/terms` est dans le texte de la case). Ces champs ne s'ouvrent qu'après activation du compte.
 - [ ] **Facturation → Portail client** :
   - [ ] mise à jour du moyen de paiement : activée
   - [ ] historique des factures : activé
